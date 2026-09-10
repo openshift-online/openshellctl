@@ -1,6 +1,11 @@
 package cli
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/openshift-online/openshellctl/pkg/auth"
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
+)
 
 // Exit codes, per the implementation spec §5.9.
 const (
@@ -39,5 +44,21 @@ func exitCodeFor(err error) int {
 	if errors.As(err, &usage) {
 		return ExitUsage
 	}
+
+	// Authentication failures → 3.
+	var expired *auth.ErrTokenExpired
+	var exchange *auth.ExchangeError
+	var oidcMissing *auth.ErrOIDCConfigMissing
+	if errors.As(err, &expired) || errors.As(err, &exchange) || errors.As(err, &oidcMissing) {
+		return ExitAuth
+	}
+
+	// Gateway not found / unknown → 4.
+	if errors.Is(err, gatewayconfig.ErrGatewayNotFound) ||
+		errors.Is(err, gatewayconfig.ErrUnknownGateway) ||
+		errors.Is(err, gatewayconfig.ErrNoActiveGateway) {
+		return ExitNotFound
+	}
+
 	return ExitError
 }
