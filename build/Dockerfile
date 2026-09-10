@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1
+# UBI9 multi-stage build for openshellctl (spec §4).
+
+FROM registry.access.redhat.com/ubi9/go-toolset:1.25 AS builder
+
+ARG VERSION=dev
+ARG COMMIT=none
+ARG OPENSHELL_PIN=v0.0.116
+
+WORKDIR /opt/app-root/src
+
+# Cache module downloads.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOFLAGS=-mod=readonly \
+    go build \
+      -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.openshellPin=${OPENSHELL_PIN}" \
+      -o /tmp/openshellctl \
+      ./cmd/openshellctl
+
+FROM registry.access.redhat.com/ubi9/ubi-micro:latest
+
+COPY --from=builder /tmp/openshellctl /usr/bin/openshellctl
+
+USER 1001
+ENTRYPOINT ["/usr/bin/openshellctl"]

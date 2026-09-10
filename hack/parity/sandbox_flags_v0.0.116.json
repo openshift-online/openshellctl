@@ -1,0 +1,77 @@
+{
+  "pin": "v0.0.116",
+  "commit": "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
+  "note": "Checked-in extraction of `openshell sandbox ...` flags at v0.0.116. parity_test.go diffs the cobra tree against this table. Extends over commits as commands are implemented.",
+  "subcommands": {
+    "create": [
+      {"long": "name", "type": "string"},
+      {"long": "from", "type": "string"},
+      {"long": "upload", "type": "stringSlice", "repeatable": true, "conflicts": ["command"]},
+      {"long": "no-git-ignore", "type": "bool", "requires": ["upload"]},
+      {"long": "keep", "type": "bool", "hidden": true, "deprecated": true},
+      {"long": "no-keep", "type": "bool", "conflicts": ["editor", "forward", "output", "detach"]},
+      {"long": "editor", "type": "string", "conflicts": ["no-keep", "detach", "output"]},
+      {"long": "gpu", "type": "gpuRequest"},
+      {"long": "cpu", "type": "string"},
+      {"long": "memory", "type": "string"},
+      {"long": "driver-config-json", "type": "string"},
+      {"long": "provider", "type": "stringSlice", "repeatable": true},
+      {"long": "policy", "type": "string", "env": "OPENSHELL_SANDBOX_POLICY"},
+      {"long": "forward", "type": "string", "conflicts": ["no-keep", "output"]},
+      {"long": "tty", "type": "ttyTriState"},
+      {"long": "no-tty", "type": "ttyTriState"},
+      {"long": "detach", "type": "bool"},
+      {"long": "auto-providers", "type": "autoProvidersTriState"},
+      {"long": "no-auto-providers", "type": "autoProvidersTriState"},
+      {"long": "label", "type": "stringSlice", "repeatable": true},
+      {"long": "env", "type": "stringSlice", "repeatable": true},
+      {"long": "no-credential-warnings", "type": "bool"},
+      {"long": "approval-mode", "type": "string", "default": "manual"},
+      {"long": "output", "short": "o", "type": "outputFormat", "default": "table", "conflicts": ["editor", "command", "no-keep", "forward"]}
+    ],
+    "get": [
+      {"long": "policy-only", "type": "bool", "conflicts": ["output"]},
+      {"long": "output", "short": "o", "type": "outputFormat", "default": "table"}
+    ],
+    "list": [
+      {"long": "limit", "type": "int", "default": "100"},
+      {"long": "offset", "type": "int", "default": "0"},
+      {"long": "ids", "type": "bool", "conflicts": ["names", "output"]},
+      {"long": "names", "type": "bool", "conflicts": ["ids", "output"]},
+      {"long": "selector", "type": "string"},
+      {"long": "output", "short": "o", "type": "outputFormat", "default": "table"},
+      {"long": "all-workspaces", "type": "bool"}
+    ],
+    "delete": [
+      {"long": "all", "type": "bool", "conflicts": ["name"]}
+    ],
+    "stop": [],
+    "start": [],
+    "exec": [
+      {"long": "name", "short": "n", "type": "string"},
+      {"long": "workdir", "type": "string"},
+      {"long": "timeout", "type": "uint32", "default": "0"},
+      {"long": "tty", "type": "ttyTriState"},
+      {"long": "no-tty", "type": "ttyTriState"},
+      {"long": "env", "type": "stringSlice", "repeatable": true}
+    ],
+    "connect": [
+      {"long": "editor", "type": "string"}
+    ],
+    "upload": [
+      {"long": "no-git-ignore", "type": "bool"}
+    ],
+    "download": [],
+    "ssh-config": [],
+    "provider list": [],
+    "provider attach": [],
+    "provider detach": [],
+    "logs": [
+      {"long": "lines", "short": "n", "type": "int", "default": "200"},
+      {"long": "tail", "type": "bool"},
+      {"long": "since", "type": "string", "default": "5m"},
+      {"long": "source", "type": "stringSlice", "repeatable": true, "default": "all"},
+      {"long": "level", "type": "string"}
+    ]
+  }
+}
