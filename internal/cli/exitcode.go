@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
 	"github.com/openshift-online/openshellctl/pkg/gateway"
@@ -36,11 +37,33 @@ func (e *NotImplementedError) Error() string {
 	return e.Command + ": not implemented yet"
 }
 
+// RemoteExitError carries the exit code of a remote process (exec/connect/create
+// with an attached command). It maps directly to that code so the local process
+// exits with the remote's status. It is only constructed for non-zero codes.
+type RemoteExitError struct{ Code int }
+
+func (e *RemoteExitError) Error() string {
+	return fmt.Sprintf("remote process exited with status %d", e.Code)
+}
+
+// exitCodeError returns a *RemoteExitError for a non-zero remote code, or nil for
+// zero (so the command succeeds silently on exit 0).
+func exitCodeError(code int) error {
+	if code == 0 {
+		return nil
+	}
+	return &RemoteExitError{Code: code}
+}
+
 // exitCodeFor maps an error returned by a command to a process exit code.
 // As typed errors from pkg/* land in later commits, they are classified here.
 func exitCodeFor(err error) int {
 	if err == nil {
 		return ExitOK
+	}
+	var remote *RemoteExitError
+	if errors.As(err, &remote) {
+		return remote.Code
 	}
 	var usage *UsageError
 	if errors.As(err, &usage) {

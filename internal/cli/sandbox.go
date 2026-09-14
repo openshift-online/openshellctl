@@ -20,7 +20,7 @@ func newSandboxCommand() *cobra.Command {
 		newSandboxDeleteCommand(),
 		newSandboxStopCommand(),
 		newSandboxStartCommand(),
-		notImplementedLeaf("exec", "Run a command in a sandbox"),
+		newSandboxExecCommand(),
 		notImplementedLeaf("connect", "Connect to a sandbox"),
 		notImplementedLeaf("upload", "Upload files to a sandbox"),
 		notImplementedLeaf("download", "Download files from a sandbox"),
@@ -43,12 +43,6 @@ func newProviderCommand() *cobra.Command {
 		notImplementedLeaf("detach", "Detach a provider from a sandbox"),
 	)
 	return p
-}
-
-func newLogsCommand() *cobra.Command {
-	c := notImplementedLeaf("logs", "Show sandbox logs")
-	c.Aliases = []string{"lg"}
-	return c
 }
 
 // notImplementedLeaf returns a leaf command whose RunE reports NotImplementedError.

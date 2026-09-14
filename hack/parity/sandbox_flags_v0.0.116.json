@@ -67,11 +67,11 @@
     "provider attach": [],
     "provider detach": [],
     "logs": [
-      {"long": "lines", "short": "n", "type": "int", "default": "200"},
+      {"long": "n", "short": "n", "type": "uint32", "default": "200"},
       {"long": "tail", "type": "bool"},
-      {"long": "since", "type": "string", "default": "5m"},
+      {"long": "since", "type": "string"},
       {"long": "source", "type": "stringSlice", "repeatable": true, "default": "all"},
-      {"long": "level", "type": "string"}
+      {"long": "level", "type": "string", "default": ""}
     ]
   }
 }

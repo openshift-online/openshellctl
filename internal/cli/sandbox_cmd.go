@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -9,12 +10,21 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/openshift-online/openshellctl/pkg/gateway"
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 )
 
 // withGateway resolves the token source + target, dials the gateway, and invokes
 // fn with a ready Gateway. The connection is closed on return. Errors from
 // resolution/dial are returned (mapped to exit codes by Execute).
 func withGateway(cmd *cobra.Command, fn func(gw gateway.Gateway) error) error {
+	return withGatewayTarget(cmd, func(gw gateway.Gateway, _ *gatewayconfig.Target) error {
+		return fn(gw)
+	})
+}
+
+// withGatewayTarget is withGateway but also passes the resolved target, so
+// callers can read/write last_sandbox and the gateway name.
+func withGatewayTarget(cmd *cobra.Command, fn func(gw gateway.Gateway, target *gatewayconfig.Target) error) error {
 	src, target, err := resolveTokenSource(cmd)
 	if err != nil {
 		return err
@@ -24,7 +34,35 @@ func withGateway(cmd *cobra.Command, fn func(gw gateway.Gateway) error) error {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	return fn(gw)
+	return fn(gw, target)
+}
+
+// resolveSandboxName returns the explicit name argument, or falls back to the
+// gateway's last_sandbox for the workspace. It errors (usage) when neither is
+// available (A.3: "defaults to last-used sandbox").
+func resolveSandboxName(args []string, target *gatewayconfig.Target, ws string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], nil
+	}
+	if target != nil && target.Resolved != nil {
+		if name, ok := gatewayconfig.LoadLastSandbox(target.Resolved, ws); ok {
+			return name, nil
+		}
+	}
+	return "", &UsageError{Err: fmt.Errorf("a sandbox name is required (no last-used sandbox found)")}
+}
+
+// saveLastSandbox best-effort records the workspace/name as the gateway's
+// last_sandbox. Failures are ignored (matching the CLI's `let _ = ...`).
+func saveLastSandbox(target *gatewayconfig.Target, ws, name string) {
+	if target == nil || target.Name == "" {
+		return
+	}
+	w, err := gatewayconfig.NewOSWriter()
+	if err != nil {
+		return
+	}
+	_ = gatewayconfig.SaveLastSandbox(w, target.Name, ws, name)
 }
 
 // workspace returns the effective workspace (flag/env via viper, default "default").

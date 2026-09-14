@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -108,7 +109,13 @@ func bindViper(root *cobra.Command) {
 func Execute() int {
 	root := NewRootCommand()
 	if err := root.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+		// A remote (exec/connect/create-attach) non-zero exit is propagated as the
+		// process status without an "Error:" message — the remote command already
+		// wrote its own output.
+		var remote *RemoteExitError
+		if !errors.As(err, &remote) {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+		}
 		return exitCodeFor(err)
 	}
 	return ExitOK
