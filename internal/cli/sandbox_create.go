@@ -67,7 +67,15 @@ func newSandboxCreateCommand() *cobra.Command {
 			}
 
 			return withGateway(cmd, func(gw gateway.Gateway) error {
-				res, err := sandbox.Create(cmd.Context(), sandbox.CreateDeps{GW: gw, Env: os.Getenv}, req, resolveTTY(req))
+				deps := sandbox.CreateDeps{
+					GW:          gw,
+					Env:         os.Getenv,
+					Stderr:      cmd.ErrOrStderr(),
+					Sink:        newPlainSink(cmd.ErrOrStderr()),
+					Watch:       req.Output == "table",
+					IdleTimeout: provisionTimeout(),
+				}
+				res, err := sandbox.Create(cmd.Context(), deps, req, resolveTTY(req))
 				if err != nil {
 					return err
 				}

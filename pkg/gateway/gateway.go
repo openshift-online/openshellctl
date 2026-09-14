@@ -54,6 +54,9 @@ type Gateway interface {
 	CurrentUser(ctx context.Context) (*types.CurrentUser, error)
 
 	// raw (generated stubs) — things the SDK cannot express
+	// CreateSandboxRaw creates via the raw stub, preserving fields the SDK spec
+	// cannot express (e.g. bare --gpu = ResourceRequirements{Gpu:{Count:nil}}).
+	CreateSandboxRaw(ctx context.Context, req *pb.CreateSandboxRequest) (*pb.Sandbox, error)
 	WatchSandbox(ctx context.Context, req *pb.WatchSandboxRequest) (Stream[*pb.SandboxStreamEvent], error)
 	ExecSandbox(ctx context.Context, req *pb.ExecSandboxRequest) (Stream[*pb.ExecSandboxEvent], error)
 	ExecSandboxInteractive(ctx context.Context) (BidiStream, error)

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	dm "github.com/NVIDIA/OpenShell/sdk/go/proto/datamodelv1"
+	pb "github.com/NVIDIA/OpenShell/sdk/go/proto/openshellv1"
 	"go.uber.org/mock/gomock"
 
 	"github.com/openshift-online/openshellctl/pkg/api/v1alpha1"
@@ -117,6 +119,98 @@ func TestToSDKSpec_DriverConfigCoerced(t *testing.T) {
 	spec := ToSDKSpec(req, false)
 	if spec.Template == nil || spec.Template.DriverConfig == nil {
 		t.Fatal("driver config should populate template")
+	}
+}
+
+func TestCreate_ProviderInferenceFromCommand(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	// providers_v2 disabled → inference kept; claude command → claude-code type.
+	gw.EXPECT().GetGatewayConfig(gomock.Any()).Return(&types.GatewayConfig{
+		Settings: map[string]types.SettingValue{"providers_v2_enabled": {Type: types.SettingValueBool, BoolVal: false}},
+	}, nil)
+	gw.EXPECT().ListProviders(gomock.Any(), "default", gomock.Any()).
+		Return([]*types.Provider{{Name: "cc", Type: "claude-code"}}, nil)
+	gw.EXPECT().CreateSandbox(gomock.Any(), "default", "sb", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ string, spec *types.SandboxSpec, _ map[string]string) (*types.Sandbox, error) {
+			if len(spec.Providers) != 1 || spec.Providers[0] != "cc" {
+				t.Errorf("inferred provider not attached: %v", spec.Providers)
+			}
+			return &types.Sandbox{Name: "sb"}, nil
+		})
+
+	req := &CreateRequest{Workspace: "default", Name: "sb", Command: []string{"/usr/bin/claude"}}
+	if _, err := Create(context.Background(), CreateDeps{GW: gw}, req, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreate_ProviderInferenceDroppedWhenV2Enabled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gw.EXPECT().GetGatewayConfig(gomock.Any()).Return(&types.GatewayConfig{
+		Settings: map[string]types.SettingValue{"providers_v2_enabled": {Type: types.SettingValueBool, BoolVal: true}},
+	}, nil)
+	// No ListProviders expected (inference dropped, no explicit providers).
+	gw.EXPECT().CreateSandbox(gomock.Any(), "default", "sb", gomock.Any(), gomock.Any()).
+		Return(&types.Sandbox{Name: "sb"}, nil)
+
+	req := &CreateRequest{Workspace: "default", Name: "sb", Command: []string{"/usr/bin/claude"}}
+	if _, err := Create(context.Background(), CreateDeps{GW: gw}, req, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreate_CredentialWarnings(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gw.EXPECT().CreateSandbox(gomock.Any(), "default", "sb", gomock.Any(), gomock.Any()).
+		Return(&types.Sandbox{Name: "sb"}, nil)
+
+	var stderr strings.Builder
+	req := &CreateRequest{Workspace: "default", Name: "sb", Env: map[string]string{"MY_SECRET_TOKEN": "x"}}
+	if _, err := Create(context.Background(), CreateDeps{GW: gw, Stderr: &stderr}, req, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "MY_SECRET_TOKEN looks like a credential") {
+		t.Errorf("expected credential warning, got: %q", stderr.String())
+	}
+}
+
+func TestCreate_BareGPURawPath(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gw.EXPECT().CreateSandboxRaw(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req *pb.CreateSandboxRequest) (*pb.Sandbox, error) {
+			if req.Spec.ResourceRequirements == nil || req.Spec.ResourceRequirements.Gpu == nil {
+				t.Errorf("raw request missing GPU resource requirement: %+v", req.Spec)
+			}
+			if req.Spec.ResourceRequirements.Gpu.Count != nil {
+				t.Error("bare --gpu should send Count=nil")
+			}
+			return &pb.Sandbox{Metadata: &dm.ObjectMeta{Name: "sb"}, Status: &pb.SandboxStatus{Phase: pb.SandboxPhase_SANDBOX_PHASE_PROVISIONING}}, nil
+		})
+
+	req := &CreateRequest{Workspace: "default", Name: "sb", GPU: &v1alpha1.GPU{}}
+	res, err := Create(context.Background(), CreateDeps{GW: gw}, req, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sandbox.Name != "sb" {
+		t.Errorf("sandbox = %+v", res.Sandbox)
+	}
+}
+
+func TestCreate_BareGPUWithPolicyRejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	req := &CreateRequest{
+		Workspace: "default", Name: "sb",
+		GPU:    &v1alpha1.GPU{},
+		Policy: &types.SandboxPolicy{Version: 1},
+	}
+	_, err := Create(context.Background(), CreateDeps{GW: mock.NewMockGateway(ctrl)}, req, false)
+	if !errors.Is(err, ErrRawGPUWithPolicy) {
+		t.Fatalf("err = %v, want ErrRawGPUWithPolicy", err)
 	}
 }
 

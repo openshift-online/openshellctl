@@ -2,19 +2,33 @@ package sandbox
 
 import (
 	"context"
+	"errors"
+	"io"
+	"time"
 
 	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	pb "github.com/NVIDIA/OpenShell/sdk/go/proto/openshellv1"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 )
 
-// CreateDeps are the dependencies for Create. Transfer/attach steps (uploads,
-// forward, interactive connect) are gated on future fields being set; this
-// create-without-transfer path (spec §8.4) covers provider resolution, spec
-// build, the SDK/raw CreateSandbox split, and last_sandbox persistence.
+// ErrRawGPUWithPolicy is returned when bare --gpu (raw create path) is combined
+// with a policy, which the raw path does not yet convert (policyyaml.ToProto is
+// deferred). Use an explicit --gpu N (SDK path) with a policy instead.
+var ErrRawGPUWithPolicy = errors.New("bare --gpu combined with a policy is not yet supported; use --gpu <count> with a policy")
+
+// CreateDeps are the dependencies for Create.
 type CreateDeps struct {
-	GW  gateway.Gateway
-	Env func(string) string
+	GW     gateway.Gateway
+	Env    func(string) string
+	Stderr io.Writer    // credential warnings / skip messages (nil → discard)
+	Sink   ProgressSink // provisioning progress (nil → nop)
+	Clock  Clock
+
+	// Watch controls whether Create waits for the sandbox to reach Ready.
+	Watch       bool
+	IdleTimeout time.Duration
 }
 
 // CreateResult is the outcome of Create.
@@ -22,47 +36,205 @@ type CreateResult struct {
 	Sandbox *types.Sandbox
 }
 
-// Create builds the spec and creates the sandbox. It resolves providers against
-// the gateway (existing names kept; unknown recognised types are reported via
-// ErrAutoProviderUnsupported unless --no-auto-providers skips them), then calls
-// CreateSandbox. Bare --gpu is not yet routed through the raw path here (that
-// lands with the attach/transfer work); an explicit count uses the SDK spec.
-//
-// This is the create-without-transfer path: it does not watch-to-ready, upload,
-// forward, or attach — the CLI decides output/attach policy on the returned
-// sandbox (§8.4 scope).
+// Create resolves providers, prints credential warnings, builds the spec, and
+// creates the sandbox (SDK, or the raw path for bare --gpu). When Watch is set
+// it then waits for Ready via WatchUntilReady. This is the create-without-
+// transfer path (no upload/forward/attach); the CLI decides output/attach on the
+// returned sandbox. Steps mirror run.rs (§5.5).
 func Create(ctx context.Context, d CreateDeps, r *CreateRequest, ttyResolved bool) (*CreateResult, error) {
-	if err := resolveRequestProviders(ctx, d.GW, r); err != nil {
+	// (1) provider inference from Command[0], unless --no-auto-providers.
+	inferred := inferProviderType(ctx, d.GW, r)
+
+	// (2) resolve providers (explicit + inferred).
+	if err := resolveRequestProviders(ctx, d.GW, r, inferred); err != nil {
 		return nil, err
 	}
 
-	spec := ToSDKSpec(r, ttyResolved)
-	sb, err := d.GW.CreateSandbox(ctx, r.Workspace, r.Name, spec, r.Labels)
+	// (3) credential warnings.
+	if !r.NoCredentialWarnings && d.Stderr != nil {
+		for _, w := range CredentialLikeKeys(r.Env) {
+			_, _ = io.WriteString(d.Stderr, FormatCredentialWarning(w))
+		}
+	}
+
+	// (4) create (SDK, or raw for bare --gpu).
+	sb, err := createSandbox(ctx, d.GW, r, ttyResolved)
 	if err != nil {
 		return nil, err
 	}
+
+	// (7) watch to Ready when requested.
+	if d.Watch {
+		sink := d.Sink
+		if sink == nil {
+			sink = nopSink{}
+		}
+		if _, werr := WatchUntilReady(ctx, d.GW, sb.ID, phaseFromStatus(sb), d.IdleTimeout, r.GPU != nil, sink, d.Clock); werr != nil {
+			return nil, werr
+		}
+		if fresh, gerr := d.GW.GetSandbox(ctx, r.Workspace, sb.Name); gerr == nil {
+			sb = fresh
+		}
+	}
+
 	return &CreateResult{Sandbox: sb}, nil
 }
 
-// resolveRequestProviders resolves r.Providers against the gateway's providers.
-// Recognised-but-missing types are surfaced as ErrAutoProviderUnsupported
-// (openshellctl cannot auto-create) unless AutoProviders is explicitly false, in
-// which case they are dropped.
-func resolveRequestProviders(ctx context.Context, gw gateway.Gateway, r *CreateRequest) error {
-	if len(r.Providers) == 0 {
+// createSandbox dispatches to the SDK or raw create path.
+func createSandbox(ctx context.Context, gw gateway.Gateway, r *CreateRequest, ttyResolved bool) (*types.Sandbox, error) {
+	if r.UsesRawGPU() {
+		return createSandboxRaw(ctx, gw, r, ttyResolved)
+	}
+	spec := ToSDKSpec(r, ttyResolved)
+	return gw.CreateSandbox(ctx, r.Workspace, r.Name, spec, r.Labels)
+}
+
+// createSandboxRaw builds a raw CreateSandboxRequest for the bare --gpu case
+// (ResourceRequirements{Gpu:{Count:nil}}), then converts the returned proto to
+// a types.Sandbox shell carrying id/name/phase for the caller.
+func createSandboxRaw(ctx context.Context, gw gateway.Gateway, r *CreateRequest, ttyResolved bool) (*types.Sandbox, error) {
+	rawSpec := &pb.SandboxSpec{
+		Environment:          r.Env,
+		Providers:            r.Providers,
+		Command:              commandOrDefault(r.Command),
+		Tty:                  ttyResolved,
+		ResourceRequirements: &pb.ResourceRequirements{Gpu: &pb.GpuResourceRequirements{Count: nil}},
+	}
+	if tmpl := rawTemplate(r); tmpl != nil {
+		rawSpec.Template = tmpl
+	}
+	if r.Policy != nil {
+		// The raw create path (bare --gpu) does not yet convert a policy to the
+		// sandboxv1 proto (policyyaml.ToProto is deferred); the SDK create path
+		// handles policies. This combination is rejected until ToProto lands.
+		return nil, ErrRawGPUWithPolicy
+	}
+
+	req := &pb.CreateSandboxRequest{
+		Spec:      rawSpec,
+		Name:      r.Name,
+		Labels:    r.Labels,
+		Workspace: r.Workspace,
+	}
+	sb, err := gw.CreateSandboxRaw(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return sandboxFromProto(sb), nil
+}
+
+func rawTemplate(r *CreateRequest) *pb.SandboxTemplate {
+	if r.Image == "" && r.CPU == "" && r.Memory == "" && len(r.DriverConfig) == 0 {
+		return nil
+	}
+	tmpl := &pb.SandboxTemplate{Image: r.Image}
+	if res := ResourcesStruct(r.CPU, r.Memory); res != nil {
+		if s, err := structpb.NewStruct(res); err == nil {
+			tmpl.Resources = s
+		}
+	}
+	if len(r.DriverConfig) > 0 {
+		if s, err := structpb.NewStruct(coerceJSON(r.DriverConfig)); err == nil {
+			tmpl.DriverConfig = s
+		}
+	}
+	return tmpl
+}
+
+func commandOrDefault(cmd []string) []string {
+	if len(cmd) == 0 {
+		return append([]string(nil), DefaultCommand...)
+	}
+	return cmd
+}
+
+// sandboxFromProto builds a minimal types.Sandbox from the raw create response.
+func sandboxFromProto(sb *pb.Sandbox) *types.Sandbox {
+	out := &types.Sandbox{}
+	if md := sb.GetMetadata(); md != nil {
+		out.ID = md.GetId()
+		out.Name = md.GetName()
+		out.Workspace = md.GetWorkspace()
+		out.Labels = md.GetLabels()
+	}
+	out.Status.Phase = phaseName(sb.GetStatus().GetPhase())
+	return out
+}
+
+// phaseFromStatus maps a types.Sandbox phase back to the proto enum for the watch.
+func phaseFromStatus(sb *types.Sandbox) pb.SandboxPhase {
+	switch sb.Status.Phase {
+	case types.SandboxProvisioning:
+		return pb.SandboxPhase_SANDBOX_PHASE_PROVISIONING
+	case types.SandboxReady:
+		return pb.SandboxPhase_SANDBOX_PHASE_READY
+	case types.SandboxError:
+		return pb.SandboxPhase_SANDBOX_PHASE_ERROR
+	case types.SandboxStopped:
+		return pb.SandboxPhase_SANDBOX_PHASE_STOPPED
+	default:
+		return pb.SandboxPhase_SANDBOX_PHASE_UNSPECIFIED
+	}
+}
+
+// phaseName maps a proto phase enum to the SDK string phase.
+func phaseName(p pb.SandboxPhase) types.SandboxPhase {
+	switch p {
+	case pb.SandboxPhase_SANDBOX_PHASE_PROVISIONING:
+		return types.SandboxProvisioning
+	case pb.SandboxPhase_SANDBOX_PHASE_READY:
+		return types.SandboxReady
+	case pb.SandboxPhase_SANDBOX_PHASE_ERROR:
+		return types.SandboxError
+	case pb.SandboxPhase_SANDBOX_PHASE_DELETING:
+		return types.SandboxDeleting
+	case pb.SandboxPhase_SANDBOX_PHASE_STOPPING:
+		return types.SandboxStopping
+	case pb.SandboxPhase_SANDBOX_PHASE_STOPPED:
+		return types.SandboxStopped
+	case pb.SandboxPhase_SANDBOX_PHASE_STARTING:
+		return types.SandboxStarting
+	default:
+		return types.SandboxUnknown
+	}
+}
+
+// inferProviderType infers a provider type from Command[0] basename unless
+// --no-auto-providers, dropping the inference when providers_v2_enabled is true
+// (run.rs:494-513). Returns the inferred types (0 or 1).
+func inferProviderType(ctx context.Context, gw gateway.Gateway, r *CreateRequest) []string {
+	if r.AutoProviders != nil && !*r.AutoProviders {
+		return nil
+	}
+	tp, ok := DetectProviderFromCommand(r.Command)
+	if !ok {
+		return nil
+	}
+	if cfg, err := gw.GetGatewayConfig(ctx); err == nil && cfg != nil {
+		if v, ok := cfg.Settings["providers_v2_enabled"]; ok && v.Type == types.SettingValueBool && v.BoolVal {
+			return nil
+		}
+	}
+	return []string{tp}
+}
+
+// resolveRequestProviders resolves explicit + inferred providers against the
+// gateway; recognised-but-missing types → ErrAutoProviderUnsupported unless
+// --no-auto-providers, in which case they are skipped (message to stderr).
+func resolveRequestProviders(ctx context.Context, gw gateway.Gateway, r *CreateRequest, inferred []string) error {
+	if len(r.Providers) == 0 && len(inferred) == 0 {
 		return nil
 	}
 	known, err := listAllProviders(ctx, gw, r.Workspace)
 	if err != nil {
 		return err
 	}
-	res, err := ResolveProviders(known, r.Providers, nil)
+	res, err := ResolveProviders(known, r.Providers, inferred)
 	if err != nil {
 		return err
 	}
 	if len(res.MissingTypes) > 0 {
 		if r.AutoProviders != nil && !*r.AutoProviders {
-			// Skip missing types (caller prints the skip message).
 			r.Providers = res.Names
 			return nil
 		}
@@ -72,7 +244,7 @@ func resolveRequestProviders(ctx context.Context, gw gateway.Gateway, r *CreateR
 	return nil
 }
 
-// listAllProviders pages ListProviders by 100 until a short page (run.rs:2561).
+// listAllProviders pages ListProviders by 100 until a short page.
 func listAllProviders(ctx context.Context, gw gateway.Gateway, workspace string) ([]*types.Provider, error) {
 	var all []*types.Provider
 	offset := 0

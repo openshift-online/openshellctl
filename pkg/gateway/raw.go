@@ -20,6 +20,21 @@ func (s *serverStream[T]) Close() {
 	}
 }
 
+// CreateSandboxRaw creates via the raw stub (for fields the SDK spec cannot
+// express, e.g. bare --gpu). Returns the created sandbox proto.
+func (c *client) CreateSandboxRaw(ctx context.Context, req *pb.CreateSandboxRequest) (*pb.Sandbox, error) {
+	var out *pb.Sandbox
+	err := withAuthRetry(ctx, c.auth, func(ctx context.Context) error {
+		resp, err := c.conn.Raw.CreateSandbox(ctx, req)
+		if err != nil {
+			return Classify(err, "sandbox", req.GetName())
+		}
+		out = resp.GetSandbox()
+		return nil
+	})
+	return out, err
+}
+
 // WatchSandbox opens the raw watch stream (status + logs + events + warnings),
 // which the SDK's status-only Watch cannot express. Auth retry applies to the
 // initial open only.

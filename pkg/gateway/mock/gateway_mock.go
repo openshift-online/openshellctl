@@ -76,6 +76,21 @@ func (mr *MockGatewayMockRecorder) CreateSandbox(ctx, workspace, name, spec, lab
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSandbox", reflect.TypeOf((*MockGateway)(nil).CreateSandbox), ctx, workspace, name, spec, labels)
 }
 
+// CreateSandboxRaw mocks base method.
+func (m *MockGateway) CreateSandboxRaw(ctx context.Context, req *openshellv1.CreateSandboxRequest) (*openshellv1.Sandbox, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateSandboxRaw", ctx, req)
+	ret0, _ := ret[0].(*openshellv1.Sandbox)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateSandboxRaw indicates an expected call of CreateSandboxRaw.
+func (mr *MockGatewayMockRecorder) CreateSandboxRaw(ctx, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSandboxRaw", reflect.TypeOf((*MockGateway)(nil).CreateSandboxRaw), ctx, req)
+}
+
 // CurrentUser mocks base method.
 func (m *MockGateway) CurrentUser(ctx context.Context) (*types.CurrentUser, error) {
 	m.ctrl.T.Helper()
