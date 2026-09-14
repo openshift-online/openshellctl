@@ -30,6 +30,10 @@ type ResolveInput struct {
 	// write-back. TokenFS is the gateway's sub-FS (r.FS).
 	Refresher RefreshTokenExchanger // nil ok
 
+	// TokenWriter persists a refreshed on-disk bundle (Rust CLI schema). nil
+	// disables write-back (the refreshed token is still returned, just not saved).
+	TokenWriter Writer // nil ok
+
 	Clock func() time.Time
 }
 
@@ -70,7 +74,7 @@ func Resolve(ctx context.Context, in ResolveInput, ex Exchanger) (TokenSource, e
 			gwName = in.Gateway.Name
 		}
 		return NewDiskBundleSource(in.Gateway.FS, clock,
-			WithRefresher(in.Refresher, nil),
+			WithRefresher(in.Refresher, in.TokenWriter),
 			WithBundleGatewayName(gwName)), nil
 	case gatewayconfig.AuthModeNone, gatewayconfig.AuthModePlaintext:
 		return NewNoAuthSource(string(mode)), nil

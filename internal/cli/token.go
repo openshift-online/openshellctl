@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 )
 
 func newTokenCommand() *cobra.Command {
@@ -72,7 +74,7 @@ func newTokenShowCommand() *cobra.Command {
 		Short: "Show the resolved token (age, expiry, subject, audience, roles)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			src, _, err := resolveTokenSource(cmd)
+			src, target, err := resolveTokenSource(cmd)
 			if err != nil {
 				return err
 			}
@@ -80,11 +82,45 @@ func newTokenShowCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeToken(cmd.OutOrStdout(), tok, src.Describe(), output)
+			if err := writeToken(cmd.OutOrStdout(), tok, src.Describe(), output); err != nil {
+				return err
+			}
+			// whoami parity: report the gateway's view of the caller (§8.3).
+			// Best-effort — a dial/RPC failure is a warning, not an error, so
+			// `token show` still succeeds offline.
+			reportCurrentUser(cmd, target, src, output)
+			return nil
 		},
 	}
 	c.Flags().StringVarP(&output, "output", "o", "text", "output format: text|json")
 	return c
+}
+
+// reportCurrentUser dials the gateway and prints its CurrentUser view. Failures
+// are reported to stderr and do not fail the command (text mode only, to keep
+// -o json output machine-parseable).
+func reportCurrentUser(cmd *cobra.Command, target *gatewayconfig.Target, src auth.TokenSource, output string) {
+	if output != "text" {
+		return
+	}
+	gw, conn, err := dialGateway(target, src)
+	if err != nil {
+		cmd.PrintErrf("warning: could not reach gateway for whoami: %v\n", err)
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	user, err := gw.CurrentUser(cmd.Context())
+	if err != nil {
+		cmd.PrintErrf("warning: whoami failed: %v\n", err)
+		return
+	}
+	cmd.Printf("\nGateway view (whoami):\n")
+	cmd.Printf("  Subject:  %s\n", user.Subject)
+	if user.DisplayName != "" {
+		cmd.Printf("  Name:     %s\n", user.DisplayName)
+	}
+	cmd.Printf("  Roles:    %s\n", strings.Join(user.Roles, ", "))
 }
 
 func writeToken(w io.Writer, tok *auth.Token, describe, output string) error {
@@ -138,7 +174,12 @@ func newTokenRefreshCommand() *cobra.Command {
 		Short: "Force a token refresh (client-credentials or refresh-token grant)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			src, _, err := resolveTokenSource(cmd)
+			// --write opts the disk-bundle source into persisting a refresh-grant
+			// result; resolveTokenSource reads write-token to wire that Writer.
+			if write {
+				viper.Set("write-token", true)
+			}
+			src, target, err := resolveTokenSource(cmd)
 			if err != nil {
 				return err
 			}
@@ -147,10 +188,24 @@ func newTokenRefreshCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if write {
-				cmd.PrintErrln("note: token write-back is wired in a later commit")
-			}
 			cmd.Printf("refreshed token for subject %q (expires %s)\n", tok.Subject, tokExpiryStr(tok))
+
+			// The disk-bundle refresh path persists itself; for the
+			// client-credentials path (in-memory by default) an explicit
+			// WriteBundle hands the fresh token to the on-disk store.
+			if write && tok.Source == auth.SourceClientCredentials {
+				w, err := tokenWriterFor(target)
+				if err != nil {
+					return err
+				}
+				if w == nil {
+					cmd.PrintErrln("warning: --write ignored: no named gateway resolved to write to")
+				} else if err := auth.WriteBundle(w, tok); err != nil {
+					return fmt.Errorf("write oidc_token.json: %w", err)
+				} else {
+					cmd.Printf("wrote oidc_token.json for gateway %q (Rust CLI schema)\n", target.Name)
+				}
+			}
 			return nil
 		},
 	}
