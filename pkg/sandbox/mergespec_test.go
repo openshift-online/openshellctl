@@ -1,0 +1,127 @@
+package sandbox
+
+import (
+	"testing"
+
+	"github.com/openshift-online/openshellctl/pkg/api/v1alpha1"
+)
+
+func TestMerge_FlagWinsOverManifest(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Metadata: v1alpha1.ObjectMeta{Name: "from-manifest", Workspace: "ws1", Labels: map[string]string{"a": "1"}},
+		Spec:     v1alpha1.SandboxSpec{Image: "img-manifest", Env: map[string]string{"X": "m"}},
+	}
+	f := CreateFlags{
+		Name:   "from-flag",
+		Image:  "img-flag",
+		Labels: map[string]string{"b": "2"},
+		Env:    map[string]string{"X": "f", "Y": "y"},
+	}
+	r, err := MergeManifestAndFlags(m, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Name != "from-flag" || r.Image != "img-flag" {
+		t.Errorf("flag should win: %+v", r)
+	}
+	if r.Workspace != "ws1" {
+		t.Errorf("workspace from manifest = %q", r.Workspace)
+	}
+	// Maps merge, flag key wins.
+	if r.Labels["a"] != "1" || r.Labels["b"] != "2" {
+		t.Errorf("labels merge = %v", r.Labels)
+	}
+	if r.Env["X"] != "f" || r.Env["Y"] != "y" {
+		t.Errorf("env merge (flag wins) = %v", r.Env)
+	}
+}
+
+func TestMerge_Defaults(t *testing.T) {
+	r, err := MergeManifestAndFlags(nil, CreateFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Workspace != "default" {
+		t.Errorf("workspace default = %q", r.Workspace)
+	}
+	if !r.Keep {
+		t.Error("keep should default true")
+	}
+	if r.Output != "table" {
+		t.Errorf("output default = %q", r.Output)
+	}
+}
+
+func TestMerge_NoKeep(t *testing.T) {
+	no := false
+	r, _ := MergeManifestAndFlags(nil, CreateFlags{Keep: &no})
+	if r.Keep {
+		t.Error("--no-keep should set Keep=false")
+	}
+}
+
+func TestMerge_ListReplaceWhenFlagNonEmpty(t *testing.T) {
+	m := &v1alpha1.Sandbox{Spec: v1alpha1.SandboxSpec{Command: []string{"manifest-cmd"}}}
+	// No command flag → manifest kept.
+	r, _ := MergeManifestAndFlags(m, CreateFlags{})
+	if len(r.Command) != 1 || r.Command[0] != "manifest-cmd" {
+		t.Errorf("command = %v", r.Command)
+	}
+	// Command flag → replaces.
+	r2, _ := MergeManifestAndFlags(m, CreateFlags{Command: []string{"flag-cmd", "arg"}})
+	if len(r2.Command) != 2 || r2.Command[0] != "flag-cmd" {
+		t.Errorf("command not replaced: %v", r2.Command)
+	}
+}
+
+func TestToSDKSpec_DefaultsCommand(t *testing.T) {
+	r := &CreateRequest{}
+	spec := ToSDKSpec(r, false)
+	if len(spec.Command) != 2 || spec.Command[0] != "/bin/bash" || spec.Command[1] != "-l" {
+		t.Errorf("default command = %v", spec.Command)
+	}
+}
+
+func TestToSDKSpec_TemplateOnlyWhenSet(t *testing.T) {
+	// No image/resources/driverconfig → no template.
+	if spec := ToSDKSpec(&CreateRequest{}, false); spec.Template != nil {
+		t.Error("template should be nil when unset")
+	}
+	// Image set → template.
+	spec := ToSDKSpec(&CreateRequest{Image: "img", CPU: "2"}, false)
+	if spec.Template == nil || spec.Template.Image != "img" {
+		t.Fatalf("template = %+v", spec.Template)
+	}
+	limits := spec.Template.Resources["limits"].(map[string]any)
+	if limits["cpu"] != "2" {
+		t.Errorf("resources = %v", spec.Template.Resources)
+	}
+}
+
+func TestToSDKSpec_GPUCount(t *testing.T) {
+	cnt := uint32(2)
+	spec := ToSDKSpec(&CreateRequest{GPU: &v1alpha1.GPU{Count: &cnt}}, false)
+	if spec.GPUCount == nil || *spec.GPUCount != 2 {
+		t.Errorf("GPUCount = %v", spec.GPUCount)
+	}
+}
+
+func TestUsesRawGPU(t *testing.T) {
+	if (&CreateRequest{}).UsesRawGPU() {
+		t.Error("no GPU should not use raw")
+	}
+	cnt := uint32(1)
+	if (&CreateRequest{GPU: &v1alpha1.GPU{Count: &cnt}}).UsesRawGPU() {
+		t.Error("explicit count should use SDK, not raw")
+	}
+	if !(&CreateRequest{GPU: &v1alpha1.GPU{}}).UsesRawGPU() {
+		t.Error("bare --gpu (nil count) should use raw")
+	}
+}
+
+func TestToSDKSpec_TTY(t *testing.T) {
+	spec := ToSDKSpec(&CreateRequest{}, true)
+	if !spec.TTY {
+		t.Error("ttyResolved=true should set spec.TTY")
+	}
+}

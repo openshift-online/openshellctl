@@ -67,6 +67,7 @@ func NewRootCommand() *cobra.Command {
 		newSandboxCommand(),
 		newLogsCommand(),
 		newTokenCommand(),
+		newPolicyCommand(),
 		newVersionCommand(),
 	)
 

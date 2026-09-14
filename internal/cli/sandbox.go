@@ -14,12 +14,12 @@ func newSandboxCommand() *cobra.Command {
 	}
 
 	sb.AddCommand(
-		notImplementedLeaf("create", "Create a sandbox"),
-		notImplementedLeaf("get", "Get a sandbox"),
-		notImplementedLeaf("list", "List sandboxes"),
-		notImplementedLeaf("delete", "Delete sandboxes"),
-		notImplementedLeaf("stop", "Stop a sandbox"),
-		notImplementedLeaf("start", "Start a sandbox"),
+		newSandboxCreateCommand(),
+		newSandboxGetCommand(),
+		newSandboxListCommand(),
+		newSandboxDeleteCommand(),
+		newSandboxStopCommand(),
+		newSandboxStartCommand(),
 		notImplementedLeaf("exec", "Run a command in a sandbox"),
 		notImplementedLeaf("connect", "Connect to a sandbox"),
 		notImplementedLeaf("upload", "Upload files to a sandbox"),
