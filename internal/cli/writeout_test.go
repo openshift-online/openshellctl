@@ -65,17 +65,13 @@ func TestWriteToken_JSON(t *testing.T) {
 	}
 }
 
-func TestStubCommandReturnsNotImplemented(t *testing.T) {
-	root := NewRootCommand()
-	var b bytes.Buffer
-	root.SetOut(&b)
-	root.SetErr(&b)
-	root.SetArgs([]string{"sandbox", "create"})
-	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected NotImplementedError from a stub command")
-	}
+// TestNotImplementedErrorMapsToExitError guards the exit-code contract for any
+// remaining stub commands: a NotImplementedError is a generic error (exit 1).
+// (Most commands are implemented as of §8.4-§8.5; this asserts the mapping
+// directly rather than depending on a specific command still being a stub.)
+func TestNotImplementedErrorMapsToExitError(t *testing.T) {
+	err := &NotImplementedError{Command: "example"}
 	if exitCodeFor(err) != ExitError {
-		t.Errorf("stub exit = %d, want %d", exitCodeFor(err), ExitError)
+		t.Errorf("NotImplementedError exit = %d, want %d", exitCodeFor(err), ExitError)
 	}
 }

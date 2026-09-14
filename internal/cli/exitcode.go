@@ -4,7 +4,9 @@ import (
 	"errors"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
+	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
+	"github.com/openshift-online/openshellctl/pkg/sandbox"
 )
 
 // Exit codes, per the implementation spec §5.9.
@@ -49,15 +51,39 @@ func exitCodeFor(err error) int {
 	var expired *auth.ErrTokenExpired
 	var exchange *auth.ExchangeError
 	var oidcMissing *auth.ErrOIDCConfigMissing
-	if errors.As(err, &expired) || errors.As(err, &exchange) || errors.As(err, &oidcMissing) {
+	var gwUnauth *gateway.UnauthenticatedError
+	var gwPerm *gateway.PermissionDeniedError
+	if errors.As(err, &expired) || errors.As(err, &exchange) || errors.As(err, &oidcMissing) ||
+		errors.As(err, &gwUnauth) || errors.As(err, &gwPerm) {
 		return ExitAuth
 	}
 
-	// Gateway not found / unknown → 4.
+	// Not found → 4 (gateway-config resolution and gateway RPC NotFound).
+	var gwNotFound *gateway.NotFoundError
 	if errors.Is(err, gatewayconfig.ErrGatewayNotFound) ||
 		errors.Is(err, gatewayconfig.ErrUnknownGateway) ||
-		errors.Is(err, gatewayconfig.ErrNoActiveGateway) {
+		errors.Is(err, gatewayconfig.ErrNoActiveGateway) ||
+		errors.As(err, &gwNotFound) {
 		return ExitNotFound
+	}
+
+	// Conflict / already-exists → 5.
+	var gwExists *gateway.AlreadyExistsError
+	var gwConflict *gateway.ConflictError
+	if errors.As(err, &gwExists) || errors.As(err, &gwConflict) {
+		return ExitConflict
+	}
+
+	// Provisioning / lifecycle → 6.
+	var provFailed *sandbox.ErrProvisionFailed
+	var provTimeout *sandbox.ErrProvisionTimeout
+	var lifecycle *sandbox.ErrLifecycle
+	var lifecycleTimeout *sandbox.ErrLifecycleTimeout
+	var lifecycleEnded *sandbox.ErrLifecycleStreamEnded
+	if errors.As(err, &provFailed) || errors.As(err, &provTimeout) ||
+		errors.As(err, &lifecycle) || errors.As(err, &lifecycleTimeout) ||
+		errors.As(err, &lifecycleEnded) {
+		return ExitProvision
 	}
 
 	return ExitError
