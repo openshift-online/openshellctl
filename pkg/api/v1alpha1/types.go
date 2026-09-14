@@ -1,0 +1,85 @@
+// Package v1alpha1 defines the openshellctl manifest types
+// (openshell.managed.openshift.io/v1alpha1), shared between the CLI and the
+// operator. Manifests are a thin, Kubernetes-style envelope over the fields a
+// sandbox create accepts (spec §5.4).
+package v1alpha1
+
+// Group/version identifiers.
+const (
+	Group      = "openshell.managed.openshift.io"
+	Version    = "v1alpha1"
+	APIVersion = Group + "/" + Version
+)
+
+// Kinds. Provider is reserved (no spec yet).
+const (
+	KindSandbox  = "Sandbox"
+	KindProvider = "Provider"
+)
+
+// TypeMeta is the apiVersion/kind envelope.
+type TypeMeta struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+}
+
+// ObjectMeta carries name/workspace/labels.
+type ObjectMeta struct {
+	Name      string            `json:"name,omitempty"`      // --name (empty → server-generated)
+	Workspace string            `json:"workspace,omitempty"` // --workspace (default "default")
+	Labels    map[string]string `json:"labels,omitempty"`    // --label
+}
+
+// Sandbox is a manifest describing a sandbox to create.
+type Sandbox struct {
+	TypeMeta `json:",inline"`
+	Metadata ObjectMeta  `json:"metadata"`
+	Spec     SandboxSpec `json:"spec"`
+}
+
+// ProviderRef names a provider to attach.
+type ProviderRef struct {
+	Name string `json:"name"`
+}
+
+// GPU requests GPU resources. An empty struct ({}) means the driver default
+// (bare --gpu with no COUNT); Count set means an explicit count.
+type GPU struct {
+	Count *uint32 `json:"count,omitempty"`
+}
+
+// Resources is the CPU/memory/GPU request.
+type Resources struct {
+	CPU    string `json:"cpu,omitempty"`
+	Memory string `json:"memory,omitempty"`
+	GPU    *GPU   `json:"gpu,omitempty"`
+}
+
+// Upload is a client-side file upload (ignored by the operator).
+type Upload struct {
+	Local     string `json:"local"`
+	Dest      string `json:"dest,omitempty"`      // "" → sandbox workdir
+	GitIgnore *bool  `json:"gitignore,omitempty"` // nil/true = filter; false = --no-git-ignore
+}
+
+// SandboxSpec is the create input.
+type SandboxSpec struct {
+	Image                string            `json:"image,omitempty"`
+	Command              []string          `json:"command,omitempty"`
+	TTY                  *bool             `json:"tty,omitempty"`
+	Env                  map[string]string `json:"env,omitempty"`
+	ProviderRefs         []ProviderRef     `json:"providerRefs,omitempty"`
+	Resources            *Resources        `json:"resources,omitempty"`
+	DriverConfig         map[string]any    `json:"driverConfig,omitempty"`
+	Policy               map[string]any    `json:"policy,omitempty"`
+	PolicyFile           string            `json:"policyFile,omitempty"`
+	ApprovalMode         string            `json:"approvalMode,omitempty"`
+	AutoProviders        *bool             `json:"autoProviders,omitempty"`
+	NoCredentialWarnings bool              `json:"noCredentialWarnings,omitempty"`
+
+	// client-side orchestration (ignored by the operator)
+	Upload  []Upload `json:"upload,omitempty"`
+	Keep    *bool    `json:"keep,omitempty"`
+	Detach  bool     `json:"detach,omitempty"`
+	Forward string   `json:"forward,omitempty"`
+}
