@@ -120,6 +120,95 @@ func TestRenderSandboxSlice(t *testing.T) {
 	}
 }
 
+func TestGPURequestFlag(t *testing.T) {
+	g := &gpuRequestFlag{}
+	if err := g.Set("bare"); err != nil {
+		t.Fatal(err)
+	}
+	if !g.set || g.gpu == nil || g.gpu.Count != nil {
+		t.Errorf("bare gpu: set=%v gpu=%+v", g.set, g.gpu)
+	}
+	if g.Type() != "gpuRequest" || g.String() != "bare" {
+		t.Errorf("Type=%q String=%q", g.Type(), g.String())
+	}
+
+	g2 := &gpuRequestFlag{}
+	if err := g2.Set("4"); err != nil {
+		t.Fatal(err)
+	}
+	if g2.gpu.Count == nil || *g2.gpu.Count != 4 {
+		t.Errorf("gpu count = %v", g2.gpu.Count)
+	}
+	if g2.String() != "4" {
+		t.Errorf("String = %q", g2.String())
+	}
+
+	g3 := &gpuRequestFlag{}
+	if err := g3.Set("0"); err == nil {
+		t.Error("gpu count 0 should error")
+	}
+	if err := g3.Set("notanum"); err == nil {
+		t.Error("non-numeric gpu should error")
+	}
+}
+
+func TestBuildCreateFlags_Forward(t *testing.T) {
+	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{forward: "8080"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Forward == nil || f.Forward.Port != 8080 || f.Forward.Bind != "127.0.0.1" {
+		t.Errorf("forward = %+v", f.Forward)
+	}
+}
+
+func TestBuildCreateFlags_BadForward(t *testing.T) {
+	_, err := buildCreateFlags(&cobra.Command{}, createFlagInput{forward: "notaport"})
+	if err == nil || exitCodeFor(err) != ExitUsage {
+		t.Fatalf("err = %v exit = %d, want usage", err, exitCodeFor(err))
+	}
+}
+
+func TestBuildCreateFlags_Upload(t *testing.T) {
+	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{
+		uploads:     []string{"./local:/remote", "justlocal"},
+		noGitIgnore: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Uploads) != 2 {
+		t.Fatalf("uploads len = %d", len(f.Uploads))
+	}
+	if f.Uploads[0].Local != "./local" || f.Uploads[0].Dest != "/remote" {
+		t.Errorf("upload[0] = %+v", f.Uploads[0])
+	}
+	if f.Uploads[1].Local != "justlocal" || f.Uploads[1].Dest != "" {
+		t.Errorf("upload[1] = %+v", f.Uploads[1])
+	}
+	// --no-git-ignore → GitIgnore=false
+	if f.Uploads[0].GitIgnore == nil || *f.Uploads[0].GitIgnore {
+		t.Errorf("gitignore should be false with --no-git-ignore")
+	}
+}
+
+func TestBuildCreateFlags_BadDriverConfigJSON(t *testing.T) {
+	_, err := buildCreateFlags(&cobra.Command{}, createFlagInput{driverConfigJSON: "not json"})
+	if err == nil || exitCodeFor(err) != ExitUsage {
+		t.Fatalf("err = %v exit = %d, want usage", err, exitCodeFor(err))
+	}
+}
+
+func TestBuildCreateFlags_DriverConfigJSON(t *testing.T) {
+	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{driverConfigJSON: `{"key":"val"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.DriverConfig == nil || f.DriverConfig["key"] != "val" {
+		t.Errorf("driverConfig = %v", f.DriverConfig)
+	}
+}
+
 func TestCommandArgs(t *testing.T) {
 	// Build a command that records ArgsLenAtDash via parsing.
 	cmd := &cobra.Command{Use: "create", RunE: func(*cobra.Command, []string) error { return nil }}
