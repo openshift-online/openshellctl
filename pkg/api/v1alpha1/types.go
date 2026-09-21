@@ -62,6 +62,18 @@ type Upload struct {
 	GitIgnore *bool  `json:"gitignore,omitempty"` // nil/true = filter; false = --no-git-ignore
 }
 
+// SessionOpts groups client-side session behavior that controls what happens
+// after sandbox creation. These are not part of the sandbox resource itself —
+// the gateway and operator ignore them. They exist so that a single manifest
+// file can fully describe "create sandbox X and behave like this."
+type SessionOpts struct {
+	NoKeep       bool   `json:"noKeep,omitempty"`       // delete sandbox when session ends
+	Detach       bool   `json:"detach,omitempty"`        // return after create, do not attach
+	Forward      string `json:"forward,omitempty"`       // [bind:]port to forward
+	ApprovalMode string `json:"approvalMode,omitempty"`  // manual|auto
+	Output       string `json:"output,omitempty"`        // table|json|yaml
+}
+
 // SandboxSpec is the create input.
 type SandboxSpec struct {
 	Image                string            `json:"image,omitempty"`
@@ -73,13 +85,20 @@ type SandboxSpec struct {
 	DriverConfig         map[string]any    `json:"driverConfig,omitempty"`
 	Policy               map[string]any    `json:"policy,omitempty"`
 	PolicyFile           string            `json:"policyFile,omitempty"`
-	ApprovalMode         string            `json:"approvalMode,omitempty"`
 	AutoProviders        *bool             `json:"autoProviders,omitempty"`
 	NoCredentialWarnings bool              `json:"noCredentialWarnings,omitempty"`
 
 	// client-side orchestration (ignored by the operator)
-	Upload  []Upload `json:"upload,omitempty"`
-	Keep    *bool    `json:"keep,omitempty"`
-	Detach  bool     `json:"detach,omitempty"`
-	Forward string   `json:"forward,omitempty"`
+	Upload      []Upload     `json:"upload,omitempty"`
+	SessionOpts *SessionOpts `json:"sessionOpts,omitempty"`
+
+	// Deprecated: use sessionOpts.approvalMode. Kept for backward compat
+	// during v1alpha1; removed when the schema stabilizes.
+	ApprovalMode string `json:"approvalMode,omitempty"`
+	// Deprecated: use sessionOpts.noKeep (inverted). Kept for backward compat.
+	Keep *bool `json:"keep,omitempty"`
+	// Deprecated: use sessionOpts.detach. Kept for backward compat.
+	Detach bool `json:"detach,omitempty"`
+	// Deprecated: use sessionOpts.forward. Kept for backward compat.
+	Forward string `json:"forward,omitempty"`
 }

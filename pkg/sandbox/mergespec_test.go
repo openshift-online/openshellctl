@@ -74,6 +74,77 @@ func TestMerge_ListReplaceWhenFlagNonEmpty(t *testing.T) {
 	}
 }
 
+func TestMerge_SessionOpts(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Image: "img",
+			SessionOpts: &v1alpha1.SessionOpts{
+				NoKeep:       true,
+				Detach:       true,
+				ApprovalMode: "auto",
+				Output:       "json",
+				Forward:      "8080",
+			},
+		},
+	}
+	r, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Keep {
+		t.Error("sessionOpts.noKeep should set Keep=false")
+	}
+	if !r.Detach {
+		t.Error("sessionOpts.detach should be true")
+	}
+	if r.ApprovalMode != "auto" {
+		t.Errorf("approvalMode = %q, want auto", r.ApprovalMode)
+	}
+	if r.Output != "json" {
+		t.Errorf("output = %q, want json", r.Output)
+	}
+	if r.Forward == nil || r.Forward.Port != 8080 {
+		t.Errorf("forward = %+v, want port 8080", r.Forward)
+	}
+}
+
+func TestMerge_SessionOptsOverridesDeprecated(t *testing.T) {
+	tru := true
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Image:        "img",
+			ApprovalMode: "manual",
+			Keep:         &tru,
+			SessionOpts: &v1alpha1.SessionOpts{
+				NoKeep:       true,
+				ApprovalMode: "auto",
+			},
+		},
+	}
+	r, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Keep {
+		t.Error("sessionOpts.noKeep should override deprecated keep")
+	}
+	if r.ApprovalMode != "auto" {
+		t.Errorf("sessionOpts.approvalMode should override deprecated: got %q", r.ApprovalMode)
+	}
+}
+
+func TestMerge_SessionOptsForwardBad(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			SessionOpts: &v1alpha1.SessionOpts{Forward: "notaport"},
+		},
+	}
+	_, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err == nil {
+		t.Fatal("expected error for bad forward spec")
+	}
+}
+
 func TestToSDKSpec_DefaultsCommand(t *testing.T) {
 	r := &CreateRequest{}
 	spec := ToSDKSpec(r, false)

@@ -111,7 +111,7 @@ openshellctl sandbox create --from pytorch --gpu 2     # explicit count
 # Create from a full image reference
 openshellctl sandbox create --from ghcr.io/org/image:tag
 
-# Create from a manifest file
+# Create from a manifest file (everything in one file)
 openshellctl sandbox create -f sandbox.yaml
 cat sandbox.yaml | openshellctl sandbox create -f -
 
@@ -160,6 +160,65 @@ openshellctl sandbox create --from python -o json
 | `--policy` | Sandbox policy file (env: `OPENSHELL_SANDBOX_POLICY`) |
 | `-o`, `--output` | Output format: `table` (default), `json`, `yaml` |
 
+#### Manifest format
+
+A manifest file (`-f`) lets you put everything — sandbox spec, command, and session behavior — into one YAML file:
+
+```yaml
+apiVersion: openshell.managed.openshift.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: sop-improve
+  labels:
+    team: sre-platform
+spec:
+  image: quay.io/redhat-services-prod/rosa-tenant/rosa-agent/rosa-agent:latest
+  command: ["claude", "/job-sop-improve"]
+  providerRefs:
+    - name: rosa-general-vertex
+    - name: rosa-agent-github
+    - name: rosa-agent-jira
+  env:
+    ANTHROPIC_BASE_URL: https://inference.local
+    ANTHROPIC_API_KEY: unused
+    JIRA_EMAIL: sd-sre-platform+rosa-agent@redhat.com
+    JIRA_BASE_URL: https://redhat.atlassian.net
+  resources:
+    cpu: "2"
+    memory: 4Gi
+    gpu:
+      count: 1
+  upload:
+    - local: ./src
+      dest: /workspace
+  sessionOpts:
+    noKeep: true
+    forward: "8080"
+    approvalMode: auto
+    output: table
+```
+
+Then create and delete are both one-liners:
+
+```bash
+openshellctl sandbox create -f sop-improve.yaml
+openshellctl sandbox delete -f sop-improve.yaml
+```
+
+**`spec.command`** works like a Kubernetes pod spec — it's the command (with arguments) to run inside the sandbox. If omitted, the sandbox's default entrypoint (`/bin/bash -l`) is used.
+
+**`spec.sessionOpts`** groups client-side session behavior:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `noKeep` | bool | Delete the sandbox when the session ends |
+| `detach` | bool | Return after create, do not attach |
+| `forward` | string | `[bind:]port` to forward to the sandbox |
+| `approvalMode` | string | `manual` (default) or `auto` |
+| `output` | string | `table` (default), `json`, or `yaml` |
+
+These fields are ignored by the operator — they control what the CLI does after creation. CLI flags always override manifest values.
+
 ### `sandbox get`
 
 Show details of a single sandbox.
@@ -201,11 +260,12 @@ openshellctl sandbox list --limit 10 --offset 20
 
 ### `sandbox delete`
 
-Delete one or more sandboxes.
+Delete one or more sandboxes. Supports `-f` to read the sandbox name from a manifest, like `kubectl delete -f`.
 
 ```bash
 openshellctl sandbox delete my-sandbox
 openshellctl sandbox delete sb-1 sb-2 sb-3
+openshellctl sandbox delete -f sandbox.yaml          # reads name from manifest
 openshellctl sandbox delete --all
 openshellctl sandbox delete my-sandbox --wait
 openshellctl sandbox delete my-sandbox --wait --wait-timeout 2m
@@ -213,6 +273,7 @@ openshellctl sandbox delete my-sandbox --wait --wait-timeout 2m
 
 | Flag | Description |
 |------|-------------|
+| `-f`, `--file` | Manifest file to read sandbox name from (`-` for stdin) |
 | `--all` | Delete all sandboxes in the workspace |
 | `--wait` | Wait for deletion to complete |
 | `--wait-timeout` | Wait timeout (default: `5m`) |

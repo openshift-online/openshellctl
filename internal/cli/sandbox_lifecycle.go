@@ -50,13 +50,21 @@ func newSandboxDeleteCommand() *cobra.Command {
 		all         bool
 		wait        bool
 		waitTimeout time.Duration
+		file        string
 	)
 	c := &cobra.Command{
 		Use:   "delete NAME...",
 		Short: "Delete sandboxes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if file != "" {
+				names, err := namesFromManifest(cmd, file)
+				if err != nil {
+					return err
+				}
+				args = append(args, names...)
+			}
 			if !all && len(args) == 0 {
-				return &UsageError{Err: fmt.Errorf("a sandbox name is required unless --all is given")}
+				return &UsageError{Err: fmt.Errorf("a sandbox name is required unless --all or -f is given")}
 			}
 			if all && len(args) > 0 {
 				return &UsageError{Err: fmt.Errorf("--all cannot be combined with names")}
@@ -88,7 +96,21 @@ func newSandboxDeleteCommand() *cobra.Command {
 	f.BoolVar(&all, "all", false, "delete all sandboxes in the workspace")
 	f.BoolVar(&wait, "wait", false, "wait for deletion to complete")
 	f.DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, "wait timeout")
+	f.StringVarP(&file, "file", "f", "", "manifest file to read sandbox name from (- for stdin)")
 	return c
+}
+
+// namesFromManifest reads a manifest and returns the sandbox name as a
+// single-element slice. This enables kubectl-style `delete -f manifest.yaml`.
+func namesFromManifest(cmd *cobra.Command, path string) ([]string, error) {
+	m, err := loadManifest(cmd, path)
+	if err != nil {
+		return nil, err
+	}
+	if m.Metadata.Name == "" {
+		return nil, &UsageError{Err: fmt.Errorf("manifest has no metadata.name")}
+	}
+	return []string{m.Metadata.Name}, nil
 }
 
 // lifecycleTimeout reads OPENSHELL_LIFECYCLE_TIMEOUT (seconds), default 300s.

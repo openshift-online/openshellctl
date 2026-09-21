@@ -134,6 +134,19 @@ func (s *Sandbox) Validate() []error {
 		add("spec.approvalMode", `must be one of "", "manual", "auto"`)
 	}
 
+	if s.Spec.SessionOpts != nil {
+		switch s.Spec.SessionOpts.ApprovalMode {
+		case "", "manual", "auto":
+		default:
+			add("spec.sessionOpts.approvalMode", `must be one of "", "manual", "auto"`)
+		}
+		switch s.Spec.SessionOpts.Output {
+		case "", "table", "json", "yaml":
+		default:
+			add("spec.sessionOpts.output", `must be one of "", "table", "json", "yaml"`)
+		}
+	}
+
 	for i, u := range s.Spec.Upload {
 		if u.Local == "" {
 			add(fmt.Sprintf("spec.upload[%d].local", i), "must not be empty")

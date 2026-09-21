@@ -1276,6 +1276,13 @@ Sub-commit 4e specifics (closing the deferred 4d create items):
 - **TODO added for `sandbox validate` subcommand.** A comment in `internal/cli/sandbox.go` marks the planned subcommand for client-side manifest validation against OpenShell restrictions (name length ≤19, image format, resource quantities, label constraints) before sending to the gateway.
 - **README.md created.** Full walkthrough of all CLI commands, flags, exit codes, environment variables, authentication, and differences from the upstream Rust CLI.
 
+### Commit — spec.sessionOpts, delete -f, goreleaser build system
+
+- **`spec.sessionOpts` added to v1alpha1 manifest.** Groups client-side session behavior (`noKeep`, `detach`, `forward`, `approvalMode`, `output`) into a dedicated struct so a single YAML file can fully describe a create-and-run workflow. The deprecated flat fields (`spec.keep`, `spec.detach`, `spec.forward`, `spec.approvalMode`) are preserved for backward compat; `sessionOpts` takes precedence when both are present. This is an openshellctl extension — no upstream equivalent exists.
+- **`spec.command` already existed** and flows through `MergeManifestAndFlags` → `sandbox.Create` → SDK. No code change needed; documented in README for discoverability.
+- **`sandbox delete -f` reads name from manifest.** Enables kubectl-style `openshellctl sandbox delete -f manifest.yaml`. The `-f` flag parses the manifest and extracts `metadata.name`; manifests without a name return a usage error.
+- **Goreleaser build system added.** `.goreleaser.yaml` (v2) for cross-platform builds (linux/darwin × amd64/arm64) with binary hardening flags. Makefile rewritten following srepd's pattern: goreleaser-based `build`/`install-local`, raw `go build` `install`, self-documenting `help`, `test-race`, `coverage`, `test-coverage-threshold`, `release` targets. `dist/` added to `.gitignore`.
+
 ## Sources
 
 - NVIDIA/OpenShell v0.0.116 (`d1155aa70042d3e2ee49dbfa15346b108b7c1d92`): `crates/openshell-cli/src/{main.rs,run.rs,ssh.rs,oidc_auth.rs,tls.rs,commands/common.rs,output.rs}`, `crates/openshell-bootstrap/src/{metadata.rs,oidc_token.rs,paths.rs}`, `crates/openshell-core/src/{auth.rs,paths.rs,forward.rs,inference.rs,settings.rs}`, `crates/openshell-providers/src/{lib.rs,profiles.rs}`, `crates/openshell-policy/src/{lib.rs,middleware.rs,l7_validate.rs}`, `crates/openshell-server/src/auth/{oidc.rs,authz.rs,http.rs}`, `crates/openshell-supervisor-process/src/ssh.rs`, `proto/{openshell.proto,sandbox.proto,datamodel.proto}`, `sdk/go/**`, `docs/reference/{gateway-auth.mdx,policy-schema.mdx}`, `examples/supervisor-middleware-content-guard/policy.yaml`, `rfc/0014-release-stability/README.md`; `git diff v0.0.116..v0.1.0-pre.1 -- crates/openshell-cli proto/`.

@@ -75,6 +75,48 @@ func TestDelete_AllWithNameExit2(t *testing.T) {
 	}
 }
 
+func TestDelete_FileExtractsName(t *testing.T) {
+	manifest := `apiVersion: openshell.managed.openshift.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: from-file
+spec:
+  image: test:latest
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sb.yaml")
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// delete -f should parse the name but fail on gateway (no connection) —
+	// the key assertion is that it does NOT fail with "a sandbox name is required".
+	_, err := runCmd(t, "sandbox", "delete", "--file", path)
+	if err == nil {
+		t.Fatal("expected gateway error, not success")
+	}
+	if exitCodeFor(err) == ExitUsage {
+		t.Fatalf("should not be a usage error — -f should provide the name: %v", err)
+	}
+}
+
+func TestDelete_FileNoName(t *testing.T) {
+	manifest := `apiVersion: openshell.managed.openshift.io/v1alpha1
+kind: Sandbox
+metadata: {}
+spec:
+  image: test:latest
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sb.yaml")
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runCmd(t, "sandbox", "delete", "--file", path)
+	if err == nil || exitCodeFor(err) != ExitUsage {
+		t.Fatalf("err = %v exit = %d, want usage (no name)", err, exitCodeFor(err))
+	}
+}
+
 func TestGet_NoNameExit2(t *testing.T) {
 	_, err := runCmd(t, "sandbox", "get")
 	if err == nil || exitCodeFor(err) != ExitUsage {

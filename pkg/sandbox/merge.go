@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"fmt"
+
 	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
 
 	"github.com/openshift-online/openshellctl/pkg/api/v1alpha1"
@@ -82,15 +84,49 @@ func MergeManifestAndFlags(m *v1alpha1.Sandbox, f CreateFlags) (*CreateRequest, 
 			r.GPU = m.Spec.Resources.GPU
 		}
 		r.DriverConfig = m.Spec.DriverConfig
-		r.ApprovalMode = m.Spec.ApprovalMode
 		r.NoCredentialWarnings = m.Spec.NoCredentialWarnings
 		r.Uploads = m.Spec.Upload
+
+		// Session opts: new sessionOpts block takes precedence over
+		// deprecated flat fields. Both are read for backward compat.
+		r.ApprovalMode = m.Spec.ApprovalMode
 		if m.Spec.Keep != nil {
 			r.Keep = *m.Spec.Keep
 		} else {
 			r.Keep = true
 		}
 		r.Detach = m.Spec.Detach
+
+		// Parse forward spec from deprecated flat field.
+		if m.Spec.Forward != "" {
+			spec, err := ParseForwardSpec(m.Spec.Forward)
+			if err != nil {
+				return nil, fmt.Errorf("spec.forward: %w", err)
+			}
+			r.Forward = &spec
+		}
+
+		if so := m.Spec.SessionOpts; so != nil {
+			if so.NoKeep {
+				r.Keep = false
+			}
+			if so.Detach {
+				r.Detach = true
+			}
+			if so.ApprovalMode != "" {
+				r.ApprovalMode = so.ApprovalMode
+			}
+			if so.Output != "" {
+				r.Output = so.Output
+			}
+			if so.Forward != "" {
+				spec, err := ParseForwardSpec(so.Forward)
+				if err != nil {
+					return nil, fmt.Errorf("spec.sessionOpts.forward: %w", err)
+				}
+				r.Forward = &spec
+			}
+		}
 	} else {
 		r.Keep = true
 	}

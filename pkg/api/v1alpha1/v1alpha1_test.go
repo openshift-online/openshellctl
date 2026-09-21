@@ -87,6 +87,12 @@ func TestValidate_Rules(t *testing.T) {
 			s.Spec.PolicyFile = "p.yaml"
 		}, "mutually exclusive"},
 		{"bad approvalMode", func(s *Sandbox) { s.Spec.ApprovalMode = "sometimes" }, "spec.approvalMode"},
+		{"bad sessionOpts approvalMode", func(s *Sandbox) {
+			s.Spec.SessionOpts = &SessionOpts{ApprovalMode: "yolo"}
+		}, "spec.sessionOpts.approvalMode"},
+		{"bad sessionOpts output", func(s *Sandbox) {
+			s.Spec.SessionOpts = &SessionOpts{Output: "xml"}
+		}, "spec.sessionOpts.output"},
 		{"empty upload local", func(s *Sandbox) { s.Spec.Upload = []Upload{{Local: ""}} }, "spec.upload[0].local"},
 		{"empty providerRef", func(s *Sandbox) { s.Spec.ProviderRefs = []ProviderRef{{Name: ""}} }, "providerRefs[0].name"},
 		{"dup providerRef", func(s *Sandbox) {
