@@ -27,6 +27,8 @@ func TestExitCodeFor(t *testing.T) {
 		{"wrapped gateway not found → notfound", errWrap(&gateway.NotFoundError{Name: "x"}), ExitNotFound},
 		{"gateway already exists → conflict", &gateway.AlreadyExistsError{Name: "x"}, ExitConflict},
 		{"gateway conflict → conflict", &gateway.ConflictError{Message: "modified"}, ExitConflict},
+		{"gateway invalid argument → usage", &gateway.InvalidArgumentError{Message: "name exceeds maximum length (20 > 19)"}, ExitUsage},
+		{"wrapped gateway invalid argument → usage", errWrap(&gateway.InvalidArgumentError{Message: "bad"}), ExitUsage},
 
 		// Sandbox provisioning / lifecycle errors.
 		{"provision failed → provision", &sandbox.ErrProvisionFailed{Reason: "boom"}, ExitProvision},

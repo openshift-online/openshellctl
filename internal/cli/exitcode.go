@@ -90,6 +90,12 @@ func exitCodeFor(err error) int {
 		return ExitNotFound
 	}
 
+	// Invalid argument → 2 (gateway-rejected validation, e.g. name length).
+	var gwInvalidArg *gateway.InvalidArgumentError
+	if errors.As(err, &gwInvalidArg) {
+		return ExitUsage
+	}
+
 	// Conflict / already-exists → 5.
 	var gwExists *gateway.AlreadyExistsError
 	var gwConflict *gateway.ConflictError

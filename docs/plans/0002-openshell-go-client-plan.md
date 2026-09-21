@@ -1269,6 +1269,13 @@ Sub-commit 4e specifics (closing the deferred 4d create items):
 - **`buildCreateFlags` handles nil tri-state pointers safely.** The existing tests construct `createFlagInput` without the new fields; the builder checks `in.tty != nil` before calling `.Value()`.
 - **`--approval-mode` default changed from `""` to `"manual"`.** The parity JSON shows `"default": "manual"`. Previously the flag had no default; now it matches the upstream default.
 
+### Commit — Error handling, validate TODO, README (§8.5 follow-up)
+
+- **`gateway.InvalidArgumentError` now maps to `ExitUsage` (2).** Previously fell through to `ExitError` (1). The gateway returns `InvalidArgument` for client-side validation failures like `name exceeds maximum length (20 > 19)`. These are usage/validation errors from the user's perspective and belong in exit code 2 alongside `UsageError`. Test added.
+- **Auth failures now print a `Hint:` line.** When `exitCodeFor` returns `ExitAuth` (3), `Execute()` prints `Hint: try \`openshellctl token refresh\` to obtain a new token.` to stderr. This covers `ExpiredSignature`, `ErrTokenExpired`, exchange failures, and permission denied.
+- **TODO added for `sandbox validate` subcommand.** A comment in `internal/cli/sandbox.go` marks the planned subcommand for client-side manifest validation against OpenShell restrictions (name length ≤19, image format, resource quantities, label constraints) before sending to the gateway.
+- **README.md created.** Full walkthrough of all CLI commands, flags, exit codes, environment variables, authentication, and differences from the upstream Rust CLI.
+
 ## Sources
 
 - NVIDIA/OpenShell v0.0.116 (`d1155aa70042d3e2ee49dbfa15346b108b7c1d92`): `crates/openshell-cli/src/{main.rs,run.rs,ssh.rs,oidc_auth.rs,tls.rs,commands/common.rs,output.rs}`, `crates/openshell-bootstrap/src/{metadata.rs,oidc_token.rs,paths.rs}`, `crates/openshell-core/src/{auth.rs,paths.rs,forward.rs,inference.rs,settings.rs}`, `crates/openshell-providers/src/{lib.rs,profiles.rs}`, `crates/openshell-policy/src/{lib.rs,middleware.rs,l7_validate.rs}`, `crates/openshell-server/src/auth/{oidc.rs,authz.rs,http.rs}`, `crates/openshell-supervisor-process/src/ssh.rs`, `proto/{openshell.proto,sandbox.proto,datamodel.proto}`, `sdk/go/**`, `docs/reference/{gateway-auth.mdx,policy-schema.mdx}`, `examples/supervisor-middleware-content-guard/policy.yaml`, `rfc/0014-release-stability/README.md`; `git diff v0.0.116..v0.1.0-pre.1 -- crates/openshell-cli proto/`.

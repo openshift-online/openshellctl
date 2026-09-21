@@ -116,7 +116,11 @@ func Execute() int {
 		if !errors.As(err, &remote) {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
 		}
-		return exitCodeFor(err)
+		code := exitCodeFor(err)
+		if code == ExitAuth {
+			fmt.Fprintf(os.Stderr, "Hint: try `openshellctl token refresh` to obtain a new token.\n")
+		}
+		return code
 	}
 	return ExitOK
 }

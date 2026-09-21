@@ -13,6 +13,9 @@ func newSandboxCommand() *cobra.Command {
 		Short:   "Manage sandboxes",
 	}
 
+	// TODO: add `sandbox validate` subcommand — client-side validation of manifests
+	// against OpenShell restrictions (name length ≤19, image format, resource
+	// quantities, label constraints) before sending to the gateway.
 	sb.AddCommand(
 		newSandboxCreateCommand(),
 		newSandboxGetCommand(),
