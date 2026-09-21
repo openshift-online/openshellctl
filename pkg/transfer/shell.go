@@ -2,10 +2,10 @@ package transfer
 
 import "strings"
 
-// shellEscape mirrors forward.rs:782-796. An empty string becomes ”. A string
+// ShellEscape mirrors forward.rs:782-796. An empty string becomes ''. A string
 // whose every byte is ASCII-alphanumeric or one of . / - _ is returned as-is;
-// otherwise it is single-quote wrapped with embedded ' replaced by '"'"'.
-func shellEscape(s string) string {
+// otherwise it is single-quote wrapped with embedded ' replaced by '”'”'.
+func ShellEscape(s string) string {
 	if s == "" {
 		return "''"
 	}

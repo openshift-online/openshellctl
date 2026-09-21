@@ -21,10 +21,10 @@ func newSandboxCommand() *cobra.Command {
 		newSandboxStopCommand(),
 		newSandboxStartCommand(),
 		newSandboxExecCommand(),
-		notImplementedLeaf("connect", "Connect to a sandbox"),
-		notImplementedLeaf("upload", "Upload files to a sandbox"),
-		notImplementedLeaf("download", "Download files from a sandbox"),
-		notImplementedLeaf("ssh-config", "Print an ssh config block for a sandbox"),
+		newSandboxConnectCommand(),
+		newSandboxUploadCommand(),
+		newSandboxDownloadCommand(),
+		newSandboxSSHConfigCommand(),
 		newProviderCommand(),
 	)
 
@@ -38,9 +38,9 @@ func newProviderCommand() *cobra.Command {
 		Short: "Manage sandbox providers",
 	}
 	p.AddCommand(
-		notImplementedLeaf("list", "List providers attached to a sandbox"),
-		notImplementedLeaf("attach", "Attach a provider to a sandbox"),
-		notImplementedLeaf("detach", "Detach a provider from a sandbox"),
+		newProviderListCommand(),
+		newProviderAttachCommand(),
+		newProviderDetachCommand(),
 	)
 	return p
 }

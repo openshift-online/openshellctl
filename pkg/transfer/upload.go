@@ -82,7 +82,7 @@ func (c *client) runUploadTar(ctx context.Context, workspace, sandbox, destDir s
 // uploadExtractCommand builds the remote command "mkdir -p <d> && cat | tar xf -
 // -C <d>" with <d> shell-escaped (ssh.rs:784-786). Pure.
 func uploadExtractCommand(destDir string) string {
-	escaped := shellEscape(destDir)
+	escaped := ShellEscape(destDir)
 	return fmt.Sprintf("mkdir -p %s && cat | tar xf - -C %s", escaped, escaped)
 }
 

@@ -26,8 +26,8 @@ func TestShellEscape(t *testing.T) {
 		"it's":       `'it'"'"'s'`,
 	}
 	for in, want := range cases {
-		if got := shellEscape(in); got != want {
-			t.Errorf("shellEscape(%q) = %q, want %q", in, got, want)
+		if got := ShellEscape(in); got != want {
+			t.Errorf("ShellEscape(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

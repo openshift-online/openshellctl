@@ -59,7 +59,7 @@ const (
 // sourceProbeCommand builds the "pwd -P && realpath -e -- <p>" probe command
 // with <p> shell-escaped (ssh.rs:909-912). Pure.
 func sourceProbeCommand(remote string) string {
-	return fmt.Sprintf("pwd -P && realpath -e -- %s", shellEscape(remote))
+	return fmt.Sprintf("pwd -P && realpath -e -- %s", ShellEscape(remote))
 }
 
 // resolveSandboxSourcePath runs the resolve probe and validates the result. It
@@ -136,7 +136,7 @@ func validateWorkspaceRoot(root string) error {
 // typeProbeCommand builds the "[ -d ] / [ -e ]" type probe (ssh.rs:1167-1170).
 // Pure.
 func typeProbeCommand(p string) string {
-	esc := shellEscape(p)
+	esc := ShellEscape(p)
 	return fmt.Sprintf("if [ -d %s ]; then printf dir; elif [ -e %s ]; then printf file; else printf missing; fi", esc, esc)
 }
 
@@ -237,12 +237,12 @@ func downloadDir(cli *ssh.Client, remote, dest string) error {
 // singleFileTarCommand builds "tar cf - -C <parent> -- <name>" (ssh.rs:1274). The
 // "--" is load-bearing for names beginning with "-". Pure.
 func singleFileTarCommand(parent, name string) string {
-	return fmt.Sprintf("tar cf - -C %s -- %s", shellEscape(parent), shellEscape(name))
+	return fmt.Sprintf("tar cf - -C %s -- %s", ShellEscape(parent), ShellEscape(name))
 }
 
 // dirTarCommand builds "tar cf - -C <path> ." (ssh.rs:1380). Pure.
 func dirTarCommand(path string) string {
-	return fmt.Sprintf("tar cf - -C %s .", shellEscape(path))
+	return fmt.Sprintf("tar cf - -C %s .", ShellEscape(path))
 }
 
 // streamTarInto runs cmd and extracts its stdout tar into dir, rejecting entries
