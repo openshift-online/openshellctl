@@ -11,9 +11,9 @@ import (
 
 func TestParseUploadSpec(t *testing.T) {
 	cases := []struct {
-		in         string
-		wantLocal  string
-		wantDest   string
+		in        string
+		wantLocal string
+		wantDest  string
 	}{
 		{"./mydir", "./mydir", ""},
 		{"/abs/path:/remote/dest", "/abs/path", "/remote/dest"},

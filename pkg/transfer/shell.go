@@ -2,7 +2,7 @@ package transfer
 
 import "strings"
 
-// ShellEscape mirrors forward.rs:782-796. An empty string becomes ''. A string
+// ShellEscape mirrors forward.rs:782-796. An empty string becomes ”. A string
 // whose every byte is ASCII-alphanumeric or one of . / - _ is returned as-is;
 // otherwise it is single-quote wrapped with embedded ' replaced by '”'”'.
 func ShellEscape(s string) string {

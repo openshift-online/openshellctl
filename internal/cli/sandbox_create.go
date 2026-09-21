@@ -66,10 +66,10 @@ func newSandboxCreateCommand() *cobra.Command {
 				providers: providers, labels: labels, env: envs,
 				approvalMode: approvalMode, format: format,
 				noKeep: noKeep, keep: keep, noCredWarn: noCredWarn,
-				command:    commandArgs(cmd, args),
-				uploads:    uploads, noGitIgnore: noGitIgnore,
-				forward:    forward, detach: detach,
-				gpu:        gpuFlag, tty: ttyState, autoProviders: autoProvState,
+				command: commandArgs(cmd, args),
+				uploads: uploads, noGitIgnore: noGitIgnore,
+				forward: forward, detach: detach,
+				gpu: gpuFlag, tty: ttyState, autoProviders: autoProvState,
 				driverConfigJSON: driverConfigJSON, policyFile: policyFile,
 			})
 			if err != nil {
