@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // the13Subcommands is the set of leaf subcommands openshellctl must expose for
@@ -36,6 +37,8 @@ func collectCommandNames(root *cobra.Command) map[string]*cobra.Command {
 }
 
 func TestParity_AllThirteenSubcommandsExist(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 	root := NewRootCommand()
 	names := collectCommandNames(root)
 
@@ -51,6 +54,8 @@ func TestParity_AllThirteenSubcommandsExist(t *testing.T) {
 }
 
 func TestParity_ProviderHasListAttachDetach(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 	root := NewRootCommand()
 	names := collectCommandNames(root)
 
@@ -70,6 +75,8 @@ func TestParity_ProviderHasListAttachDetach(t *testing.T) {
 }
 
 func TestParity_SandboxHasSbAlias(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 	root := NewRootCommand()
 	names := collectCommandNames(root)
 	sb, ok := names["sandbox"]

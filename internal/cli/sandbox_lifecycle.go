@@ -19,6 +19,9 @@ func newSandboxStopCommand() *cobra.Command {
 		Short: "Stop a sandbox",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkFileArgConflict(file, args); err != nil {
+				return err
+			}
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
 				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
@@ -44,6 +47,9 @@ func newSandboxStartCommand() *cobra.Command {
 		Short: "Start a sandbox",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkFileArgConflict(file, args); err != nil {
+				return err
+			}
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
 				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)

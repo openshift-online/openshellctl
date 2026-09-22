@@ -47,6 +47,10 @@ func TestContextCanceledExitCode(t *testing.T) {
 }
 
 func TestFlagParseErrorIsUsage(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root := NewRootCommand()
 	root.SetArgs([]string{"--nonexistent-flag"})
 	err := root.Execute()

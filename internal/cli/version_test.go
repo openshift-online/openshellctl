@@ -6,9 +6,15 @@ import (
 	"testing"
 
 	"github.com/openshift-online/openshellctl/internal/version"
+	"github.com/spf13/viper"
 )
 
 func TestVersionCommand_PrintsPin(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
 	oldPin := version.OpenShellPin
 	t.Cleanup(func() { version.OpenShellPin = oldPin })
 	version.OpenShellPin = "v0.0.116"

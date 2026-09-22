@@ -31,6 +31,7 @@ func setupGatewayTree(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(xdg, "openshell", "active_gateway"), []byte("rosa"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	return xdg
 }
@@ -100,7 +101,12 @@ func TestTokenShow_JSON(t *testing.T) {
 }
 
 func TestExecute_UnknownCommandUsageExit(t *testing.T) {
-	// Execute() builds its own root; an unknown flag must map to exit 2.
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
 	os.Args = []string{"openshellctl", "--nonexistent"}
 	code := Execute()
 	if code != ExitUsage {
@@ -109,6 +115,12 @@ func TestExecute_UnknownCommandUsageExit(t *testing.T) {
 }
 
 func TestExecute_Success(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
 	os.Args = []string{"openshellctl", "version"}
 	if code := Execute(); code != ExitOK {
 		t.Errorf("Execute(version) = %d, want 0", code)
@@ -198,10 +210,11 @@ func TestWhoami_VerboseMatchesTokenShow(t *testing.T) {
 }
 
 func TestHintSuppression_ExpiredTokenHintNotDuplicated(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 	setupExpiredTokenTree(t)
-	// Execute() with token show should return ExitAuth and NOT duplicate the
-	// hint when the error already mentions "openshellctl token refresh" or
-	// "openshellctl login".
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
 	os.Args = []string{"openshellctl", "token", "show"}
 	code := Execute()
 	if code != ExitAuth {
@@ -229,6 +242,7 @@ func setupExpiredTokenTreeWithRefresh(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(xdg, "openshell", "active_gateway"), []byte("rosa"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 }
 
@@ -244,7 +258,6 @@ func setupExpiredTokenTree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(gwDir, "metadata.json"), []byte(md), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Write an expired token (expired 1 hour ago).
 	exp := time.Now().Add(-1 * time.Hour).Unix()
 	bundle := `{"access_token":"expired.jwt.here","expires_at":` + fmt.Sprintf("%d", exp) + `,"issuer":"https://issuer","client_id":"openshell-cli"}`
 	if err := os.WriteFile(filepath.Join(gwDir, "oidc_token.json"), []byte(bundle), 0o600); err != nil {
@@ -253,6 +266,7 @@ func setupExpiredTokenTree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(xdg, "openshell", "active_gateway"), []byte("rosa"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 }
 
@@ -275,9 +289,11 @@ func TestTokenRefresh_ExpiredNoRefreshToken_FallsBackToLogin(t *testing.T) {
 }
 
 func TestExecute_ExpiredWithRefreshToken_SuppressesHint(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 	setupExpiredTokenTreeWithRefresh(t)
-	// When a refresh token exists, the error says "openshellctl token refresh
-	// --write" — Execute() must not add a second generic hint.
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
 	os.Args = []string{"openshellctl", "token", "show"}
 	code := Execute()
 	if code != ExitAuth {

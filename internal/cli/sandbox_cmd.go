@@ -52,15 +52,25 @@ func resolveSandboxName(args []string, target *gatewayconfig.Target, ws string) 
 	return "", &UsageError{Err: fmt.Errorf("a sandbox name is required (no last-used sandbox found)")}
 }
 
+// checkFileArgConflict validates that -f/--file and positional/--name args are
+// not both provided. This is a pure argument check that requires no config or
+// network, so callers should run it before dialing the gateway.
+func checkFileArgConflict(file string, args []string) error {
+	if file != "" && len(args) > 0 && args[0] != "" {
+		return &UsageError{Err: fmt.Errorf("cannot combine -f/--file with a positional name or --name")}
+	}
+	return nil
+}
+
 // resolveNameFromFileOrArgs resolves a sandbox name from a -f manifest file or
 // from positional/--name args. The two sources are mutually exclusive: if both
 // are provided, a usage error is returned. When file is empty, resolution falls
 // through to resolveSandboxName(args, ...).
 func resolveNameFromFileOrArgs(cmd *cobra.Command, file string, args []string, target *gatewayconfig.Target, ws string) (string, error) {
+	if err := checkFileArgConflict(file, args); err != nil {
+		return "", err
+	}
 	if file != "" {
-		if len(args) > 0 && args[0] != "" {
-			return "", &UsageError{Err: fmt.Errorf("cannot combine -f/--file with a positional name or --name")}
-		}
 		names, err := namesFromManifest(cmd, file)
 		if err != nil {
 			return "", err

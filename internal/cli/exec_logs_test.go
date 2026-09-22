@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func TestExec_NoCommandExit2(t *testing.T) {
@@ -61,6 +63,8 @@ func TestLogs_BadSinceExit2(t *testing.T) {
 }
 
 func TestLogs_HasLgAlias(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 	root := NewRootCommand()
 	names := collectCommandNames(root)
 	lg, ok := names["logs"]
@@ -79,6 +83,8 @@ func TestLogs_HasLgAlias(t *testing.T) {
 }
 
 func TestExec_HasShortNameFlag(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 	root := NewRootCommand()
 	names := collectCommandNames(root)
 	exec := names["exec"]
