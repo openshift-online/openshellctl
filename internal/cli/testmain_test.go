@@ -10,19 +10,24 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(tmp)
 
-	os.Setenv("HOME", tmp)
-	os.Setenv("XDG_CONFIG_HOME", tmp)
-	os.Setenv("OPENSHELL_TOKEN", "")
-	os.Setenv("OPENSHELL_GATEWAY", "")
-	os.Setenv("OPENSHELL_GATEWAY_ENDPOINT", "")
-	os.Setenv("OPENSHELL_GATEWAY_INSECURE", "")
-	os.Setenv("OPENSHELL_WORKSPACE", "")
-	os.Setenv("OPENSHELL_OIDC_ISSUER", "")
-	os.Setenv("OPENSHELL_OIDC_CLIENT_ID", "")
-	os.Setenv("OPENSHELL_OIDC_CLIENT_SECRET", "")
-	os.Setenv("OPENSHELL_OIDC_AUDIENCE", "")
+	for k, v := range map[string]string{"HOME": tmp, "XDG_CONFIG_HOME": tmp} {
+		if err := os.Setenv(k, v); err != nil {
+			panic(err)
+		}
+	}
+	for _, k := range []string{
+		"OPENSHELL_TOKEN", "OPENSHELL_GATEWAY", "OPENSHELL_GATEWAY_ENDPOINT",
+		"OPENSHELL_GATEWAY_INSECURE", "OPENSHELL_WORKSPACE",
+		"OPENSHELL_OIDC_ISSUER", "OPENSHELL_OIDC_CLIENT_ID",
+		"OPENSHELL_OIDC_CLIENT_SECRET", "OPENSHELL_OIDC_AUDIENCE",
+	} {
+		if err := os.Unsetenv(k); err != nil {
+			panic(err)
+		}
+	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	_ = os.RemoveAll(tmp)
+	os.Exit(code)
 }

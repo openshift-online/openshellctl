@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openshift-online/openshellctl/internal/version"
 	"github.com/spf13/viper"
+
+	"github.com/openshift-online/openshellctl/internal/version"
 )
 
 func TestVersionCommand_PrintsPin(t *testing.T) {

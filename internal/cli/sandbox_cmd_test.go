@@ -10,23 +10,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-// isolateEnv points HOME and XDG_CONFIG_HOME at temp dirs and clears all
-// OPENSHELL_* env vars so tests never touch the real user config. Call before
-// runCmd when no other setup helper (setupGatewayTree, etc.) manages the env.
-func isolateEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	for _, key := range []string{
-		"OPENSHELL_TOKEN", "OPENSHELL_GATEWAY", "OPENSHELL_GATEWAY_ENDPOINT",
-		"OPENSHELL_GATEWAY_INSECURE", "OPENSHELL_WORKSPACE",
-		"OPENSHELL_OIDC_ISSUER", "OPENSHELL_OIDC_CLIENT_ID",
-		"OPENSHELL_OIDC_CLIENT_SECRET", "OPENSHELL_OIDC_AUDIENCE",
-	} {
-		t.Setenv(key, "")
-	}
-}
-
 func runCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	viper.Reset()

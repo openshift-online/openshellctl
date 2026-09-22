@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -29,7 +30,10 @@ func newSandboxSSHConfigCommand() *cobra.Command {
 			}
 			gwName := viper.GetString("gateway")
 			endpoint := viper.GetString("gateway-endpoint")
-			target, _ := gatewayconfig.Resolve(env, gatewayconfig.ResolveInput{Endpoint: endpoint, Name: gwName})
+			target, resolveErr := gatewayconfig.Resolve(env, gatewayconfig.ResolveInput{Endpoint: endpoint, Name: gwName})
+			if resolveErr != nil && !errors.Is(resolveErr, gatewayconfig.ErrNoActiveGateway) && !errors.Is(resolveErr, gatewayconfig.ErrUnknownGateway) {
+				return resolveErr
+			}
 
 			ws := workspace()
 			sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
