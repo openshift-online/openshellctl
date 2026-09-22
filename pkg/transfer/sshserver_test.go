@@ -25,20 +25,20 @@ import (
 // other methods panic (unused by transfer tests).
 type fakeGateway struct {
 	gateway.Gateway
-	root        string // the remote "workspace" root (absolute, on the real FS)
-	hostKey     ssh.Signer
-	mu          sync.Mutex
-	tunnels     int
-	lastMain     string // last payload written by a Connect session
-	mainReply    string // canned bytes the shell session streams back
-	mainExit     int    // exit code the shell session returns
-	mainHold     bool   // when true, the session holds its write side open until the client tears the channel down (models a live session that only ends on detach)
-	failExtract  bool   // when true, the upload extract command reports non-zero
-	lastReqType      string // tracks the request type used for the interactive session ("shell", "exec", or "subsystem")
-	lastExecCmd      string // last exec command received
-	rejectShell      bool   // when true, the server rejects shell requests (models a broken server)
-	keepaliveCount   int    // number of keepalive@openssh.com global requests received
-	rejectKeepalive  bool   // when true, server replies false to keepalive requests (models unresponsive server)
+	root            string // the remote "workspace" root (absolute, on the real FS)
+	hostKey         ssh.Signer
+	mu              sync.Mutex
+	tunnels         int
+	lastMain        string // last payload written by a Connect session
+	mainReply       string // canned bytes the shell session streams back
+	mainExit        int    // exit code the shell session returns
+	mainHold        bool   // when true, the session holds its write side open until the client tears the channel down (models a live session that only ends on detach)
+	failExtract     bool   // when true, the upload extract command reports non-zero
+	lastReqType     string // tracks the request type used for the interactive session ("shell", "exec", or "subsystem")
+	lastExecCmd     string // last exec command received
+	rejectShell     bool   // when true, the server rejects shell requests (models a broken server)
+	keepaliveCount  int    // number of keepalive@openssh.com global requests received
+	rejectKeepalive bool   // when true, server replies false to keepalive requests (models unresponsive server)
 }
 
 func newFakeGateway(t *testing.T, root string) *fakeGateway {

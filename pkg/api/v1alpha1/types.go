@@ -68,10 +68,10 @@ type Upload struct {
 // file can fully describe "create sandbox X and behave like this."
 type SessionOpts struct {
 	NoKeep       bool   `json:"noKeep,omitempty"`       // delete sandbox when session ends
-	Detach       bool   `json:"detach,omitempty"`        // return after create, do not attach
-	Forward      string `json:"forward,omitempty"`       // [bind:]port to forward
-	ApprovalMode string `json:"approvalMode,omitempty"`  // manual|auto
-	Output       string `json:"output,omitempty"`        // table|json|yaml
+	Detach       bool   `json:"detach,omitempty"`       // return after create, do not attach
+	Forward      string `json:"forward,omitempty"`      // [bind:]port to forward
+	ApprovalMode string `json:"approvalMode,omitempty"` // manual|auto
+	Output       string `json:"output,omitempty"`       // table|json|yaml
 }
 
 // SandboxSpec is the create input.

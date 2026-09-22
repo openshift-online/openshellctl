@@ -37,6 +37,9 @@ func newLogsCommand() *cobra.Command {
 				sinceMs = sandbox.ComputeSinceMs(time.Now().UnixMilli(), durMs, true)
 			}
 
+			if err := checkFileArgConflict(file, args); err != nil {
+				return err
+			}
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
 				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)

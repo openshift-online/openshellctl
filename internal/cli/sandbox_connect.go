@@ -26,6 +26,9 @@ func newSandboxConnectCommand() *cobra.Command {
 			if editor != "" {
 				return &UsageError{Err: fmt.Errorf("--editor is not supported by openshellctl")}
 			}
+			if err := checkFileArgConflict(file, args); err != nil {
+				return err
+			}
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
 				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)

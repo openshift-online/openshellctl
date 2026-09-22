@@ -54,14 +54,14 @@ func newProviderAttachCommand() *cobra.Command {
 				if err != nil {
 					var conflict *gateway.ConflictError
 					if errors.As(err, &conflict) {
-						return fmt.Errorf("Failed to attach provider: sandbox was modified by another operation.\nPlease retry the command.")
+						return fmt.Errorf("Failed to attach provider: sandbox was modified by another operation.\nPlease retry the command.") //nolint:staticcheck // upstream-verbatim (A.12)
 					}
 					return err
 				}
 				if noop {
-					fmt.Fprintf(cmd.OutOrStdout(), "Provider %s is already attached to sandbox %s.\n", provider, sbName)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Provider %s is already attached to sandbox %s.\n", provider, sbName)
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "✓ Attached provider %s to sandbox %s\n", provider, sbName)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Attached provider %s to sandbox %s\n", provider, sbName)
 				}
 				return nil
 			})
@@ -87,14 +87,14 @@ func newProviderDetachCommand() *cobra.Command {
 				if err != nil {
 					var conflict *gateway.ConflictError
 					if errors.As(err, &conflict) {
-						return fmt.Errorf("Failed to detach provider: sandbox was modified by another operation.\nPlease retry the command.")
+						return fmt.Errorf("Failed to detach provider: sandbox was modified by another operation.\nPlease retry the command.") //nolint:staticcheck // upstream-verbatim (A.12)
 					}
 					return err
 				}
 				if noop {
-					fmt.Fprintf(cmd.OutOrStdout(), "Provider %s was not attached to sandbox %s.\n", provider, sbName)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Provider %s was not attached to sandbox %s.\n", provider, sbName)
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "✓ Detached provider %s from sandbox %s\n", provider, sbName)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Detached provider %s from sandbox %s\n", provider, sbName)
 				}
 				return nil
 			})

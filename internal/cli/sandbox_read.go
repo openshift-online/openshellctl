@@ -24,6 +24,9 @@ func newSandboxGetCommand() *cobra.Command {
 			if file == "" && len(args) == 0 {
 				return &UsageError{Err: fmt.Errorf("a sandbox name is required")}
 			}
+			if err := checkFileArgConflict(file, args); err != nil {
+				return err
+			}
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
 				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)

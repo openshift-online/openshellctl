@@ -40,6 +40,9 @@ func newSandboxExecCommand() *cobra.Command {
 			// (not mutually exclusive). The shared TTYTriState value records order.
 			ttyOverride := ttyState.Value()
 
+			if err := checkFileArgConflict(file, argsFromName(name)); err != nil {
+				return err
+			}
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
 				sbName, err := resolveNameFromFileOrArgs(cmd, file, argsFromName(name), target, ws)

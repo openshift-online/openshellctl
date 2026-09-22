@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func makeTestJWT(t *testing.T, payload map[string]any) string {
@@ -18,6 +20,10 @@ func makeTestJWT(t *testing.T, payload map[string]any) string {
 }
 
 func TestTokenInspect_Text(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	jwt := makeTestJWT(t, map[string]any{
 		"iss":          "https://issuer",
 		"sub":          "user-42",
@@ -43,6 +49,10 @@ func TestTokenInspect_Text(t *testing.T) {
 }
 
 func TestTokenInspect_JSON(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	jwt := makeTestJWT(t, map[string]any{"iss": "https://i", "sub": "s"})
 	root := NewRootCommand()
 	var out bytes.Buffer
@@ -62,6 +72,10 @@ func TestTokenInspect_JSON(t *testing.T) {
 }
 
 func TestTokenInspect_NotJWTExitsError(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root := NewRootCommand()
 	var out bytes.Buffer
 	root.SetOut(&out)

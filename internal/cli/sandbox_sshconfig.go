@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/transfer"
@@ -18,11 +20,20 @@ func newSandboxSSHConfigCommand() *cobra.Command {
 		Long:  "Print an SSH configuration block for use with the upstream openshell binary.\nThis is informational only — it requires the upstream `openshell` binary to use.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			src, target, err := resolveTokenSource(cmd)
+			if err := checkFileArgConflict(file, args); err != nil {
+				return err
+			}
+
+			env, err := gatewayconfig.NewOSEnv()
 			if err != nil {
 				return err
 			}
-			_ = src
+			gwName := viper.GetString("gateway")
+			endpoint := viper.GetString("gateway-endpoint")
+			target, resolveErr := gatewayconfig.Resolve(env, gatewayconfig.ResolveInput{Endpoint: endpoint, Name: gwName})
+			if resolveErr != nil && !errors.Is(resolveErr, gatewayconfig.ErrNoActiveGateway) && !errors.Is(resolveErr, gatewayconfig.ErrUnknownGateway) {
+				return resolveErr
+			}
 
 			ws := workspace()
 			sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
