@@ -52,14 +52,3 @@ func newProviderCommand() *cobra.Command {
 	)
 	return p
 }
-
-// notImplementedLeaf returns a leaf command whose RunE reports NotImplementedError.
-func notImplementedLeaf(use, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return &NotImplementedError{Command: use}
-		},
-	}
-}

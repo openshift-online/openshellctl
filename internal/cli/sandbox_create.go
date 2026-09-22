@@ -116,8 +116,8 @@ func newSandboxCreateCommand() *cobra.Command {
 				// (6) Approval mode update (non-manual).
 				if req.ApprovalMode != "" && req.ApprovalMode != "manual" {
 					if cerr := setApprovalMode(cmd.Context(), gw, ws, sb.Name, req.ApprovalMode); cerr != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to set approval mode: %v\n", cerr)
-						fmt.Fprintf(cmd.ErrOrStderr(), "You can set it manually with: openshellctl sandbox config update --approval-mode %s %s\n", req.ApprovalMode, sb.Name)
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to set approval mode: %v\n", cerr)
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "You can set it manually with: openshellctl sandbox config update --approval-mode %s %s\n", req.ApprovalMode, sb.Name)
 					}
 				}
 
@@ -150,7 +150,7 @@ func newSandboxCreateCommand() *cobra.Command {
 				}
 
 				// Attach via connect.
-				fmt.Fprintf(cmd.ErrOrStderr(), "Attaching to sandbox %s...\n", sb.Name)
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Attaching to sandbox %s...\n", sb.Name)
 				tc := transfer.New(gw, nil, wallClock{})
 				useTTY := stdinTTY && stdoutTTY
 				t := &cliTerminal{
@@ -166,9 +166,9 @@ func newSandboxCreateCommand() *cobra.Command {
 				// --no-keep: delete after session.
 				if !req.Keep {
 					if _, derr := gw.DeleteSandbox(cmd.Context(), ws, sb.Name); derr != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "Failed to delete sandbox %s: %v\n", sb.Name, derr)
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Failed to delete sandbox %s: %v\n", sb.Name, derr)
 					} else {
-						fmt.Fprintf(cmd.ErrOrStderr(), "Deleted sandbox %s\n", sb.Name)
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Deleted sandbox %s\n", sb.Name)
 					}
 				} else {
 					saveLastSandbox(target, ws, sb.Name)
@@ -444,7 +444,7 @@ func runCreateUploads(ctx context.Context, gw gateway.Gateway, ws, sbName string
 		if err != nil {
 			return fmt.Errorf("failed to resolve upload path %q: %w", u.Local, err)
 		}
-		var fsys = transfer.OSFS("/")
+		fsys := transfer.OSFS("/")
 		fsPath := strings.TrimPrefix(abs, "/")
 
 		gitignore := true
@@ -458,12 +458,12 @@ func runCreateUploads(ctx context.Context, gw gateway.Gateway, ws, sbName string
 			prefix = fmt.Sprintf("[%d/%d] ", i+1, len(ups))
 		}
 		if err := tc.Upload(ctx, ws, sbName, fsPath, u.Dest, gitignore, func(msg string) {
-			fmt.Fprintf(stderr, "  • %s%s\n", prefix, msg)
+			_, _ = fmt.Fprintf(stderr, "  • %s%s\n", prefix, msg)
 		}); err != nil {
 			return err
 		}
 	}
-	fmt.Fprintln(stderr, "  ✓ Files uploaded")
+	_, _ = fmt.Fprintln(stderr, "  ✓ Files uploaded")
 	return nil
 }
 
@@ -473,9 +473,9 @@ func startForward(ctx context.Context, gw gateway.Gateway, ws, sbName string, sp
 	if err != nil {
 		return fmt.Errorf("failed to start forward: %w", err)
 	}
-	fmt.Fprintf(stderr, "  ✓ Forwarding port %d to sandbox %s in the background\n", spec.Port, sbName)
-	fmt.Fprintln(stderr)
-	fmt.Fprintf(stderr, "  Access at: %s\n", spec.AccessURL())
-	fmt.Fprintf(stderr, "  Stop with: openshell forward stop %d %s\n", spec.Port, sbName)
+	_, _ = fmt.Fprintf(stderr, "  ✓ Forwarding port %d to sandbox %s in the background\n", spec.Port, sbName)
+	_, _ = fmt.Fprintln(stderr)
+	_, _ = fmt.Fprintf(stderr, "  Access at: %s\n", spec.AccessURL())
+	_, _ = fmt.Fprintf(stderr, "  Stop with: openshell forward stop %d %s\n", spec.Port, sbName)
 	return nil
 }

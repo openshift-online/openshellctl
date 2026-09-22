@@ -47,7 +47,7 @@ func newSandboxUploadCommand() *cobra.Command {
 
 				tc := transfer.New(gw, fsys, wallClock{})
 				return tc.Upload(cmd.Context(), ws, sbName, fsPath, dest, !noGitIgnore, func(msg string) {
-					fmt.Fprintln(cmd.ErrOrStderr(), msg)
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), msg)
 				})
 			})
 		},
@@ -82,7 +82,7 @@ func newSandboxDownloadCommand() *cobra.Command {
 
 				tc := transfer.New(gw, nil, wallClock{})
 				return tc.Download(cmd.Context(), ws, sbName, remote, dest, func(msg string) {
-					fmt.Fprintln(cmd.ErrOrStderr(), msg)
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), msg)
 				})
 			})
 		},
