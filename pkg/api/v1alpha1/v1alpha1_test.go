@@ -86,7 +86,6 @@ func TestValidate_Rules(t *testing.T) {
 			s.Spec.Policy = map[string]any{"version": 1}
 			s.Spec.PolicyFile = "p.yaml"
 		}, "mutually exclusive"},
-		{"bad approvalMode", func(s *Sandbox) { s.Spec.ApprovalMode = "sometimes" }, "spec.approvalMode"},
 		{"bad sessionOpts approvalMode", func(s *Sandbox) {
 			s.Spec.SessionOpts = &SessionOpts{ApprovalMode: "yolo"}
 		}, "spec.sessionOpts.approvalMode"},
@@ -262,34 +261,15 @@ spec:
 	}
 }
 
-func TestDecode_DeprecatedFlatFields(t *testing.T) {
-	y := `
-apiVersion: openshell.managed.openshift.io/v1alpha1
-kind: Sandbox
-metadata:
-  name: compat
-spec:
-  image: test:latest
-  keep: false
-  detach: true
-  forward: "9090"
-  approvalMode: auto
-`
-	s, err := Decode(strings.NewReader(y))
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
-	if s.Spec.Keep == nil || *s.Spec.Keep != false {
-		t.Errorf("deprecated keep = %v", s.Spec.Keep)
-	}
-	if !s.Spec.Detach {
-		t.Error("deprecated detach should be true")
-	}
-	if s.Spec.Forward != "9090" {
-		t.Errorf("deprecated forward = %q", s.Spec.Forward)
-	}
-	if s.Spec.ApprovalMode != "auto" {
-		t.Errorf("deprecated approvalMode = %q", s.Spec.ApprovalMode)
+func TestDecode_RemovedFlatFieldsRejected(t *testing.T) {
+	for _, field := range []string{"keep: false", "detach: true", "forward: \"9090\"", "approvalMode: auto"} {
+		t.Run(field, func(t *testing.T) {
+			y := "apiVersion: openshell.managed.openshift.io/v1alpha1\nkind: Sandbox\nmetadata:\n  name: compat\nspec:\n  image: test:latest\n  " + field + "\n"
+			_, err := Decode(strings.NewReader(y))
+			if err == nil {
+				t.Fatalf("expected strict decode to reject removed field %q", field)
+			}
+		})
 	}
 }
 

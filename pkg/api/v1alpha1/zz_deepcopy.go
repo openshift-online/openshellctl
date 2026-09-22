@@ -25,10 +25,7 @@ func (in SandboxSpec) deepCopy() SandboxSpec {
 		Image:                in.Image,
 		Command:              copyStringSlice(in.Command),
 		Env:                  copyStringMap(in.Env),
-		ApprovalMode:         in.ApprovalMode,
 		NoCredentialWarnings: in.NoCredentialWarnings,
-		Detach:               in.Detach,
-		Forward:              in.Forward,
 		PolicyFile:           in.PolicyFile,
 	}
 	if in.TTY != nil {
@@ -38,10 +35,6 @@ func (in SandboxSpec) deepCopy() SandboxSpec {
 	if in.AutoProviders != nil {
 		v := *in.AutoProviders
 		out.AutoProviders = &v
-	}
-	if in.Keep != nil {
-		v := *in.Keep
-		out.Keep = &v
 	}
 	if len(in.ProviderRefs) > 0 {
 		out.ProviderRefs = make([]ProviderRef, len(in.ProviderRefs))

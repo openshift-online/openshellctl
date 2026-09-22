@@ -86,26 +86,7 @@ func MergeManifestAndFlags(m *v1alpha1.Sandbox, f CreateFlags) (*CreateRequest, 
 		r.DriverConfig = m.Spec.DriverConfig
 		r.NoCredentialWarnings = m.Spec.NoCredentialWarnings
 		r.Uploads = m.Spec.Upload
-
-		// Session opts: new sessionOpts block takes precedence over
-		// deprecated flat fields. Both are read for backward compat.
-		//nolint:staticcheck // intentional backward-compat reads of deprecated fields
-		r.ApprovalMode = m.Spec.ApprovalMode
-		if m.Spec.Keep != nil { //nolint:staticcheck
-			r.Keep = *m.Spec.Keep //nolint:staticcheck
-		} else {
-			r.Keep = true
-		}
-		r.Detach = m.Spec.Detach //nolint:staticcheck
-
-		// Parse forward spec from deprecated flat field.
-		if m.Spec.Forward != "" { //nolint:staticcheck
-			spec, err := ParseForwardSpec(m.Spec.Forward) //nolint:staticcheck
-			if err != nil {
-				return nil, fmt.Errorf("spec.forward: %w", err)
-			}
-			r.Forward = &spec
-		}
+		r.Keep = true
 
 		if so := m.Spec.SessionOpts; so != nil {
 			if so.NoKeep {
