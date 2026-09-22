@@ -1,8 +1,8 @@
 // Package transfer implements upload/download/connect over the sandbox SSH
 // server, tunneled through the gateway (gw.SSHTunnel). It is a faithful port of
-// the upstream CLI's ssh.rs behaviours (tar-over-SSH upload/download, the
-// openshell-main connect subsystem) done in-process with golang.org/x/crypto/ssh
-// rather than by shelling out to the `ssh` binary. See spec §5.7.
+// the upstream CLI's ssh.rs behaviours (tar-over-SSH upload/download, SSH shell
+// connect) done in-process with golang.org/x/crypto/ssh rather than by shelling
+// out to the `ssh` binary. See spec §5.7.
 //
 // The sandbox SSH server accepts `none` auth
 // (crates/openshell-supervisor-process/src/ssh.rs:506-508); host keys are
@@ -27,11 +27,13 @@ type Client interface {
 	Upload(ctx context.Context, workspace, sandbox, local, dest string, gitignore bool, report func(string)) error
 	// Download copies a remote file or directory to dest on the local host.
 	Download(ctx context.Context, workspace, sandbox, remote, dest string, report func(string)) error
-	// Connect attaches an interactive session to the sandbox's openshell-main
-	// subsystem, returning the remote exit code. The Ctrl-P Ctrl-Q chord detaches
-	// (returns 0). term supplies the local terminal integration (raw mode, size,
-	// resize notifications); pass a nopTerminal for non-interactive callers.
-	Connect(ctx context.Context, workspace, sandbox string, tty bool, term Terminal) (exitCode int, err error)
+	// Connect attaches an interactive session to the sandbox, returning the
+	// remote exit code. When command is non-empty, an SSH exec request runs the
+	// command; when empty, a shell request gives the default interactive session.
+	// The Ctrl-P Ctrl-Q chord detaches (returns 0). term supplies the local
+	// terminal integration (raw mode, size, resize notifications); pass a
+	// nopTerminal for non-interactive callers.
+	Connect(ctx context.Context, workspace, sandbox string, tty bool, term Terminal, command ...string) (exitCode int, err error)
 }
 
 // Clock abstracts time for tests (keepalive scheduling).

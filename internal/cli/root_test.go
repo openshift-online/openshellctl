@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -36,6 +37,12 @@ func TestViperEnvPrefixBinding(t *testing.T) {
 	}
 	if got := viper.GetString("gateway-endpoint"); got != "https://gw.example.com" {
 		t.Errorf("viper gateway-endpoint = %q, want the endpoint", got)
+	}
+}
+
+func TestContextCanceledExitCode(t *testing.T) {
+	if got := exitCodeFor(context.Canceled); got != ExitError {
+		t.Errorf("context.Canceled exit code = %d, want %d", got, ExitError)
 	}
 }
 

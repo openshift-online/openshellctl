@@ -8,9 +8,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 )
+
+// neverReader blocks forever on Read (until the goroutine is torn down).
+type neverReader struct{}
+
+func (neverReader) Read([]byte) (int, error) {
+	select {}
+}
 
 // These are end-to-end smoke tests over an in-process SSH server reached through
 // the gateway.Gateway seam. They give confidence that the SSH/tar wiring holds
@@ -174,6 +182,235 @@ func TestSmokeGatewayTunnelError(t *testing.T) {
 	}
 	if _, err := c.Connect(ctx, "default", "sb", false, NopTerminal{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}); err == nil || !strings.Contains(err.Error(), "tunnel refused") {
 		t.Errorf("connect tunnel err = %v", err)
+	}
+}
+
+func TestConnect_UsesShellRequest(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.mainReply = "shell output\n"
+
+	var out bytes.Buffer
+	code, err := c.Connect(context.Background(), "default", "sb", false,
+		NopTerminal{In: strings.NewReader(""), Out: &out, Err: &bytes.Buffer{}})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "shell output") {
+		t.Errorf("stdout = %q, want shell output", out.String())
+	}
+
+	gw.mu.Lock()
+	reqType := gw.lastReqType
+	gw.mu.Unlock()
+	if reqType != "shell" {
+		t.Errorf("request type = %q, want \"shell\"", reqType)
+	}
+}
+
+func TestConnect_ShellNotSubsystem(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.mainReply = "data\n"
+
+	_, err := c.Connect(context.Background(), "default", "sb", false,
+		NopTerminal{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	gw.mu.Lock()
+	reqType := gw.lastReqType
+	gw.mu.Unlock()
+	if reqType == "subsystem" {
+		t.Error("Connect must send a shell request, not a subsystem request; the server only accepts sftp as a subsystem")
+	}
+}
+
+func TestConnect_ServerRejectsShell(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.rejectShell = true
+
+	_, err := c.Connect(context.Background(), "default", "sb", false,
+		NopTerminal{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
+	if err == nil {
+		t.Fatal("expected error when server rejects shell request")
+	}
+}
+
+func TestConnect_ExecWithCommand(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.mainReply = "command output\n"
+	gw.mainExit = 3
+
+	var out bytes.Buffer
+	code, err := c.Connect(context.Background(), "default", "sb", false,
+		NopTerminal{In: strings.NewReader(""), Out: &out, Err: &bytes.Buffer{}},
+		"claude", "/job-sop-improve")
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if code != 3 {
+		t.Errorf("exit code = %d, want 3", code)
+	}
+	if !strings.Contains(out.String(), "command output") {
+		t.Errorf("stdout = %q, want command output", out.String())
+	}
+
+	gw.mu.Lock()
+	reqType := gw.lastReqType
+	execCmd := gw.lastExecCmd
+	gw.mu.Unlock()
+	if reqType != "exec" {
+		t.Errorf("request type = %q, want \"exec\"", reqType)
+	}
+	if execCmd != "claude /job-sop-improve" {
+		t.Errorf("exec command = %q, want \"claude /job-sop-improve\"", execCmd)
+	}
+}
+
+func TestConnect_ExecEscapesArgs(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.mainReply = "ok\n"
+
+	_, err := c.Connect(context.Background(), "default", "sb", false,
+		NopTerminal{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}},
+		"echo", "hello world", "it's fine")
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	gw.mu.Lock()
+	execCmd := gw.lastExecCmd
+	gw.mu.Unlock()
+	if !strings.Contains(execCmd, "'hello world'") {
+		t.Errorf("exec command should shell-escape args with spaces: %q", execCmd)
+	}
+	if !strings.Contains(execCmd, "'it'\"'\"'s fine'") {
+		t.Errorf("exec command should shell-escape args with quotes: %q", execCmd)
+	}
+}
+
+func TestConnect_NoCommandUsesShell(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.mainReply = "shell\n"
+
+	_, err := c.Connect(context.Background(), "default", "sb", false,
+		NopTerminal{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	gw.mu.Lock()
+	reqType := gw.lastReqType
+	gw.mu.Unlock()
+	if reqType != "shell" {
+		t.Errorf("no-command should use shell request, got %q", reqType)
+	}
+}
+
+func TestConnect_ContextCancellation(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.mainHold = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := c.Connect(ctx, "default", "sb", false,
+		NopTerminal{In: neverReader{}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
+	if err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Errorf("expected context canceled error, got %v", err)
+	}
+}
+
+func TestConnect_ShellWithTTY(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.mainReply = "tty output\n"
+
+	var out bytes.Buffer
+	code, err := c.Connect(context.Background(), "default", "sb", true,
+		NopTerminal{In: strings.NewReader(""), Out: &out, Err: &bytes.Buffer{}})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+
+	gw.mu.Lock()
+	reqType := gw.lastReqType
+	gw.mu.Unlock()
+	if reqType != "shell" {
+		t.Errorf("request type = %q, want \"shell\" even with TTY", reqType)
+	}
+}
+
+func TestConnect_KeepalivesSent(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.mainHold = true
+
+	fc := c.clock.(*fakeClock)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c.Connect(ctx, "default", "sb", false,
+			NopTerminal{In: neverReader{}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
+	}()
+
+	// Push 3 ticks to drive keepalive pings.
+	for i := 0; i < 3; i++ {
+		fc.tickCh <- time.Now()
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	gw.mu.Lock()
+	count := gw.keepaliveCount
+	gw.mu.Unlock()
+	if count < 3 {
+		t.Errorf("keepalive count = %d, want >= 3", count)
+	}
+}
+
+func TestConnect_KeepaliveRejectionDoesNotTimeout(t *testing.T) {
+	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
+	gw.mainHold = true
+	gw.rejectKeepalive = true
+
+	fc := c.clock.(*fakeClock)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Connect(ctx, "default", "sb", false,
+			NopTerminal{In: neverReader{}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
+		done <- err
+	}()
+
+	// Push 4 rejected keepalive ticks — should NOT cause timeout because the
+	// server replied (even though it rejected). Only transport errors count.
+	for i := 0; i < 4; i++ {
+		fc.tickCh <- time.Now()
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// If we get here without the connection dying, the fix is working.
+	// Cancel to clean up.
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled or nil, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Connect did not return after context cancel")
 	}
 }
 

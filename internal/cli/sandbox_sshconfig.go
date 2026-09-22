@@ -11,6 +11,7 @@ import (
 )
 
 func newSandboxSSHConfigCommand() *cobra.Command {
+	var file string
 	c := &cobra.Command{
 		Use:   "ssh-config [NAME]",
 		Short: "Print an ssh config block for a sandbox",
@@ -24,7 +25,7 @@ func newSandboxSSHConfigCommand() *cobra.Command {
 			_ = src
 
 			ws := workspace()
-			sbName, err := resolveSandboxName(args, target, ws)
+			sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
 			if err != nil {
 				return err
 			}
@@ -34,6 +35,7 @@ func newSandboxSSHConfigCommand() *cobra.Command {
 			return err
 		},
 	}
+	c.Flags().StringVarP(&file, "file", "f", "", "manifest file to read sandbox name from (- for stdin)")
 	return c
 }
 

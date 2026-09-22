@@ -18,6 +18,7 @@ func newLogsCommand() *cobra.Command {
 		since   string
 		sources []string
 		level   string
+		file    string
 	)
 	c := &cobra.Command{
 		Use:     "logs [NAME]",
@@ -38,7 +39,7 @@ func newLogsCommand() *cobra.Command {
 
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
-				sbName, err := resolveSandboxName(args, target, ws)
+				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
 				if err != nil {
 					return err
 				}
@@ -77,5 +78,6 @@ func newLogsCommand() *cobra.Command {
 	f.StringVar(&since, "since", "", "only show logs from this duration ago (e.g. 5m, 1h, 30s)")
 	f.StringSliceVar(&sources, "source", []string{"all"}, "filter by source: gateway, sandbox, or all")
 	f.StringVar(&level, "level", "", "minimum log level: error, warn, info, debug, trace")
+	f.StringVarP(&file, "file", "f", "", "manifest file to read sandbox name from (- for stdin)")
 	return c
 }

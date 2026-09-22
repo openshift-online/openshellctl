@@ -1,6 +1,6 @@
 # openshellctl
 
-Lightweight Go client and CLI for [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) gateways. A pure-Go reimplementation of the upstream Rust CLI, built for embedding in operators and CI pipelines without requiring any external binaries.
+Lightweight Go client and CLI for [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) gateways. A pure-Go reimplementation of the upstream Rust CLI that is a full standalone replacement — it does not depend on or shell out to the upstream `openshell` binary. Built for embedding in operators and CI pipelines as a single static binary with zero external dependencies.
 
 ## Installation
 
@@ -31,7 +31,7 @@ openshellctl sandbox connect my-sandbox
 openshellctl sandbox exec --name my-sandbox -- python3 -c "print('hello')"
 
 # Upload code, run it
-openshellctl sandbox upload ./myproject:/workspace my-sandbox
+openshellctl sandbox upload my-sandbox ./myproject /workspace
 openshellctl sandbox exec --name my-sandbox -- python3 /workspace/main.py
 
 # Clean up
@@ -40,13 +40,52 @@ openshellctl sandbox delete my-sandbox
 
 ## Authentication
 
-openshellctl supports three authentication methods:
+openshellctl resolves authentication in priority order — the first match wins:
 
-1. **Bearer token** (simplest): pass `--token <JWT>` or set `OPENSHELL_TOKEN`.
-2. **OIDC client credentials**: configure `--oidc-issuer`, `--oidc-client-id`, and `--client-secret-file` (or set their env equivalents). The CLI exchanges the credentials for a JWT and refreshes automatically.
-3. **Disk-bundle** (Rust CLI compat): reads `oidc_token.json` from the gateway config directory (`$XDG_CONFIG_HOME/openshell/gateways/<name>/`). Supports refresh-token rotation.
+### 1. Personal login (interactive use)
 
-Token management commands:
+If you already have an `openshell gateway login` session, openshellctl reads the same token file — no separate login required:
+
+```bash
+openshell gateway login <gateway-name>   # one-time setup (upstream CLI)
+openshellctl sandbox list                # uses your login token automatically
+```
+
+openshellctl reads `oidc_token.json` from `$XDG_CONFIG_HOME/openshell/gateways/<name>/`. If the access token is expired and a refresh token is present, openshellctl exchanges it for a new one automatically. The upstream `openshell` binary is only needed for the initial `gateway login` — after that, openshellctl is fully standalone.
+
+### 2. Service account (CI / fire-and-forget)
+
+Set a client secret and openshellctl mints tokens via `client_credentials` — no login required, and tokens are re-minted automatically when they expire (even during long-running sessions):
+
+```bash
+export OPENSHELL_OIDC_CLIENT_SECRET=<secret>
+# Optional overrides (defaults come from gateway metadata):
+# export OPENSHELL_OIDC_CLIENT_ID=<client-id>
+# export OPENSHELL_OIDC_ISSUER=<issuer-url>
+
+openshellctl sandbox create -f job.yaml --no-keep
+# Token re-mints transparently — the --no-keep cleanup always has a valid token
+```
+
+This is the recommended method for automation, CI pipelines, and any non-interactive use. Unlike the upstream Rust CLI (which bakes the token once at startup), openshellctl refreshes per-request, so long-running jobs never fail with `ExpiredSignature`.
+
+### 3. Static bearer token
+
+For quick testing or external token management:
+
+```bash
+openshellctl --token <JWT> sandbox list
+# or
+export OPENSHELL_TOKEN=<JWT>
+```
+
+This overrides all other auth methods. The token is used as-is with no refresh — if it expires, commands will fail.
+
+### How auth retry works
+
+Every API call goes through an automatic retry: if the gateway returns `Unauthenticated`, openshellctl invalidates its cached token and retries once with a fresh one. For service accounts this means a full re-mint; for personal logins it means a refresh-token exchange. This is why `--no-keep` cleanup works reliably even after hour-long sessions.
+
+### Token management
 
 ```bash
 openshellctl token show               # display token subject, expiry, roles
@@ -227,11 +266,13 @@ Show details of a single sandbox.
 openshellctl sandbox get my-sandbox
 openshellctl sandbox get my-sandbox -o json
 openshellctl sandbox get my-sandbox -o yaml
-openshellctl sandbox get              # uses last-used sandbox
+openshellctl sandbox get -f sandbox.yaml       # read name from manifest
+openshellctl sandbox get                       # uses last-used sandbox
 ```
 
 | Flag | Description |
 |------|-------------|
+| `-f`, `--file` | Manifest file to read sandbox name from (`-` for stdin) |
 | `-o`, `--output` | Output format: `table` (default), `json`, `yaml` |
 
 ### `sandbox list`
@@ -285,9 +326,15 @@ Stop or start a sandbox.
 ```bash
 openshellctl sandbox stop my-sandbox
 openshellctl sandbox start my-sandbox
-openshellctl sandbox stop               # uses last-used sandbox
-openshellctl sandbox start              # uses last-used sandbox
+openshellctl sandbox stop -f sandbox.yaml    # read name from manifest
+openshellctl sandbox start -f sandbox.yaml
+openshellctl sandbox stop                    # uses last-used sandbox
+openshellctl sandbox start                   # uses last-used sandbox
 ```
+
+| Flag | Description |
+|------|-------------|
+| `-f`, `--file` | Manifest file to read sandbox name from (`-` for stdin) |
 
 ### `sandbox exec`
 
@@ -317,6 +364,7 @@ openshellctl sandbox exec --name my-sandbox --tty -- bash
 | Flag | Description |
 |------|-------------|
 | `-n`, `--name` | Sandbox name (defaults to last-used) |
+| `-f`, `--file` | Manifest file to read sandbox name from (`-` for stdin) |
 | `--env` | Environment variable `KEY=VALUE` (repeatable) |
 | `--workdir` | Working directory inside the sandbox |
 | `--timeout` | Timeout in seconds (0 = none) |
@@ -331,8 +379,13 @@ Open an interactive shell session to a sandbox.
 
 ```bash
 openshellctl sandbox connect my-sandbox
-openshellctl sandbox connect             # uses last-used sandbox
+openshellctl sandbox connect -f sandbox.yaml   # read name from manifest
+openshellctl sandbox connect                   # uses last-used sandbox
 ```
+
+| Flag | Description |
+|------|-------------|
+| `-f`, `--file` | Manifest file to read sandbox name from (`-` for stdin) |
 
 Detach from the session with **Ctrl-P Ctrl-Q** (the connection closes cleanly and exits 0).
 
@@ -341,18 +394,19 @@ Detach from the session with **Ctrl-P Ctrl-Q** (the connection closes cleanly an
 Upload files or directories to a sandbox.
 
 ```bash
-openshellctl sandbox upload ./myproject my-sandbox
-openshellctl sandbox upload ./myproject:/workspace my-sandbox
-openshellctl sandbox upload ./file.txt:/remote/path/file.txt my-sandbox
-openshellctl sandbox upload ./src:/workspace --no-git-ignore my-sandbox
+openshellctl sandbox upload my-sandbox ./myproject
+openshellctl sandbox upload my-sandbox ./myproject /workspace
+openshellctl sandbox upload my-sandbox ./file.txt /remote/path/file.txt
+openshellctl sandbox upload -f sandbox.yaml ./src /workspace
 ```
 
-The spec is `LOCAL[:DEST]`. If `DEST` is omitted, files are placed in the sandbox's home directory. Directory uploads use scp-like semantics (`./myproject` → `~/myproject/`).
+Arguments are `NAME LOCAL_PATH [DEST]`. If `DEST` is omitted, files are placed in the sandbox's home directory. Directory uploads use scp-like semantics (`./myproject` → `~/myproject/`).
 
 By default, `.gitignore` rules are respected for directory uploads. Use `--no-git-ignore` to include all files.
 
 | Flag | Description |
 |------|-------------|
+| `-f`, `--file` | Manifest file to read sandbox name from (`-` for stdin) |
 | `--no-git-ignore` | Disable `.gitignore` filtering for directory uploads |
 
 ### `sandbox download`
@@ -360,11 +414,16 @@ By default, `.gitignore` rules are respected for directory uploads. Use `--no-gi
 Download files or directories from a sandbox.
 
 ```bash
-openshellctl sandbox download /workspace/output my-sandbox
-openshellctl sandbox download /workspace/output:./local-dir my-sandbox
+openshellctl sandbox download my-sandbox /workspace/output
+openshellctl sandbox download my-sandbox /workspace/output ./local-dir
+openshellctl sandbox download -f sandbox.yaml /workspace/output
 ```
 
-The spec is `REMOTE[:DEST]`. If `DEST` is omitted, files are placed in the current directory.
+Arguments are `NAME SANDBOX_PATH [DEST]`. If `DEST` is omitted, files are placed in the current directory.
+
+| Flag | Description |
+|------|-------------|
+| `-f`, `--file` | Manifest file to read sandbox name from (`-` for stdin) |
 
 ### `sandbox ssh-config`
 
@@ -372,10 +431,15 @@ Print an SSH configuration block for use with the upstream `openshell` binary.
 
 ```bash
 openshellctl sandbox ssh-config my-sandbox
-openshellctl sandbox ssh-config          # uses last-used sandbox
+openshellctl sandbox ssh-config -f sandbox.yaml   # read name from manifest
+openshellctl sandbox ssh-config                   # uses last-used sandbox
 ```
 
-This outputs a block suitable for `~/.ssh/config`. It requires the upstream `openshell` binary for the ProxyCommand.
+| Flag | Description |
+|------|-------------|
+| `-f`, `--file` | Manifest file to read sandbox name from (`-` for stdin) |
+
+This outputs a block suitable for `~/.ssh/config`, using `openshellctl ssh-proxy` as the ProxyCommand.
 
 ### `sandbox provider`
 
@@ -384,6 +448,7 @@ Manage providers attached to a sandbox.
 ```bash
 # List providers
 openshellctl sandbox provider list my-sandbox
+openshellctl sandbox provider list -f sandbox.yaml
 
 # Attach a provider
 openshellctl sandbox provider attach my-sandbox github
@@ -405,6 +470,7 @@ View sandbox logs. This is a top-level command (alias: `lg`).
 
 ```bash
 openshellctl logs my-sandbox
+openshellctl logs -f sandbox.yaml              # read name from manifest
 openshellctl logs my-sandbox --tail            # stream live
 openshellctl logs my-sandbox -n 50             # last 50 lines
 openshellctl logs my-sandbox --since 5m        # last 5 minutes
@@ -414,6 +480,7 @@ openshellctl logs my-sandbox --source gateway  # gateway logs only
 
 | Flag | Description |
 |------|-------------|
+| `-f`, `--file` | Manifest file to read sandbox name from (`-` for stdin) |
 | `--tail` | Stream live logs |
 | `-n` | Number of log lines (default: 200) |
 | `--since` | Show logs from this duration ago (e.g. `5m`, `1h`, `30s`) |
@@ -506,7 +573,10 @@ openshellctl logs                                       # reuses my-sandbox
 | `OPENSHELL_GATEWAY_ENDPOINT` | Gateway endpoint URL |
 | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification (`true`/`1`) |
 | `OPENSHELL_WORKSPACE` | Default workspace |
-| `OPENSHELL_TOKEN` | Bearer token |
+| `OPENSHELL_TOKEN` | Bearer token (overrides all other auth) |
+| `OPENSHELL_OIDC_CLIENT_SECRET` | OIDC client secret (enables service account auth) |
+| `OPENSHELL_OIDC_CLIENT_ID` | OIDC client ID override (default from gateway metadata) |
+| `OPENSHELL_OIDC_ISSUER` | OIDC issuer URL override (default from gateway metadata) |
 | `OPENSHELL_SANDBOX_POLICY` | Default sandbox policy file path |
 | `NO_COLOR` | Disable coloured output (any value) |
 
@@ -514,7 +584,8 @@ openshellctl logs                                       # reuses my-sandbox
 
 openshellctl is a compatible reimplementation with these intentional differences:
 
-- **Pure Go**: no shell-out to `ssh`, `tar`, `git`, or any other binary. All SSH transfer, tar streaming, and gitignore filtering are implemented in-process.
+- **Pure Go, zero dependencies**: no shell-out to `ssh`, `tar`, `git`, or any other binary — including the upstream `openshell` CLI. All SSH transfer, tar streaming, and gitignore filtering are implemented in-process. Single static binary.
+- **Per-request auth with automatic retry**: tokens are resolved per-RPC (not baked in at startup). On `Unauthenticated`, the token is refreshed (or re-minted for service accounts) and the request retried. Long-running sessions and `--no-keep` cleanup work reliably even after token expiry.
 - **Embeddable**: `pkg/gateway`, `pkg/transfer`, `pkg/sandbox`, and `pkg/auth` are importable Go packages with interface-driven I/O seams, suitable for use in operators and controllers.
 - **No interactive spinner**: provisioning progress uses plain text output instead of terminal spinners.
 - **`policy lint` is a separate top-level command** (not under `sandbox`).

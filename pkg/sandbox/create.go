@@ -69,6 +69,7 @@ func Create(ctx context.Context, d CreateDeps, r *CreateRequest, ttyResolved boo
 		if sink == nil {
 			sink = nopSink{}
 		}
+		sink.Header(sb.Name)
 		if _, werr := WatchUntilReady(ctx, d.GW, sb.ID, phaseFromStatus(sb), d.IdleTimeout, r.GPU != nil, sink, d.Clock); werr != nil {
 			return nil, werr
 		}

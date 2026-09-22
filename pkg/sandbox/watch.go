@@ -116,6 +116,7 @@ func WatchUntilReady(ctx context.Context, gw gateway.Gateway, id string, initial
 	sawNonReady := initialPhase != pb.SandboxPhase_SANDBOX_PHASE_READY
 	deadline := clock().Add(idleTimeout)
 	var lastStatus string
+	var lastActiveKey string
 
 	for {
 		ev, err := stream.Recv()
@@ -149,8 +150,24 @@ func WatchUntilReady(ctx context.Context, gw gateway.Gateway, id string, initial
 				return nil, &ErrProvisionFailed{Reason: reason}
 			}
 		case ev.GetEvent() != nil:
-			if resetsIdle(ev.GetEvent()) {
+			e := ev.GetEvent()
+			if resetsIdle(e) {
 				deadline = clock().Add(idleTimeout)
+			}
+			if md := e.GetMetadata(); md != nil {
+				if step, ok := md[metaCompleteStep]; ok {
+					elapsed := clock().Sub(deadline.Add(-idleTimeout))
+					sink.StepDone(step, elapsed)
+					lastActiveKey = ""
+				}
+				if step, ok := md[metaActiveStep]; ok {
+					detail := md[metaActiveDetail]
+					key := step + "\x00" + detail
+					if key != lastActiveKey {
+						sink.StepActive(step, detail)
+						lastActiveKey = key
+					}
+				}
 			}
 		case ev.GetWarning() != nil:
 			sink.Warning(ev.GetWarning().GetMessage())

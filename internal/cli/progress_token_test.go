@@ -22,8 +22,8 @@ func TestPlainSink(t *testing.T) {
 	out := b.String()
 	for _, want := range []string{
 		"Created sandbox: demo",
-		"  Provisioning pulling image",
-		"  Waiting",
+		"  … Provisioning pulling image",
+		"  … Waiting",
 		"  ✓ Ready (3s)",
 		"  ! heads up",
 		"  ✗ boom",

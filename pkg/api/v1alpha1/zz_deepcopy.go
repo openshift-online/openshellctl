@@ -52,6 +52,10 @@ func (in SandboxSpec) deepCopy() SandboxSpec {
 	}
 	out.DriverConfig = copyAnyMap(in.DriverConfig)
 	out.Policy = copyAnyMap(in.Policy)
+	if in.SessionOpts != nil {
+		so := *in.SessionOpts
+		out.SessionOpts = &so
+	}
 	if len(in.Upload) > 0 {
 		out.Upload = make([]Upload, len(in.Upload))
 		for i, u := range in.Upload {

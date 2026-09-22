@@ -150,6 +150,7 @@ func newSandboxCreateCommand() *cobra.Command {
 				}
 
 				// Attach via connect.
+				fmt.Fprintf(cmd.ErrOrStderr(), "Attaching to sandbox %s...\n", sb.Name)
 				tc := transfer.New(gw, nil, wallClock{})
 				useTTY := stdinTTY && stdoutTTY
 				t := &cliTerminal{
@@ -160,12 +161,14 @@ func newSandboxCreateCommand() *cobra.Command {
 					stderr:   cmd.ErrOrStderr(),
 					isTTY:    stdinTTY,
 				}
-				code, cerr := tc.Connect(cmd.Context(), ws, sb.Name, useTTY, t)
+				code, cerr := tc.Connect(cmd.Context(), ws, sb.Name, useTTY, t, req.Command...)
 
 				// --no-keep: delete after session.
 				if !req.Keep {
 					if _, derr := gw.DeleteSandbox(cmd.Context(), ws, sb.Name); derr != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "Failed to delete sandbox %s: %v\n", sb.Name, derr)
+					} else {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Deleted sandbox %s\n", sb.Name)
 					}
 				} else {
 					saveLastSandbox(target, ws, sb.Name)
@@ -287,7 +290,7 @@ func buildCreateFlags(cmd *cobra.Command, in createFlagInput) (sandbox.CreateFla
 	}
 	if len(in.uploads) > 0 {
 		for _, u := range in.uploads {
-			local, dest := parseUploadSpec(u)
+			local, dest := splitColonSpec(u)
 			gitignore := !in.noGitIgnore
 			f.Uploads = append(f.Uploads, v1alpha1.Upload{
 				Local:     local,
@@ -373,13 +376,15 @@ func validateCreateRequest(r *sandbox.CreateRequest) error {
 	return nil
 }
 
-// resolveTTY resolves the effective TTY value (explicit override wins; default
-// false in the non-interactive create-without-attach path).
+// resolveTTY resolves the effective TTY value. Explicit --tty/--no-tty wins;
+// when unset, default to true if both stdin and stdout are terminals (matching
+// upstream openshell behavior — run.rs allocates a PTY when the local terminal
+// is interactive).
 func resolveTTY(r *sandbox.CreateRequest) bool {
 	if r.TTY != nil {
 		return *r.TTY
 	}
-	return false
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
 // loadManifest decodes a -f manifest (- = stdin) and validates it.

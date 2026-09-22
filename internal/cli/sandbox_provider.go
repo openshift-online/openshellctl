@@ -12,14 +12,15 @@ import (
 )
 
 func newProviderListCommand() *cobra.Command {
-	return &cobra.Command{
+	var file string
+	c := &cobra.Command{
 		Use:   "list [NAME]",
 		Short: "List providers attached to a sandbox",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
-				sbName, err := resolveSandboxName(args, target, ws)
+				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
 				if err != nil {
 					return err
 				}
@@ -31,6 +32,8 @@ func newProviderListCommand() *cobra.Command {
 			})
 		},
 	}
+	c.Flags().StringVarP(&file, "file", "f", "", "manifest file to read sandbox name from (- for stdin)")
+	return c
 }
 
 func newProviderAttachCommand() *cobra.Command {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -167,15 +168,15 @@ func writeToken(w io.Writer, tok *auth.Token, describe, output string) error {
 }
 
 // newTokenRefreshCommand forces a fresh token, optionally writing it back.
+// When the disk bundle is expired and has no refresh token, it falls back to
+// the browser login flow automatically.
 func newTokenRefreshCommand() *cobra.Command {
 	var write bool
 	c := &cobra.Command{
 		Use:   "refresh",
-		Short: "Force a token refresh (client-credentials or refresh-token grant)",
+		Short: "Force a token refresh (client-credentials, refresh-token, or browser login)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// --write opts the disk-bundle source into persisting a refresh-grant
-			// result; resolveTokenSource reads write-token to wire that Writer.
 			if write {
 				viper.Set("write-token", true)
 			}
@@ -185,14 +186,19 @@ func newTokenRefreshCommand() *cobra.Command {
 			}
 			src.Invalidate()
 			tok, err := src.Token(cmd.Context())
+
+			// If the token is expired and can't be refreshed, fall back to
+			// the browser login flow when we have a named gateway.
+			var expired *auth.ErrTokenExpired
+			if errors.As(err, &expired) && target != nil && target.Name != "" {
+				cmd.PrintErrln("Token expired and no refresh token available. Launching browser login...")
+				return loginAndReport(cmd, target)
+			}
 			if err != nil {
 				return err
 			}
 			cmd.Printf("refreshed token for subject %q (expires %s)\n", tok.Subject, tokExpiryStr(tok))
 
-			// The disk-bundle refresh path persists itself; for the
-			// client-credentials path (in-memory by default) an explicit
-			// WriteBundle hands the fresh token to the on-disk store.
 			if write && tok.Source == auth.SourceClientCredentials {
 				w, err := tokenWriterFor(target)
 				if err != nil {

@@ -247,27 +247,38 @@ func dirTarCommand(path string) string {
 
 // streamTarInto runs cmd and extracts its stdout tar into dir, rejecting entries
 // with ".." components or absolute paths (archive/tar does no such filtering).
+//
+// The OpenShell SSH server may not close the SSH data channel or send an
+// exit-status after the remote tar command finishes. The Rust CLI avoids this
+// because it shells out to the ssh binary, which exits after stdout EOF. Our
+// in-process ssh.Session hangs on both io.Copy (waiting for channel close) and
+// sess.Wait (waiting for exit-status). To work around this, the tar extractor
+// runs first; once it has consumed all archive entries it closes the session
+// to unblock the stuck io.Copy.
 func streamTarInto(cli *ssh.Client, cmd, dir string) error {
-	pr, pw := io.Pipe()
-	var streamErr error
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		res, err := runRemoteStream(cli, cmd, pw)
-		if err != nil {
-			streamErr = err
-		} else if res.exitStatus != 0 {
-			streamErr = fmt.Errorf("ssh tar create exited with status %d", res.exitStatus)
-		}
-		_ = pw.CloseWithError(streamErr)
-	}()
-
-	extractErr := extractTar(pr, dir)
-	<-done
-	if extractErr != nil {
-		return extractErr
+	sess, err := cli.NewSession()
+	if err != nil {
+		return err
 	}
-	return streamErr
+	defer func() { _ = sess.Close() }()
+
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	sess.Stderr = io.Discard
+	if err := sess.Start(cmd); err != nil {
+		return err
+	}
+
+	extractErr := extractTar(stdout, dir)
+
+	// Tear down the session. If the server already closed the channel,
+	// this is a no-op. If it didn't (the common OpenShell case), this
+	// unblocks any lingering reads.
+	_ = sess.Close()
+
+	return extractErr
 }
 
 // extractTar unpacks a tar stream into dir, guarding against path traversal.

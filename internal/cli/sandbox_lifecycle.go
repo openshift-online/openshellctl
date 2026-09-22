@@ -8,41 +8,58 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openshift-online/openshellctl/pkg/gateway"
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
 )
 
 func newSandboxStopCommand() *cobra.Command {
-	return &cobra.Command{
+	var file string
+	c := &cobra.Command{
 		Use:   "stop [NAME]",
 		Short: "Stop a sandbox",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withGateway(cmd, func(gw gateway.Gateway) error {
-				if _, err := sandbox.Stop(cmd.Context(), gw, workspace(), args[0], lifecycleTimeout()); err != nil {
+			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
+				ws := workspace()
+				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
+				if err != nil {
 					return err
 				}
-				cmd.Printf("✓ Stopped sandbox %s\n", args[0])
+				if _, err := sandbox.Stop(cmd.Context(), gw, ws, sbName, lifecycleTimeout()); err != nil {
+					return err
+				}
+				cmd.Printf("✓ Stopped sandbox %s\n", sbName)
 				return nil
 			})
 		},
 	}
+	c.Flags().StringVarP(&file, "file", "f", "", "manifest file to read sandbox name from (- for stdin)")
+	return c
 }
 
 func newSandboxStartCommand() *cobra.Command {
-	return &cobra.Command{
+	var file string
+	c := &cobra.Command{
 		Use:   "start [NAME]",
 		Short: "Start a sandbox",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withGateway(cmd, func(gw gateway.Gateway) error {
-				if _, err := sandbox.Start(cmd.Context(), gw, workspace(), args[0], lifecycleTimeout()); err != nil {
+			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
+				ws := workspace()
+				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
+				if err != nil {
 					return err
 				}
-				cmd.Printf("✓ Started sandbox %s\n", args[0])
+				if _, err := sandbox.Start(cmd.Context(), gw, ws, sbName, lifecycleTimeout()); err != nil {
+					return err
+				}
+				cmd.Printf("✓ Started sandbox %s\n", sbName)
 				return nil
 			})
 		},
 	}
+	c.Flags().StringVarP(&file, "file", "f", "", "manifest file to read sandbox name from (- for stdin)")
+	return c
 }
 
 func newSandboxDeleteCommand() *cobra.Command {

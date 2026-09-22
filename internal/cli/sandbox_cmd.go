@@ -52,6 +52,24 @@ func resolveSandboxName(args []string, target *gatewayconfig.Target, ws string) 
 	return "", &UsageError{Err: fmt.Errorf("a sandbox name is required (no last-used sandbox found)")}
 }
 
+// resolveNameFromFileOrArgs resolves a sandbox name from a -f manifest file or
+// from positional/--name args. The two sources are mutually exclusive: if both
+// are provided, a usage error is returned. When file is empty, resolution falls
+// through to resolveSandboxName(args, ...).
+func resolveNameFromFileOrArgs(cmd *cobra.Command, file string, args []string, target *gatewayconfig.Target, ws string) (string, error) {
+	if file != "" {
+		if len(args) > 0 && args[0] != "" {
+			return "", &UsageError{Err: fmt.Errorf("cannot combine -f/--file with a positional name or --name")}
+		}
+		names, err := namesFromManifest(cmd, file)
+		if err != nil {
+			return "", err
+		}
+		return names[0], nil
+	}
+	return resolveSandboxName(args, target, ws)
+}
+
 // saveLastSandbox best-effort records the workspace/name as the gateway's
 // last_sandbox. Failures are ignored (matching the CLI's `let _ = ...`).
 func saveLastSandbox(target *gatewayconfig.Target, ws, name string) {

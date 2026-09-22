@@ -9,11 +9,45 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/transfer"
 )
 
-func TestParseUploadSpec(t *testing.T) {
+func TestParseUploadArgs(t *testing.T) {
+	cmd := newSandboxUploadCommand()
+	name, local, dest, err := parseUploadArgs(cmd, "", []string{"my-sb", "/tmp/file"})
+	if err != nil || name != "my-sb" || local != "/tmp/file" || dest != "" {
+		t.Errorf("2 args: name=%q local=%q dest=%q err=%v", name, local, dest, err)
+	}
+
+	name, local, dest, err = parseUploadArgs(cmd, "", []string{"my-sb", "/tmp/file", "/remote"})
+	if err != nil || name != "my-sb" || local != "/tmp/file" || dest != "/remote" {
+		t.Errorf("3 args: name=%q local=%q dest=%q err=%v", name, local, dest, err)
+	}
+
+	_, _, _, err = parseUploadArgs(cmd, "", []string{"only-one"})
+	if err == nil {
+		t.Error("1 arg without -f should error")
+	}
+}
+
+func TestParseDownloadArgs(t *testing.T) {
+	cmd := newSandboxDownloadCommand()
+	name, remote, dest, err := parseDownloadArgs(cmd, "", []string{"my-sb", "/sandbox/file"})
+	if err != nil || name != "my-sb" || remote != "/sandbox/file" || dest != "" {
+		t.Errorf("2 args: name=%q remote=%q dest=%q err=%v", name, remote, dest, err)
+	}
+
+	name, remote, dest, err = parseDownloadArgs(cmd, "", []string{"my-sb", "/sandbox/file", "/tmp/local"})
+	if err != nil || name != "my-sb" || remote != "/sandbox/file" || dest != "/tmp/local" {
+		t.Errorf("3 args: name=%q remote=%q dest=%q err=%v", name, remote, dest, err)
+	}
+
+	_, _, _, err = parseDownloadArgs(cmd, "", []string{"only-one"})
+	if err == nil {
+		t.Error("1 arg without -f should error")
+	}
+}
+
+func TestSplitColonSpec(t *testing.T) {
 	cases := []struct {
-		in        string
-		wantLocal string
-		wantDest  string
+		in, wantA, wantB string
 	}{
 		{"./mydir", "./mydir", ""},
 		{"/abs/path:/remote/dest", "/abs/path", "/remote/dest"},
@@ -21,21 +55,10 @@ func TestParseUploadSpec(t *testing.T) {
 		{"a:b:c", "a:b", "c"},
 	}
 	for _, c := range cases {
-		local, dest := parseUploadSpec(c.in)
-		if local != c.wantLocal || dest != c.wantDest {
-			t.Errorf("parseUploadSpec(%q) = (%q, %q), want (%q, %q)", c.in, local, dest, c.wantLocal, c.wantDest)
+		a, b := splitColonSpec(c.in)
+		if a != c.wantA || b != c.wantB {
+			t.Errorf("splitColonSpec(%q) = (%q, %q), want (%q, %q)", c.in, a, b, c.wantA, c.wantB)
 		}
-	}
-}
-
-func TestParseDownloadSpec(t *testing.T) {
-	remote, dest := parseDownloadSpec("/remote/file:./local")
-	if remote != "/remote/file" || dest != "./local" {
-		t.Errorf("parseDownloadSpec = (%q, %q)", remote, dest)
-	}
-	remote, dest = parseDownloadSpec("/remote/file")
-	if remote != "/remote/file" || dest != "" {
-		t.Errorf("parseDownloadSpec no-dest = (%q, %q)", remote, dest)
 	}
 }
 

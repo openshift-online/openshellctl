@@ -3,7 +3,11 @@ package transfer
 import (
 	"context"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io"
+	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -12,6 +16,13 @@ import (
 const (
 	ctrlP = 0x10
 	ctrlQ = 0x11
+)
+
+// SSH keepalive constants matching the Rust CLI's ServerAliveInterval /
+// ServerAliveCountMax (emitted in ssh-config).
+const (
+	keepaliveInterval = 15 // seconds between keepalive@openssh.com requests
+	keepaliveMaxCount = 3  // consecutive failures before closing the connection
 )
 
 // Terminal abstracts the local terminal for an interactive connect: putting the
@@ -43,17 +54,48 @@ type ptyRequestMsg struct {
 }
 
 type (
-	subsystemRequestMsg struct{ Subsystem string }
-	setenvRequest       struct{ Name, Value string }
-	winchMsg            struct{ Columns, Rows, Width, Height uint32 }
+	setenvRequest struct{ Name, Value string }
+	winchMsg      struct{ Columns, Rows, Width, Height uint32 }
+	execMsg       struct{ Command string }
 )
 
-// Connect attaches an interactive session to the sandbox's openshell-main
-// subsystem and returns the remote exit code. It drives a raw session channel
-// (rather than ssh.Session) so the exit status of a *subsystem* request is
-// observable — ssh.Session.Wait only works for shell/exec, not subsystems.
-// Mirrors ssh.rs:258-288 mapped onto the crypto/ssh channel API.
-func (c *client) Connect(ctx context.Context, workspace, sandbox string, tty bool, term Terminal) (int, error) {
+// sendSessionRequest sends either an exec request (when command is non-empty)
+// or a shell request (when command is empty) on the SSH channel. Exec sends the
+// shell-escaped command string matching the Rust CLI's `ssh sandbox "cmd"`.
+func sendSessionRequest(ch ssh.Channel, command []string) error {
+	if len(command) > 0 {
+		parts := make([]string, len(command))
+		for i, arg := range command {
+			parts[i] = ShellEscape(arg)
+		}
+		cmdStr := strings.Join(parts, " ")
+		ok, err := ch.SendRequest("exec", true, ssh.Marshal(&execMsg{Command: cmdStr}))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("server rejected exec request")
+		}
+		return nil
+	}
+	ok, err := ch.SendRequest("shell", true, nil)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("server rejected shell request")
+	}
+	return nil
+}
+
+// Connect attaches an interactive session to the sandbox and returns the remote
+// exit code. When command is non-empty, an SSH exec request runs the
+// shell-escaped command (matching the Rust CLI's `ssh -tt sandbox "cmd"`);
+// when empty, a shell request gives the default interactive session. The
+// server's shell handler connects to the sandbox's main process; the exec
+// handler runs the specified command. We drive a raw session channel (rather
+// than ssh.Session) so the exit status is directly observable.
+func (c *client) Connect(ctx context.Context, workspace, sandbox string, tty bool, term Terminal, command ...string) (int, error) {
 	cli, err := c.dialSSH(ctx, workspace, sandbox)
 	if err != nil {
 		return 0, err
@@ -85,6 +127,40 @@ func (c *client) Connect(ctx context.Context, workspace, sandbox string, tty boo
 		}
 	}()
 
+	// Start SSH keepalive loop matching the Rust CLI's ServerAliveInterval 15 /
+	// ServerAliveCountMax 3. Sends keepalive@openssh.com global requests on the
+	// underlying SSH connection. On 3 consecutive failures the connection is
+	// closed, causing the I/O pumps to unblock.
+	keepaliveDead := make(chan struct{})
+	if c.clock != nil {
+		tickCh, tickStop := c.clock.NewTicker(time.Duration(keepaliveInterval) * time.Second)
+		go func() {
+			defer tickStop()
+			failures := 0
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case _, ok := <-tickCh:
+					if !ok {
+						return
+					}
+					_, _, err := cli.SendRequest("keepalive@openssh.com", true, nil)
+					if err != nil {
+						failures++
+						if failures >= keepaliveMaxCount {
+							close(keepaliveDead)
+							_ = cli.Close()
+							return
+						}
+					} else {
+						failures = 0
+					}
+				}
+			}
+		}()
+	}
+
 	if tty {
 		cols, rows := termSize(term)
 		payload := ssh.Marshal(&ptyRequestMsg{Term: "xterm-256color", Columns: uint32(cols), Rows: uint32(rows)}) //nolint:gosec // terminal dimensions are small non-negative values
@@ -108,7 +184,7 @@ func (c *client) Connect(ctx context.Context, workspace, sandbox string, tty boo
 	// Mirror `-o SetEnv=TERM=xterm-256color`.
 	_, _ = ch.SendRequest("env", false, ssh.Marshal(&setenvRequest{Name: "TERM", Value: "xterm-256color"}))
 
-	if _, err := ch.SendRequest("subsystem", true, ssh.Marshal(&subsystemRequestMsg{Subsystem: "openshell-main"})); err != nil {
+	if err := sendSessionRequest(ch, command); err != nil {
 		return 0, err
 	}
 
@@ -135,6 +211,10 @@ func (c *client) Connect(ctx context.Context, workspace, sandbox string, tty boo
 	}()
 
 	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-keepaliveDead:
+		return 0, fmt.Errorf("ssh keepalive timeout: %d consecutive failures", keepaliveMaxCount)
 	case <-detachCh:
 		return 0, nil
 	case <-outDone:

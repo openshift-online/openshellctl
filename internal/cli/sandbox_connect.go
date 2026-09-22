@@ -14,7 +14,10 @@ import (
 )
 
 func newSandboxConnectCommand() *cobra.Command {
-	var editor string
+	var (
+		editor string
+		file   string
+	)
 	c := &cobra.Command{
 		Use:   "connect [NAME]",
 		Short: "Connect to a sandbox",
@@ -25,7 +28,7 @@ func newSandboxConnectCommand() *cobra.Command {
 			}
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
-				sbName, err := resolveSandboxName(args, target, ws)
+				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
 				if err != nil {
 					return err
 				}
@@ -53,6 +56,7 @@ func newSandboxConnectCommand() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&editor, "editor", "", "(unsupported)")
+	c.Flags().StringVarP(&file, "file", "f", "", "manifest file to read sandbox name from (- for stdin)")
 	return c
 }
 

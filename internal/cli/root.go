@@ -3,10 +3,13 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -70,6 +73,8 @@ func NewRootCommand() *cobra.Command {
 		newTokenCommand(),
 		newPolicyCommand(),
 		newVersionCommand(),
+		newWhoamiCommand(),
+		newLoginCommand(),
 	)
 
 	return root
@@ -106,19 +111,30 @@ func bindViper(root *cobra.Command) {
 
 // Execute builds and runs the root command, returning a process exit code.
 // It prints "Error: <msg>" to stderr for failures (root has SilenceErrors set).
+// SIGINT and SIGTERM cancel the command context so non-interactive operations
+// (watch, upload, gRPC calls) clean up promptly. During raw-mode SSH sessions,
+// Ctrl-C (0x03) flows through stdin to the remote process — the terminal
+// driver does not convert it to SIGINT while in raw mode.
 func Execute() int {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	root := NewRootCommand()
+	root.SetContext(ctx)
 	if err := root.Execute(); err != nil {
 		// A remote (exec/connect/create-attach) non-zero exit is propagated as the
 		// process status without an "Error:" message — the remote command already
 		// wrote its own output.
 		var remote *RemoteExitError
-		if !errors.As(err, &remote) {
+		if !errors.As(err, &remote) && !errors.Is(err, context.Canceled) {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
 		}
 		code := exitCodeFor(err)
 		if code == ExitAuth {
-			fmt.Fprintf(os.Stderr, "Hint: try `openshellctl token refresh` to obtain a new token.\n")
+			msg := err.Error()
+			if !strings.Contains(msg, "openshellctl token refresh") && !strings.Contains(msg, "openshellctl login") {
+				fmt.Fprintf(os.Stderr, "Hint: try `openshellctl token refresh` to obtain a new token.\n")
+			}
 		}
 		return code
 	}

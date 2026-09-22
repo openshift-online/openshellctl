@@ -7,21 +7,30 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openshift-online/openshellctl/pkg/gateway"
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/output"
 )
 
 func newSandboxGetCommand() *cobra.Command {
-	var format string
+	var (
+		format string
+		file   string
+	)
 	c := &cobra.Command{
 		Use:   "get [NAME]",
 		Short: "Get a sandbox",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
+			if file == "" && len(args) == 0 {
 				return &UsageError{Err: fmt.Errorf("a sandbox name is required")}
 			}
-			return withGateway(cmd, func(gw gateway.Gateway) error {
-				sb, err := gw.GetSandbox(cmd.Context(), workspace(), args[0])
+			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
+				ws := workspace()
+				sbName, err := resolveNameFromFileOrArgs(cmd, file, args, target, ws)
+				if err != nil {
+					return err
+				}
+				sb, err := gw.GetSandbox(cmd.Context(), ws, sbName)
 				if err != nil {
 					return err
 				}
@@ -30,6 +39,7 @@ func newSandboxGetCommand() *cobra.Command {
 		},
 	}
 	c.Flags().StringVarP(&format, "output", "o", "table", "output format: table|json|yaml")
+	c.Flags().StringVarP(&file, "file", "f", "", "manifest file to read sandbox name from (- for stdin)")
 	return c
 }
 

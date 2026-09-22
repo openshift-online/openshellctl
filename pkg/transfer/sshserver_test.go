@@ -29,11 +29,16 @@ type fakeGateway struct {
 	hostKey     ssh.Signer
 	mu          sync.Mutex
 	tunnels     int
-	lastMain    string // last openshell-main payload written by a Connect session
-	mainReply   string // canned bytes the openshell-main subsystem streams back
-	mainExit    int    // exit code the openshell-main subsystem returns
-	mainHold    bool   // when true, the subsystem holds its write side open until the client tears the channel down (models a live session that only ends on detach)
-	failExtract bool   // when true, the upload extract command reports non-zero
+	lastMain     string // last payload written by a Connect session
+	mainReply    string // canned bytes the shell session streams back
+	mainExit     int    // exit code the shell session returns
+	mainHold     bool   // when true, the session holds its write side open until the client tears the channel down (models a live session that only ends on detach)
+	failExtract  bool   // when true, the upload extract command reports non-zero
+	lastReqType      string // tracks the request type used for the interactive session ("shell", "exec", or "subsystem")
+	lastExecCmd      string // last exec command received
+	rejectShell      bool   // when true, the server rejects shell requests (models a broken server)
+	keepaliveCount   int    // number of keepalive@openssh.com global requests received
+	rejectKeepalive  bool   // when true, server replies false to keepalive requests (models unresponsive server)
 }
 
 func newFakeGateway(t *testing.T, root string) *fakeGateway {
@@ -66,7 +71,7 @@ func (f *fakeGateway) serve(nc net.Conn) {
 	if err != nil {
 		return
 	}
-	go ssh.DiscardRequests(reqs)
+	go f.handleGlobalRequests(reqs)
 	for nch := range chans {
 		if nch.ChannelType() != "session" {
 			_ = nch.Reject(ssh.UnknownChannelType, "only session")
@@ -81,6 +86,24 @@ func (f *fakeGateway) serve(nc net.Conn) {
 	_ = sconn.Close()
 }
 
+func (f *fakeGateway) handleGlobalRequests(reqs <-chan *ssh.Request) {
+	for req := range reqs {
+		if req.Type == "keepalive@openssh.com" {
+			f.mu.Lock()
+			f.keepaliveCount++
+			reject := f.rejectKeepalive
+			f.mu.Unlock()
+			if req.WantReply {
+				_ = req.Reply(!reject, nil)
+			}
+			continue
+		}
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+	}
+}
+
 func (f *fakeGateway) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 	for req := range reqs {
 		switch req.Type {
@@ -93,18 +116,40 @@ func (f *fakeGateway) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 			if req.WantReply {
 				_ = req.Reply(true, nil)
 			}
-			status := f.runShell(ch, cmd)
-			sendExit(ch, status)
+			f.mu.Lock()
+			f.lastReqType = "exec"
+			f.lastExecCmd = cmd
+			f.mu.Unlock()
+			if f.isTarCommand(cmd) {
+				status := f.runShell(ch, cmd)
+				sendExit(ch, status)
+			} else {
+				f.runMain(ch)
+				sendExit(ch, f.mainExit)
+			}
+			_ = ch.Close()
+			return
+		case "shell":
+			f.mu.Lock()
+			f.lastReqType = "shell"
+			reject := f.rejectShell
+			f.mu.Unlock()
+			if req.WantReply {
+				_ = req.Reply(!reject, nil)
+			}
+			if !reject {
+				f.runMain(ch)
+				sendExit(ch, f.mainExit)
+			}
 			_ = ch.Close()
 			return
 		case "subsystem":
 			name := decodeString(req.Payload)
+			f.mu.Lock()
+			f.lastReqType = "subsystem"
+			f.mu.Unlock()
 			if req.WantReply {
-				_ = req.Reply(name == "openshell-main", nil)
-			}
-			if name == "openshell-main" {
-				f.runMain(ch)
-				sendExit(ch, f.mainExit)
+				_ = req.Reply(name == "sftp", nil)
 			}
 			_ = ch.Close()
 			return
@@ -258,6 +303,13 @@ func (f *fakeGateway) cmdTarFile(ch ssh.Channel, cmd string) int {
 	return 0
 }
 
+func (f *fakeGateway) isTarCommand(cmd string) bool {
+	return strings.HasPrefix(cmd, "mkdir -p ") ||
+		strings.HasPrefix(cmd, "pwd -P && realpath") ||
+		strings.HasPrefix(cmd, "if [ -d ") ||
+		strings.HasPrefix(cmd, "tar cf -")
+}
+
 func (f *fakeGateway) resolveRemote(p string) string {
 	p = strings.TrimPrefix(p, remoteWorkspaceRoot)
 	p = strings.TrimPrefix(p, "/")
@@ -341,10 +393,35 @@ func sendExit(ch ssh.Channel, status int) {
 
 // --- helpers shared by tests ---
 
+// fakeClock is a controllable Clock for keepalive tests. Callers push ticks
+// into tickCh to drive the keepalive loop deterministically without wall-clock
+// waits.
+type fakeClock struct {
+	tickCh chan time.Time
+	stopCh chan struct{}
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{
+		tickCh: make(chan time.Time, 16),
+		stopCh: make(chan struct{}, 1),
+	}
+}
+
+func (f *fakeClock) Now() time.Time { return time.Now() }
+func (f *fakeClock) NewTicker(_ time.Duration) (<-chan time.Time, func()) {
+	return f.tickCh, func() {
+		select {
+		case f.stopCh <- struct{}{}:
+		default:
+		}
+	}
+}
+
 func newTestClient(t *testing.T, srcRoot, remoteRoot string) (*client, *fakeGateway) {
 	t.Helper()
 	gw := newFakeGateway(t, remoteRoot)
-	return &client{gw: gw, fsys: OSFS(srcRoot)}, gw
+	return &client{gw: gw, fsys: OSFS(srcRoot), clock: newFakeClock()}, gw
 }
 
 // bufferedConnPair returns two connected net.Conns with internal buffering, so

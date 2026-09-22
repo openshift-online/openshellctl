@@ -120,6 +120,220 @@ func TestValidate_Rules(t *testing.T) {
 	}
 }
 
+func TestDecode_FullManifest(t *testing.T) {
+	y := `
+apiVersion: openshell.managed.openshift.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: full-test
+  workspace: staging
+  labels:
+    team: sre
+spec:
+  image: quay.io/org/image:v1
+  command: ["claude", "/job-sop-improve"]
+  tty: true
+  env:
+    FOO: bar
+    BAZ: qux
+  providerRefs:
+    - name: vertex
+    - name: github
+  resources:
+    cpu: "2"
+    memory: 4Gi
+    gpu:
+      count: 1
+  upload:
+    - local: ./src
+      dest: /workspace
+    - local: ./data
+  sessionOpts:
+    noKeep: true
+    detach: false
+    forward: "8080"
+    approvalMode: auto
+    output: json
+`
+	s, err := Decode(strings.NewReader(y))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	if s.Metadata.Name != "full-test" {
+		t.Errorf("name = %q", s.Metadata.Name)
+	}
+	if s.Metadata.Workspace != "staging" {
+		t.Errorf("workspace = %q", s.Metadata.Workspace)
+	}
+	if s.Metadata.Labels["team"] != "sre" {
+		t.Errorf("labels = %v", s.Metadata.Labels)
+	}
+	if s.Spec.Image != "quay.io/org/image:v1" {
+		t.Errorf("image = %q", s.Spec.Image)
+	}
+	if len(s.Spec.Command) != 2 || s.Spec.Command[0] != "claude" || s.Spec.Command[1] != "/job-sop-improve" {
+		t.Errorf("command = %v", s.Spec.Command)
+	}
+	if s.Spec.TTY == nil || !*s.Spec.TTY {
+		t.Errorf("tty = %v", s.Spec.TTY)
+	}
+	if s.Spec.Env["FOO"] != "bar" || s.Spec.Env["BAZ"] != "qux" {
+		t.Errorf("env = %v", s.Spec.Env)
+	}
+	if len(s.Spec.ProviderRefs) != 2 || s.Spec.ProviderRefs[0].Name != "vertex" || s.Spec.ProviderRefs[1].Name != "github" {
+		t.Errorf("providerRefs = %v", s.Spec.ProviderRefs)
+	}
+	if s.Spec.Resources == nil || s.Spec.Resources.CPU != "2" || s.Spec.Resources.Memory != "4Gi" {
+		t.Errorf("resources = %+v", s.Spec.Resources)
+	}
+	if s.Spec.Resources.GPU == nil || s.Spec.Resources.GPU.Count == nil || *s.Spec.Resources.GPU.Count != 1 {
+		t.Errorf("gpu = %+v", s.Spec.Resources.GPU)
+	}
+	if len(s.Spec.Upload) != 2 || s.Spec.Upload[0].Local != "./src" || s.Spec.Upload[0].Dest != "/workspace" {
+		t.Errorf("upload = %v", s.Spec.Upload)
+	}
+	if s.Spec.Upload[1].Local != "./data" || s.Spec.Upload[1].Dest != "" {
+		t.Errorf("upload[1] = %v", s.Spec.Upload[1])
+	}
+
+	so := s.Spec.SessionOpts
+	if so == nil {
+		t.Fatal("sessionOpts is nil")
+	}
+	if !so.NoKeep {
+		t.Error("sessionOpts.noKeep should be true")
+	}
+	if so.Detach {
+		t.Error("sessionOpts.detach should be false")
+	}
+	if so.Forward != "8080" {
+		t.Errorf("sessionOpts.forward = %q", so.Forward)
+	}
+	if so.ApprovalMode != "auto" {
+		t.Errorf("sessionOpts.approvalMode = %q", so.ApprovalMode)
+	}
+	if so.Output != "json" {
+		t.Errorf("sessionOpts.output = %q", so.Output)
+	}
+}
+
+func TestDecode_SessionOptsMinimal(t *testing.T) {
+	y := `
+apiVersion: openshell.managed.openshift.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: minimal
+spec:
+  image: test:latest
+  sessionOpts:
+    noKeep: true
+`
+	s, err := Decode(strings.NewReader(y))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if s.Spec.SessionOpts == nil || !s.Spec.SessionOpts.NoKeep {
+		t.Errorf("sessionOpts.noKeep not parsed")
+	}
+	if s.Spec.SessionOpts.Detach {
+		t.Error("detach should default false")
+	}
+	if s.Spec.SessionOpts.Forward != "" {
+		t.Errorf("forward should be empty: %q", s.Spec.SessionOpts.Forward)
+	}
+}
+
+func TestDecode_NoSessionOpts(t *testing.T) {
+	y := `
+apiVersion: openshell.managed.openshift.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: basic
+spec:
+  image: test:latest
+`
+	s, err := Decode(strings.NewReader(y))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if s.Spec.SessionOpts != nil {
+		t.Errorf("sessionOpts should be nil when omitted, got %+v", s.Spec.SessionOpts)
+	}
+}
+
+func TestDecode_DeprecatedFlatFields(t *testing.T) {
+	y := `
+apiVersion: openshell.managed.openshift.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: compat
+spec:
+  image: test:latest
+  keep: false
+  detach: true
+  forward: "9090"
+  approvalMode: auto
+`
+	s, err := Decode(strings.NewReader(y))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if s.Spec.Keep == nil || *s.Spec.Keep != false {
+		t.Errorf("deprecated keep = %v", s.Spec.Keep)
+	}
+	if !s.Spec.Detach {
+		t.Error("deprecated detach should be true")
+	}
+	if s.Spec.Forward != "9090" {
+		t.Errorf("deprecated forward = %q", s.Spec.Forward)
+	}
+	if s.Spec.ApprovalMode != "auto" {
+		t.Errorf("deprecated approvalMode = %q", s.Spec.ApprovalMode)
+	}
+}
+
+func TestDecode_CommandOnly(t *testing.T) {
+	y := `
+apiVersion: openshell.managed.openshift.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: cmd-test
+spec:
+  image: python:3
+  command: ["python3", "-c", "print('hello')"]
+`
+	s, err := Decode(strings.NewReader(y))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(s.Spec.Command) != 3 || s.Spec.Command[0] != "python3" || s.Spec.Command[2] != "print('hello')" {
+		t.Errorf("command = %v", s.Spec.Command)
+	}
+}
+
+func TestValidate_SessionOptsValid(t *testing.T) {
+	s := validSandbox()
+	s.Spec.SessionOpts = &SessionOpts{
+		NoKeep:       true,
+		Detach:       true,
+		Forward:      "8080",
+		ApprovalMode: "auto",
+		Output:       "json",
+	}
+	if errs := s.Validate(); len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_SessionOptsEmptyIsValid(t *testing.T) {
+	s := validSandbox()
+	s.Spec.SessionOpts = &SessionOpts{}
+	if errs := s.Validate(); len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
 func TestDeepCopy_Independent(t *testing.T) {
 	tru := true
 	cnt := uint32(2)
@@ -167,6 +381,49 @@ func TestDeepCopy_Independent(t *testing.T) {
 	}
 	if orig.Spec.ProviderRefs[0].Name != "p" {
 		t.Error("providerRefs not deep-copied")
+	}
+}
+
+func TestDeepCopy_SessionOpts(t *testing.T) {
+	orig := &Sandbox{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: KindSandbox},
+		Metadata: ObjectMeta{Name: "sb"},
+		Spec: SandboxSpec{
+			SessionOpts: &SessionOpts{
+				NoKeep:       true,
+				Detach:       true,
+				Forward:      "8080",
+				ApprovalMode: "auto",
+				Output:       "json",
+			},
+		},
+	}
+	cp := orig.DeepCopy()
+
+	cp.Spec.SessionOpts.NoKeep = false
+	cp.Spec.SessionOpts.Forward = "9090"
+	cp.Spec.SessionOpts.ApprovalMode = "manual"
+
+	if !orig.Spec.SessionOpts.NoKeep {
+		t.Error("sessionOpts.noKeep not deep-copied")
+	}
+	if orig.Spec.SessionOpts.Forward != "8080" {
+		t.Error("sessionOpts.forward not deep-copied")
+	}
+	if orig.Spec.SessionOpts.ApprovalMode != "auto" {
+		t.Error("sessionOpts.approvalMode not deep-copied")
+	}
+}
+
+func TestDeepCopy_NilSessionOpts(t *testing.T) {
+	orig := &Sandbox{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: KindSandbox},
+		Metadata: ObjectMeta{Name: "sb"},
+		Spec:     SandboxSpec{},
+	}
+	cp := orig.DeepCopy()
+	if cp.Spec.SessionOpts != nil {
+		t.Error("nil sessionOpts should stay nil after DeepCopy")
 	}
 }
 

@@ -131,26 +131,3 @@ func interpretWait(err error) (remoteResult, error) {
 	}
 	return remoteResult{}, err
 }
-
-// runRemoteStream runs cmd on cli, copying remote stdout to out and returning
-// the exit status. Used by the download tar-create path (stdout is the tar).
-func runRemoteStream(cli *ssh.Client, cmd string, out io.Writer) (remoteResult, error) {
-	sess, err := cli.NewSession()
-	if err != nil {
-		return remoteResult{}, err
-	}
-	defer func() { _ = sess.Close() }()
-
-	stdout, err := sess.StdoutPipe()
-	if err != nil {
-		return remoteResult{}, err
-	}
-	if err := sess.Start(cmd); err != nil {
-		return remoteResult{}, err
-	}
-	if _, err := io.Copy(out, stdout); err != nil {
-		_ = sess.Close()
-		return remoteResult{}, err
-	}
-	return interpretWait(sess.Wait())
-}

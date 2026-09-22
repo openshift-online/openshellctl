@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -121,6 +122,44 @@ func TestDiskBundleSource_ExpiryBoundary(t *testing.T) {
 	var expired *ErrTokenExpired
 	if !errors.As(err, &expired) {
 		t.Errorf("now=1000 should be expired, got %v", err)
+	}
+}
+
+func TestDiskBundleSource_ExpiredHintNoRefreshToken(t *testing.T) {
+	bundle := fstest.MapFS{"oidc_token.json": {Data: []byte(
+		`{"access_token":"x","expires_at":100,"issuer":"https://i","client_id":"c"}`)}}
+	src := NewDiskBundleSource(bundle, func() time.Time { return time.Unix(1000, 0) },
+		WithBundleGatewayName("my-gw"))
+	_, err := src.Token(context.Background())
+	var expired *ErrTokenExpired
+	if !errors.As(err, &expired) {
+		t.Fatalf("expected ErrTokenExpired, got %v", err)
+	}
+	if !strings.Contains(expired.Hint, "openshellctl login") {
+		t.Errorf("hint should suggest openshellctl login, got: %s", expired.Hint)
+	}
+	if strings.Contains(expired.Hint, "token refresh") {
+		t.Errorf("hint should not suggest token refresh without a refresh token, got: %s", expired.Hint)
+	}
+}
+
+func TestDiskBundleSource_ExpiredHintWithRefreshToken(t *testing.T) {
+	r := "refresh-tok"
+	bundle := fstest.MapFS{"oidc_token.json": {Data: []byte(
+		`{"access_token":"x","refresh_token":"` + r + `","expires_at":100,"issuer":"https://i","client_id":"c"}`)}}
+	// No refresher wired, so refresh will fail and we get ErrTokenExpired... wait,
+	// actually without a refresher it won't attempt refresh. Let me check the code path.
+	// Line 146: if bundle.RefreshToken != nil && *bundle.RefreshToken != "" && s.refresher != nil
+	// Without refresher, it falls through to the hint. But the hint checks bundle.RefreshToken.
+	src := NewDiskBundleSource(bundle, func() time.Time { return time.Unix(1000, 0) },
+		WithBundleGatewayName("my-gw"))
+	_, err := src.Token(context.Background())
+	var expired *ErrTokenExpired
+	if !errors.As(err, &expired) {
+		t.Fatalf("expected ErrTokenExpired, got %v", err)
+	}
+	if !strings.Contains(expired.Hint, "openshellctl token refresh --write") {
+		t.Errorf("hint should suggest token refresh when refresh token exists, got: %s", expired.Hint)
 	}
 }
 

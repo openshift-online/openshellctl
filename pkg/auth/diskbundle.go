@@ -148,10 +148,14 @@ func (s *DiskBundleSource) Token(ctx context.Context) (*Token, error) {
 	}
 
 	tok := s.tokenFromBundle(bundle, now)
+	hint := "re-login with `openshellctl login -g " + s.gateway + "`, or set OPENSHELL_OIDC_CLIENT_SECRET for automatic renewal"
+	if bundle.RefreshToken != nil && *bundle.RefreshToken != "" {
+		hint = "run `openshellctl token refresh --write` to obtain a new token, or set OPENSHELL_OIDC_CLIENT_SECRET for automatic renewal"
+	}
 	return nil, &ErrTokenExpired{
 		Expiry: tok.Expiry,
 		Age:    tok.Age(now),
-		Hint:   "set OPENSHELL_OIDC_CLIENT_SECRET to regenerate, or run: openshell gateway login " + s.gateway,
+		Hint:   hint,
 	}
 }
 

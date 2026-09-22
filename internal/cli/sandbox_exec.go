@@ -16,6 +16,7 @@ import (
 func newSandboxExecCommand() *cobra.Command {
 	var (
 		name    string
+		file    string
 		workdir string
 		timeout uint32
 		envs    []string
@@ -41,7 +42,7 @@ func newSandboxExecCommand() *cobra.Command {
 
 			return withGatewayTarget(cmd, func(gw gateway.Gateway, target *gatewayconfig.Target) error {
 				ws := workspace()
-				sbName, err := resolveSandboxName(argsFromName(name), target, ws)
+				sbName, err := resolveNameFromFileOrArgs(cmd, file, argsFromName(name), target, ws)
 				if err != nil {
 					return err
 				}
@@ -83,6 +84,7 @@ func newSandboxExecCommand() *cobra.Command {
 	f.Lookup("tty").NoOptDefVal = "true"
 	f.Lookup("no-tty").NoOptDefVal = "true"
 	f.StringSliceVar(&envs, "env", nil, "env KEY=VALUE (repeatable)")
+	f.StringVarP(&file, "file", "f", "", "manifest file to read sandbox name from (- for stdin)")
 	return c
 }
 

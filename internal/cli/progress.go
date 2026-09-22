@@ -25,9 +25,9 @@ func (s *plainSink) StepDone(label string, elapsed time.Duration) {
 
 func (s *plainSink) StepActive(label, detail string) {
 	if detail != "" {
-		_, _ = fmt.Fprintf(s.w, "  %s %s\n", label, detail)
+		_, _ = fmt.Fprintf(s.w, "  … %s %s\n", label, detail)
 	} else {
-		_, _ = fmt.Fprintf(s.w, "  %s\n", label)
+		_, _ = fmt.Fprintf(s.w, "  … %s\n", label)
 	}
 }
 func (s *plainSink) Warning(msg string) { _, _ = fmt.Fprintf(s.w, "  ! %s\n", msg) }
