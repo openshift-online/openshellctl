@@ -10,22 +10,22 @@ import (
 
 func TestProviderConflictAttachMessage(t *testing.T) {
 	conflictErr := &gateway.ConflictError{Message: "aborted"}
-	msg := "failed to attach provider: sandbox was modified by another operation, please retry the command"
+	msg := "Failed to attach provider: sandbox was modified by another operation.\nPlease retry the command."
 	var conflict *gateway.ConflictError
 	if !errors.As(conflictErr, &conflict) {
 		t.Fatal("should match ConflictError")
 	}
-	if !strings.Contains(msg, "sandbox was modified by another operation") {
+	if !strings.Contains(msg, "Failed to attach provider") {
 		t.Errorf("attach conflict message wrong: %q", msg)
 	}
-	if !strings.Contains(msg, "please retry the command") {
+	if !strings.Contains(msg, "Please retry the command.") {
 		t.Errorf("attach conflict message missing retry hint: %q", msg)
 	}
 }
 
 func TestProviderConflictDetachMessage(t *testing.T) {
-	msg := "failed to detach provider: sandbox was modified by another operation, please retry the command"
-	if !strings.Contains(msg, "detach provider") {
+	msg := "Failed to detach provider: sandbox was modified by another operation.\nPlease retry the command."
+	if !strings.Contains(msg, "Failed to detach provider") {
 		t.Errorf("detach conflict message wrong: %q", msg)
 	}
 }

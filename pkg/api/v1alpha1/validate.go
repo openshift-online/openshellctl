@@ -128,6 +128,12 @@ func (s *Sandbox) Validate() []error {
 		add("spec.policy", "policy and policyFile are mutually exclusive")
 	}
 
+	switch s.Spec.ApprovalMode {
+	case "", "manual", "auto":
+	default:
+		add("spec.approvalMode", `must be one of "", "manual", "auto"`)
+	}
+
 	if s.Spec.SessionOpts != nil {
 		switch s.Spec.SessionOpts.ApprovalMode {
 		case "", "manual", "auto":

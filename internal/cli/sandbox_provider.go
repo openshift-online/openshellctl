@@ -54,7 +54,7 @@ func newProviderAttachCommand() *cobra.Command {
 				if err != nil {
 					var conflict *gateway.ConflictError
 					if errors.As(err, &conflict) {
-						return fmt.Errorf("failed to attach provider: sandbox was modified by another operation, please retry the command")
+						return fmt.Errorf("Failed to attach provider: sandbox was modified by another operation.\nPlease retry the command.") //nolint:staticcheck // upstream-verbatim (A.12)
 					}
 					return err
 				}
@@ -87,7 +87,7 @@ func newProviderDetachCommand() *cobra.Command {
 				if err != nil {
 					var conflict *gateway.ConflictError
 					if errors.As(err, &conflict) {
-						return fmt.Errorf("failed to detach provider: sandbox was modified by another operation, please retry the command")
+						return fmt.Errorf("Failed to detach provider: sandbox was modified by another operation.\nPlease retry the command.") //nolint:staticcheck // upstream-verbatim (A.12)
 					}
 					return err
 				}

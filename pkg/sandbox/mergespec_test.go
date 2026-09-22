@@ -108,6 +108,31 @@ func TestMerge_SessionOpts(t *testing.T) {
 	}
 }
 
+func TestMerge_SessionOptsOverridesDeprecated(t *testing.T) {
+	tru := true
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Image:        "img",
+			ApprovalMode: "manual",
+			Keep:         &tru,
+			SessionOpts: &v1alpha1.SessionOpts{
+				NoKeep:       true,
+				ApprovalMode: "auto",
+			},
+		},
+	}
+	r, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Keep {
+		t.Error("sessionOpts.noKeep should override deprecated keep")
+	}
+	if r.ApprovalMode != "auto" {
+		t.Errorf("sessionOpts.approvalMode should override deprecated: got %q", r.ApprovalMode)
+	}
+}
+
 func TestMerge_SessionOptsForwardBad(t *testing.T) {
 	m := &v1alpha1.Sandbox{
 		Spec: v1alpha1.SandboxSpec{
@@ -148,6 +173,70 @@ func TestMerge_FlagsOverrideSessionOpts(t *testing.T) {
 	}
 	if r.Output != "yaml" {
 		t.Errorf("flag --output should override: got %q", r.Output)
+	}
+}
+
+func TestMerge_DeprecatedFlatForward(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Image:   "img",
+			Forward: "127.0.0.1:3000",
+		},
+	}
+	r, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Forward == nil || r.Forward.Port != 3000 || r.Forward.Bind != "127.0.0.1" {
+		t.Errorf("deprecated forward = %+v", r.Forward)
+	}
+}
+
+func TestMerge_DeprecatedFlatForwardBad(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Forward: "badport",
+		},
+	}
+	_, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err == nil {
+		t.Fatal("expected error for bad deprecated forward")
+	}
+}
+
+func TestMerge_DeprecatedKeepFalse(t *testing.T) {
+	no := false
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Image: "img",
+			Keep:  &no,
+		},
+	}
+	r, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Keep {
+		t.Error("deprecated keep=false should set Keep=false")
+	}
+}
+
+func TestMerge_SessionOptsForwardOverridesDeprecatedForward(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Image:   "img",
+			Forward: "3000",
+			SessionOpts: &v1alpha1.SessionOpts{
+				Forward: "9090",
+			},
+		},
+	}
+	r, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Forward == nil || r.Forward.Port != 9090 {
+		t.Errorf("sessionOpts.forward should override deprecated: got %+v", r.Forward)
 	}
 }
 

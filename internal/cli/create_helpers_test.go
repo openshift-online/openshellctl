@@ -51,8 +51,7 @@ kind: Sandbox
 metadata:
   name: sb
 spec:
-  sessionOpts:
-    approvalMode: bogus
+  approvalMode: bogus
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "m.yaml")

@@ -91,4 +91,14 @@ type SandboxSpec struct {
 	// client-side orchestration (ignored by the operator)
 	Upload      []Upload     `json:"upload,omitempty"`
 	SessionOpts *SessionOpts `json:"sessionOpts,omitempty"`
+
+	// Deprecated: use sessionOpts.approvalMode. Kept for backward compat
+	// during v1alpha1; removed when the schema stabilizes.
+	ApprovalMode string `json:"approvalMode,omitempty"`
+	// Deprecated: use sessionOpts.noKeep (inverted). Kept for backward compat.
+	Keep *bool `json:"keep,omitempty"`
+	// Deprecated: use sessionOpts.detach. Kept for backward compat.
+	Detach bool `json:"detach,omitempty"`
+	// Deprecated: use sessionOpts.forward. Kept for backward compat.
+	Forward string `json:"forward,omitempty"`
 }
