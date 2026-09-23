@@ -3,6 +3,8 @@ package sandbox
 import (
 	"testing"
 
+	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+
 	"github.com/openshift-online/openshellctl/pkg/api/v1alpha1"
 )
 
@@ -311,6 +313,49 @@ func TestUsesRawGPU(t *testing.T) {
 	}
 	if !(&CreateRequest{GPU: &v1alpha1.GPU{}}).UsesRawGPU() {
 		t.Error("bare --gpu (nil count) should use raw")
+	}
+}
+
+func TestMerge_PolicyFromFlags(t *testing.T) {
+	pol := &types.SandboxPolicy{Version: 1, Filesystem: &types.FilesystemPolicy{IncludeWorkdir: true}}
+	r, err := MergeManifestAndFlags(nil, CreateFlags{Policy: pol})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Policy == nil || r.Policy.Version != 1 {
+		t.Errorf("policy not merged from flags: %+v", r.Policy)
+	}
+	if r.Policy.Filesystem == nil || !r.Policy.Filesystem.IncludeWorkdir {
+		t.Error("policy filesystem lost in merge")
+	}
+}
+
+func TestMerge_FlagPolicyOverridesNilManifest(t *testing.T) {
+	m := &v1alpha1.Sandbox{Spec: v1alpha1.SandboxSpec{Image: "img"}}
+	pol := &types.SandboxPolicy{Version: 1}
+	r, err := MergeManifestAndFlags(m, CreateFlags{Policy: pol})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Policy == nil || r.Policy.Version != 1 {
+		t.Errorf("flag policy should override nil manifest policy: %+v", r.Policy)
+	}
+}
+
+func TestToSDKSpec_PolicyFlowsThrough(t *testing.T) {
+	pol := &types.SandboxPolicy{
+		Version:    1,
+		Filesystem: &types.FilesystemPolicy{IncludeWorkdir: true, ReadOnly: []string{"/etc"}},
+	}
+	spec := ToSDKSpec(&CreateRequest{Policy: pol}, false)
+	if spec.Policy == nil {
+		t.Fatal("policy missing from SDK spec")
+	}
+	if spec.Policy.Version != 1 {
+		t.Errorf("version = %d", spec.Policy.Version)
+	}
+	if spec.Policy.Filesystem == nil || !spec.Policy.Filesystem.IncludeWorkdir {
+		t.Error("filesystem policy not propagated")
 	}
 }
 

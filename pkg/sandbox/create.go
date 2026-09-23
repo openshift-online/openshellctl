@@ -14,8 +14,8 @@ import (
 )
 
 // ErrRawGPUWithPolicy is returned when bare --gpu (raw create path) is combined
-// with a policy, which the raw path does not yet convert (policyyaml.ToProto is
-// deferred). Use an explicit --gpu N (SDK path) with a policy instead.
+// with a policy. The raw path sends a proto CreateSandboxRequest which cannot
+// carry the SDK SandboxPolicy; use an explicit --gpu N (SDK path) instead.
 var ErrRawGPUWithPolicy = errors.New("bare --gpu combined with a policy is not yet supported; use --gpu <count> with a policy")
 
 // CreateDeps are the dependencies for Create.
@@ -105,9 +105,8 @@ func createSandboxRaw(ctx context.Context, gw gateway.Gateway, r *CreateRequest,
 		rawSpec.Template = tmpl
 	}
 	if r.Policy != nil {
-		// The raw create path (bare --gpu) does not yet convert a policy to the
-		// sandboxv1 proto (policyyaml.ToProto is deferred); the SDK create path
-		// handles policies. This combination is rejected until ToProto lands.
+		// The raw create path (bare --gpu) cannot carry a SandboxPolicy in the
+		// proto CreateSandboxRequest; the SDK create path handles policies.
 		return nil, ErrRawGPUWithPolicy
 	}
 

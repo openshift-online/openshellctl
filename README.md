@@ -258,6 +258,8 @@ openshellctl sandbox delete -f sop-improve.yaml
 
 These fields are ignored by the operator — they control what the CLI does after creation. CLI flags always override manifest values.
 
+**`spec.policy`** (inline map) and **`spec.policyFile`** (path string) are mutually exclusive. `spec.policyFile` is resolved relative to the manifest file's directory; when the manifest is read from stdin, `policyFile` must be an absolute path.
+
 ### `sandbox get`
 
 Show details of a single sandbox.

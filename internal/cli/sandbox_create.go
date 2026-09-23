@@ -19,6 +19,7 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/api/v1alpha1"
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
+	"github.com/openshift-online/openshellctl/pkg/policyyaml"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
 	"github.com/openshift-online/openshellctl/pkg/transfer"
 )
@@ -83,6 +84,13 @@ func newSandboxCreateCommand() *cobra.Command {
 					return err
 				}
 			}
+
+			// flagExplicit is always true when flagPolicy != nil in production; the parameter exists for the test contract.
+			pol, perr := resolveCreatePolicy(flags.Policy, policyFile != "", manifest, file, os.Getenv)
+			if perr != nil {
+				return perr
+			}
+			flags.Policy = pol
 
 			req, err := sandbox.MergeManifestAndFlags(manifest, flags)
 			if err != nil {
@@ -306,9 +314,6 @@ func buildCreateFlags(cmd *cobra.Command, in createFlagInput) (sandbox.CreateFla
 		}
 		f.DriverConfig = dc
 	}
-	if in.policyFile == "" {
-		in.policyFile = os.Getenv("OPENSHELL_SANDBOX_POLICY")
-	}
 	if in.policyFile != "" {
 		pol, err := loadPolicy(in.policyFile)
 		if err != nil {
@@ -409,17 +414,89 @@ func loadManifest(cmd *cobra.Command, path string) (*v1alpha1.Sandbox, error) {
 	return m, nil
 }
 
-// loadPolicy reads and lints a policy file.
+// loadPolicy reads a policy YAML file and parses it to the SDK type.
 func loadPolicy(path string) (*types.SandboxPolicy, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read policy file %q: %w", path, err)
+		return nil, &UsageError{Err: fmt.Errorf("failed to read policy file %q: %w", path, err)}
 	}
-	_ = data
-	// Policy loading is handled by policyyaml.Load, but converting to the SDK
-	// type requires policyyaml.ToProto which is already wired in create.go.
-	// For now, return nil — the full policy-to-SDK pipeline is exercised via
-	// the -f manifest path, and this flag is wired for completeness.
+	p, err := policyyaml.Parse(data)
+	if err != nil {
+		return nil, &UsageError{Err: fmt.Errorf("invalid policy file %q: %w", path, err)}
+	}
+	return p, nil
+}
+
+// resolveManifestPolicy converts a manifest's spec.policy (inline) or
+// spec.policyFile (path) to the SDK type. Returns nil when neither is set.
+// The policyFile path is resolved relative to the manifest file's directory.
+// When the manifest is read from stdin, policyFile must be an absolute path.
+func resolveManifestPolicy(m *v1alpha1.Sandbox, manifestPath string) (*types.SandboxPolicy, error) {
+	if m.Spec.Policy != nil {
+		p, err := policyyaml.ParseInline(m.Spec.Policy)
+		if err != nil {
+			return nil, &UsageError{Err: fmt.Errorf("spec.policy: %w", err)}
+		}
+		return p, nil
+	}
+	if m.Spec.PolicyFile != "" {
+		path := m.Spec.PolicyFile
+		if !filepath.IsAbs(path) {
+			if manifestPath == "-" {
+				return nil, &UsageError{Err: fmt.Errorf("spec.policyFile %q must be an absolute path when the manifest is read from stdin", path)}
+			}
+			if manifestPath != "" {
+				path = filepath.Join(filepath.Dir(manifestPath), path)
+			}
+		}
+		return loadPolicy(path)
+	}
+	return nil, nil
+}
+
+// resolveCreatePolicy merges the policy from the --policy flag (or env var
+// fallback) with the manifest's policy fields. Precedence:
+//   - explicit --policy flag + manifest policy → error (mutually exclusive)
+//   - env var OPENSHELL_SANDBOX_POLICY + manifest policy → manifest wins
+//   - manifest policy alone → manifest
+//   - flag or env alone → flag/env
+//   - none → nil
+func resolveCreatePolicy(
+	flagPolicy *types.SandboxPolicy,
+	flagExplicit bool,
+	manifest *v1alpha1.Sandbox,
+	manifestPath string,
+	env func(string) string,
+) (*types.SandboxPolicy, error) {
+	var manifestPolicy *types.SandboxPolicy
+	if manifest != nil {
+		p, err := resolveManifestPolicy(manifest, manifestPath)
+		if err != nil {
+			return nil, err
+		}
+		manifestPolicy = p
+	}
+
+	if manifestPolicy != nil && flagPolicy != nil && flagExplicit {
+		return nil, &UsageError{Err: fmt.Errorf("--policy flag and manifest policy (spec.policy/spec.policyFile) are mutually exclusive")}
+	}
+
+	if manifestPolicy != nil {
+		return manifestPolicy, nil
+	}
+
+	if flagPolicy != nil {
+		return flagPolicy, nil
+	}
+
+	envPath := ""
+	if env != nil {
+		envPath = env("OPENSHELL_SANDBOX_POLICY")
+	}
+	if envPath != "" {
+		return loadPolicy(envPath)
+	}
+
 	return nil, nil
 }
 
