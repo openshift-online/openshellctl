@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
 	"github.com/spf13/cobra"
+
+	"github.com/openshift-online/openshellctl/pkg/api/v1alpha1"
 )
 
 func TestLoadManifest_FileAndStdin(t *testing.T) {
@@ -224,5 +227,163 @@ func TestCommandArgs(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != "echo" || got[1] != "hi" {
 		t.Errorf("commandArgs = %v, want [echo hi]", got)
+	}
+}
+
+func TestLoadPolicy_ValidFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	_ = os.WriteFile(path, []byte("version: 1\nfilesystem_policy:\n  include_workdir: true\n"), 0o600)
+
+	p, err := loadPolicy(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p == nil || p.Version != 1 {
+		t.Errorf("policy = %+v", p)
+	}
+	if p.Filesystem == nil || !p.Filesystem.IncludeWorkdir {
+		t.Error("filesystem_policy not parsed")
+	}
+}
+
+func TestLoadPolicy_MissingFile(t *testing.T) {
+	_, err := loadPolicy("/nonexistent/policy.yaml")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+	if !strings.Contains(err.Error(), "failed to read policy file") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestLoadPolicy_InvalidYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	_ = os.WriteFile(path, []byte("not: valid: yaml: ["), 0o600)
+
+	_, err := loadPolicy(path)
+	if err == nil {
+		t.Fatal("expected error for invalid YAML")
+	}
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Errorf("err should be UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestResolveManifestPolicy_Inline(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Policy: map[string]any{
+				"version":           float64(1),
+				"filesystem_policy": map[string]any{"include_workdir": true},
+			},
+		},
+	}
+	p, err := resolveManifestPolicy(m, "manifest.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p == nil || p.Version != 1 {
+		t.Errorf("policy = %+v", p)
+	}
+	if p.Filesystem == nil || !p.Filesystem.IncludeWorkdir {
+		t.Error("inline policy not parsed")
+	}
+}
+
+func TestResolveManifestPolicy_File(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "strict.yaml")
+	_ = os.WriteFile(policyPath, []byte("version: 1\n"), 0o600)
+	manifestPath := filepath.Join(dir, "manifest.yaml")
+
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{PolicyFile: "strict.yaml"},
+	}
+	p, err := resolveManifestPolicy(m, manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p == nil || p.Version != 1 {
+		t.Errorf("policy = %+v", p)
+	}
+}
+
+func TestResolveManifestPolicy_FileAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "abs.yaml")
+	_ = os.WriteFile(policyPath, []byte("version: 1\n"), 0o600)
+
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{PolicyFile: policyPath},
+	}
+	p, err := resolveManifestPolicy(m, "/some/other/manifest.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p == nil || p.Version != 1 {
+		t.Errorf("policy = %+v", p)
+	}
+}
+
+func TestResolveManifestPolicy_Nil(t *testing.T) {
+	m := &v1alpha1.Sandbox{Spec: v1alpha1.SandboxSpec{Image: "img"}}
+	p, err := resolveManifestPolicy(m, "manifest.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p != nil {
+		t.Errorf("expected nil policy, got %+v", p)
+	}
+}
+
+func TestResolveManifestPolicy_StdinManifest(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	_ = os.WriteFile(policyPath, []byte("version: 1\n"), 0o600)
+
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{PolicyFile: policyPath},
+	}
+	p, err := resolveManifestPolicy(m, "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p == nil || p.Version != 1 {
+		t.Errorf("policy = %+v", p)
+	}
+}
+
+func TestBuildCreateFlags_PolicyEnvFallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env-policy.yaml")
+	_ = os.WriteFile(path, []byte("version: 1\n"), 0o600)
+
+	t.Setenv("OPENSHELL_SANDBOX_POLICY", path)
+	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Policy == nil || f.Policy.Version != 1 {
+		t.Errorf("env policy = %+v", f.Policy)
+	}
+}
+
+func TestBuildCreateFlags_PolicyFlagOverridesEnv(t *testing.T) {
+	dir := t.TempDir()
+	flagPath := filepath.Join(dir, "flag-policy.yaml")
+	_ = os.WriteFile(flagPath, []byte("version: 1\nfilesystem_policy:\n  include_workdir: true\n"), 0o600)
+	envPath := filepath.Join(dir, "env-policy.yaml")
+	_ = os.WriteFile(envPath, []byte("version: 1\n"), 0o600)
+
+	t.Setenv("OPENSHELL_SANDBOX_POLICY", envPath)
+	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{policyFile: flagPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Policy == nil || f.Policy.Filesystem == nil || !f.Policy.Filesystem.IncludeWorkdir {
+		t.Errorf("flag policy should override env: %+v", f.Policy)
 	}
 }

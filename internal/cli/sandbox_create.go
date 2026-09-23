@@ -19,6 +19,7 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/api/v1alpha1"
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
+	"github.com/openshift-online/openshellctl/pkg/policyyaml"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
 	"github.com/openshift-online/openshellctl/pkg/transfer"
 )
@@ -81,6 +82,16 @@ func newSandboxCreateCommand() *cobra.Command {
 				manifest, err = loadManifest(cmd, file)
 				if err != nil {
 					return err
+				}
+				pol, perr := resolveManifestPolicy(manifest, file)
+				if perr != nil {
+					return perr
+				}
+				if pol != nil && flags.Policy != nil {
+					return &UsageError{Err: fmt.Errorf("--policy and manifest policy are mutually exclusive")}
+				}
+				if pol != nil {
+					flags.Policy = pol
 				}
 			}
 
@@ -409,17 +420,37 @@ func loadManifest(cmd *cobra.Command, path string) (*v1alpha1.Sandbox, error) {
 	return m, nil
 }
 
-// loadPolicy reads and lints a policy file.
+// loadPolicy reads a policy YAML file and parses it to the SDK type.
 func loadPolicy(path string) (*types.SandboxPolicy, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read policy file %q: %w", path, err)
 	}
-	_ = data
-	// Policy loading is handled by policyyaml.Load, but converting to the SDK
-	// type requires policyyaml.ToProto which is already wired in create.go.
-	// For now, return nil — the full policy-to-SDK pipeline is exercised via
-	// the -f manifest path, and this flag is wired for completeness.
+	p, err := policyyaml.Parse(data)
+	if err != nil {
+		return nil, &UsageError{Err: fmt.Errorf("invalid policy file %q: %w", path, err)}
+	}
+	return p, nil
+}
+
+// resolveManifestPolicy converts a manifest's spec.policy (inline) or
+// spec.policyFile (path) to the SDK type. Returns nil when neither is set.
+// The policyFile path is resolved relative to the manifest file's directory.
+func resolveManifestPolicy(m *v1alpha1.Sandbox, manifestPath string) (*types.SandboxPolicy, error) {
+	if m.Spec.Policy != nil {
+		p, err := policyyaml.ParseInline(m.Spec.Policy)
+		if err != nil {
+			return nil, &UsageError{Err: fmt.Errorf("spec.policy: %w", err)}
+		}
+		return p, nil
+	}
+	if m.Spec.PolicyFile != "" {
+		path := m.Spec.PolicyFile
+		if manifestPath != "" && manifestPath != "-" && !filepath.IsAbs(path) {
+			path = filepath.Join(filepath.Dir(manifestPath), path)
+		}
+		return loadPolicy(path)
+	}
 	return nil, nil
 }
 

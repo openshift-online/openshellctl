@@ -214,6 +214,66 @@ func TestCreate_BareGPUWithPolicyRejected(t *testing.T) {
 	}
 }
 
+func TestCreate_PolicyFlowsToGateway(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	pol := &types.SandboxPolicy{
+		Version:    1,
+		Filesystem: &types.FilesystemPolicy{IncludeWorkdir: true, ReadOnly: []string{"/etc"}},
+	}
+	gw.EXPECT().CreateSandbox(gomock.Any(), "default", "sb", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ string, spec *types.SandboxSpec, _ map[string]string) (*types.Sandbox, error) {
+			if spec.Policy == nil {
+				t.Fatal("spec.Policy is nil — policy was not propagated to gateway")
+			}
+			if spec.Policy.Version != 1 {
+				t.Errorf("spec.Policy.Version = %d, want 1", spec.Policy.Version)
+			}
+			if spec.Policy.Filesystem == nil || !spec.Policy.Filesystem.IncludeWorkdir {
+				t.Error("spec.Policy.Filesystem not propagated")
+			}
+			if len(spec.Policy.Filesystem.ReadOnly) != 1 || spec.Policy.Filesystem.ReadOnly[0] != "/etc" {
+				t.Errorf("spec.Policy.Filesystem.ReadOnly = %v", spec.Policy.Filesystem.ReadOnly)
+			}
+			return &types.Sandbox{Name: "sb"}, nil
+		})
+
+	req := &CreateRequest{Workspace: "default", Name: "sb", Policy: pol}
+	res, err := Create(context.Background(), CreateDeps{GW: gw}, req, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sandbox.Name != "sb" {
+		t.Errorf("sandbox = %+v", res.Sandbox)
+	}
+}
+
+func TestCreate_PolicyWithExplicitGPUCount(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	pol := &types.SandboxPolicy{Version: 1}
+	cnt := uint32(2)
+	gw.EXPECT().CreateSandbox(gomock.Any(), "default", "sb", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ string, spec *types.SandboxSpec, _ map[string]string) (*types.Sandbox, error) {
+			if spec.Policy == nil {
+				t.Fatal("policy should be present with explicit GPU count")
+			}
+			if spec.GPUCount == nil || *spec.GPUCount != 2 {
+				t.Errorf("GPUCount = %v", spec.GPUCount)
+			}
+			return &types.Sandbox{Name: "sb"}, nil
+		})
+
+	req := &CreateRequest{
+		Workspace: "default", Name: "sb",
+		Policy: pol,
+		GPU:    &v1alpha1.GPU{Count: &cnt},
+	}
+	if _, err := Create(context.Background(), CreateDeps{GW: gw}, req, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMerge_GPUFromManifest(t *testing.T) {
 	cnt := uint32(4)
 	m := &v1alpha1.Sandbox{Spec: v1alpha1.SandboxSpec{Resources: &v1alpha1.Resources{GPU: &v1alpha1.GPU{Count: &cnt}}}}
