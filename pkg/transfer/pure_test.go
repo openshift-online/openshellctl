@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,14 +88,27 @@ func TestPathIsOrUnder(t *testing.T) {
 	}
 }
 
-func TestSafeJoin(t *testing.T) {
+func TestSanitizeTarName(t *testing.T) {
 	for _, bad := range []string{"../escape", "/abs", "a/../../esc", ".."} {
-		if _, err := safeJoin("/dst", bad); err == nil {
-			t.Errorf("safeJoin(%q) should be rejected", bad)
+		if _, err := sanitizeTarName(bad); err == nil {
+			t.Errorf("sanitizeTarName(%q) should be rejected", bad)
 		}
 	}
-	if got, err := safeJoin("/dst", "a/b.txt"); err != nil || got != filepath.Join("/dst", "a/b.txt") {
-		t.Errorf("safeJoin ok case: got %q err %v", got, err)
+	if got, err := sanitizeTarName("a/b.txt"); err != nil || got != filepath.Clean("a/b.txt") {
+		t.Errorf("sanitizeTarName ok case: got %q err %v", got, err)
+	}
+}
+
+func TestValidateSymlinkTarget(t *testing.T) {
+	for _, bad := range []string{"/etc/passwd", "../../escape", ".."} {
+		if err := validateSymlinkTarget(bad); err == nil {
+			t.Errorf("validateSymlinkTarget(%q) should be rejected", bad)
+		}
+	}
+	for _, ok := range []string{"f.txt", "sub/f.txt", "."} {
+		if err := validateSymlinkTarget(ok); err != nil {
+			t.Errorf("validateSymlinkTarget(%q) unexpected error: %v", ok, err)
+		}
 	}
 }
 
@@ -458,6 +472,103 @@ func TestExtractTar_DirFileSymlink(t *testing.T) {
 	target, err := readlinkAt(dst, "sub/link")
 	if err != nil || target != "f.txt" {
 		t.Errorf("symlink target = %q err %v", target, err)
+	}
+}
+
+func TestExtractTar_SymlinkTraversal(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func(t *testing.T, dst string)
+		entries []tar.Header
+		data    map[string]string // hdr.Name → content for TypeReg entries
+	}{
+		{
+			name: "absolute linkname",
+			entries: []tar.Header{
+				{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "/etc/shadow"},
+			},
+		},
+		{
+			name: "dot-dot linkname escapes dest",
+			entries: []tar.Header{
+				{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "../../etc/passwd"},
+			},
+		},
+		{
+			name: "regular entry through same-archive symlink",
+			entries: []tar.Header{
+				{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "../../.."},
+				{Name: "evil/pwned", Typeflag: tar.TypeReg, Size: 3, Mode: 0o644},
+			},
+			data: map[string]string{"evil/pwned": "bad"},
+		},
+		{
+			name: "regular entry through pre-existing symlink in dest",
+			setup: func(t *testing.T, dst string) {
+				t.Helper()
+				if err := os.Symlink(t.TempDir(), filepath.Join(dst, "escape")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			entries: []tar.Header{
+				{Name: "escape/pwned.txt", Typeflag: tar.TypeReg, Size: 6, Mode: 0o644},
+			},
+			data: map[string]string{"escape/pwned.txt": "gotcha"},
+		},
+		{
+			name: "symlink replaces existing directory",
+			setup: func(t *testing.T, dst string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Join(dst, "mydir", "child"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			entries: []tar.Header{
+				{Name: "mydir", Typeflag: tar.TypeSymlink, Linkname: "/tmp"},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dst := t.TempDir()
+			outside := t.TempDir()
+			_ = outside // sentinel to verify nothing lands here
+
+			if tc.setup != nil {
+				tc.setup(t, dst)
+			}
+
+			var buf bytes.Buffer
+			tw := tar.NewWriter(&buf)
+			for _, hdr := range tc.entries {
+				h := hdr
+				if content, ok := tc.data[h.Name]; ok {
+					h.Size = int64(len(content))
+				}
+				if err := tw.WriteHeader(&h); err != nil {
+					t.Fatal(err)
+				}
+				if content, ok := tc.data[h.Name]; ok {
+					if _, err := tw.Write([]byte(content)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := tw.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			err := extractTar(&buf, dst)
+			if err == nil {
+				t.Fatal("extractTar should have returned an error for symlink traversal attack")
+			}
+
+			// Verify no file was written outside dst.
+			entries, _ := os.ReadDir(outside)
+			if len(entries) > 0 {
+				t.Errorf("files written outside destination: %v", entries)
+			}
+		})
 	}
 }
 
