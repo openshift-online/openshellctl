@@ -10,6 +10,40 @@ func md(name, endpoint string) string {
 	return `{"name":"` + name + `","gateway_endpoint":"` + endpoint + `","is_remote":false,"gateway_port":8080}`
 }
 
+func TestLoad_DirPopulated(t *testing.T) {
+	env := Env{
+		Getenv:  func(string) string { return "" },
+		UserDir: "/home/user/.config/openshell",
+		UserFS: fstest.MapFS{
+			"gateways/rosa/metadata.json": {Data: []byte(md("rosa", "https://user"))},
+		},
+	}
+	r, err := Load(env, "rosa")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := "/home/user/.config/openshell/gateways/rosa"
+	if r.Dir != want {
+		t.Errorf("Dir = %q, want %q", r.Dir, want)
+	}
+}
+
+func TestLoad_DirEmptyWhenRootUnknown(t *testing.T) {
+	env := Env{
+		Getenv: func(string) string { return "" },
+		UserFS: fstest.MapFS{
+			"gateways/rosa/metadata.json": {Data: []byte(md("rosa", "https://user"))},
+		},
+	}
+	r, err := Load(env, "rosa")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if r.Dir != "" {
+		t.Errorf("Dir = %q, want empty when root dir unknown", r.Dir)
+	}
+}
+
 func TestLoad_UserShadowsSystem(t *testing.T) {
 	env := Env{
 		Getenv: func(string) string { return "" },

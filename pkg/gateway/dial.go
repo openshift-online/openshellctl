@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	v1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
@@ -23,6 +24,7 @@ import (
 var (
 	ErrPlaintextWithTLSMaterial = errors.New("plaintext (http://) endpoint cannot use TLS material")
 	ErrPlaintextWithAuth        = errors.New("plaintext (http://) endpoint cannot carry bearer auth")
+	ErrRelativeTLSPath          = errors.New("TLS material paths must be absolute after root resolution")
 )
 
 // DialConfig configures a gateway connection.
@@ -52,6 +54,21 @@ func isPlaintext(endpoint string) bool {
 	return strings.HasPrefix(endpoint, "http://")
 }
 
+// resolveTLSPaths resolves TLS material paths against TLSRoot once and
+// validates that every non-empty path is absolute. Returns the resolved
+// CA, cert, and key paths.
+func resolveTLSPaths(cfg DialConfig) (ca, cert, key string, err error) {
+	ca = underRoot(cfg.TLSRoot, cfg.TLS.CAFile)
+	cert = underRoot(cfg.TLSRoot, cfg.TLS.CertFile)
+	key = underRoot(cfg.TLSRoot, cfg.TLS.KeyFile)
+	for _, p := range []string{ca, cert, key} {
+		if p != "" && !filepath.IsAbs(p) {
+			return "", "", "", fmt.Errorf("%w: %q", ErrRelativeTLSPath, p)
+		}
+	}
+	return ca, cert, key, nil
+}
+
 // Dial builds both clients. It replicates the SDK's transport selection for the
 // raw conn and delegates the SDK conn to v1.NewClient with the same material.
 func Dial(cfg DialConfig) (*Conn, error) {
@@ -68,6 +85,16 @@ func Dial(cfg DialConfig) (*Conn, error) {
 		}
 	}
 
+	// Resolve TLS paths once, before either conn is created.
+	var caPath, certPath, keyPath string
+	if cfg.TLS.Present {
+		var err error
+		caPath, certPath, keyPath, err = resolveTLSPaths(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// SDK conn.
 	sdkCfg := types.Config{
 		Address: cfg.Endpoint,
@@ -75,9 +102,9 @@ func Dial(cfg DialConfig) (*Conn, error) {
 	}
 	if cfg.TLS.Present {
 		sdkCfg.TLS = &types.TLSConfig{
-			CAFile:   underRoot(cfg.TLSRoot, cfg.TLS.CAFile),
-			CertFile: underRoot(cfg.TLSRoot, cfg.TLS.CertFile),
-			KeyFile:  underRoot(cfg.TLSRoot, cfg.TLS.KeyFile),
+			CAFile:   caPath,
+			CertFile: certPath,
+			KeyFile:  keyPath,
 			Insecure: cfg.Insecure,
 		}
 	} else if cfg.Insecure && !plaintext {
@@ -165,7 +192,7 @@ func underRoot(root, rel string) string {
 	if rel == "" || root == "" {
 		return rel
 	}
-	return root + "/" + rel
+	return filepath.Join(root, rel)
 }
 
 func stripScheme(endpoint string) string {

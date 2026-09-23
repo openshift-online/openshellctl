@@ -18,9 +18,11 @@ func NewOSEnv() (Env, error) {
 	sysDir := SystemBaseDir(getenv)
 
 	return Env{
-		Getenv: getenv,
-		UserFS: dirFSIfExists(userDir),
-		SysFS:  dirFSIfExists(sysDir),
+		Getenv:  getenv,
+		UserFS:  dirFSIfExists(userDir),
+		SysFS:   dirFSIfExists(sysDir),
+		UserDir: userDir,
+		SysDir:  sysDir,
 	}, nil
 }
 
