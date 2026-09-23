@@ -46,7 +46,7 @@ The codebase follows a **main-driver + pure-functions** pattern:
 - **Thin entry points** (`internal/cli/`) wire cobra commands to business logic.
 - **Pure functions** contain all decisions and transformations — they take values in and return values out with no side effects. Examples: `sanitizeTarName`, `validateSymlinkTarget`, `parseAndValidateSourcePath`, `planUpload`, `shellEscape`.
 - **Thin I/O shells** call the pure functions and handle the actual SSH/gRPC/filesystem interaction. The shells are deliberately small so they don't need complex mocking.
-- **Interfaces at boundaries**: `gateway.Gateway` is the primary seam — all CLI tests inject a mock gateway. `fs.FS` with extension interfaces (`LstatFS`, `ReadlinkFS`) abstracts filesystem access for upload logic.
+- **Interfaces at boundaries**: `gateway.Gateway` is the primary seam — `pkg/sandbox` and `pkg/gateway` tests use the generated mock. CLI tests do not yet have a gateway injection seam (see hermetic-integration-test issue #7). `fs.FS` with extension interfaces (`LstatFS`, `ReadlinkFS`) abstracts filesystem access for upload logic.
 
 When adding new functionality, follow this pattern: extract every decision into a pure function, test it exhaustively, and keep the I/O shell minimal.
 
@@ -62,9 +62,9 @@ Follow test-driven development:
 
 ### Coverage
 
-Coverage thresholds are enforced in CI via `make test-coverage-threshold`:
-- `pkg/` packages: minimum 85%
-- `internal/cli/`: minimum 70%
+Coverage thresholds are available via `make test-coverage-threshold` (not yet enforced in CI — see the CI-hardening issue #10):
+- `pkg/` packages: minimum 85% (enforced, exits non-zero)
+- `internal/cli/`: minimum 70% (aspirational, prints warning only)
 
 These thresholds are a **floor, not a target**. Aim to cover every input/output path for a given function. Do not test imported libraries or standard-library behavior — test your code's logic.
 
@@ -98,4 +98,3 @@ The test SSH server runs in-process over buffered in-memory connections, authent
 - Prefer unexported functions unless the API surface requires export.
 - No CGO — the binary is statically linked (`CGO_ENABLED=0`).
 - Container engine is `podman` (not docker) for local development; CI uses `docker`.
-- Binary output goes to `/tmp` for manual builds; use `make build` when possible.
