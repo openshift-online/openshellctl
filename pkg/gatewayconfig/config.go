@@ -8,9 +8,11 @@ import (
 // Env is the injected environment. Tests pass fakes; the real constructor wires
 // Getenv to os.Getenv and the two FS to os.DirFS over the resolved trees.
 type Env struct {
-	Getenv func(string) string // XDG_CONFIG_HOME, HOME, OPENSHELL_SYSTEM_GATEWAY_DIR
-	UserFS fs.FS               // rooted at the user config tree ($XDG_CONFIG_HOME/openshell)
-	SysFS  fs.FS               // rooted at the system base (/etc/openshell or override)
+	Getenv  func(string) string // XDG_CONFIG_HOME, HOME, OPENSHELL_SYSTEM_GATEWAY_DIR
+	UserFS  fs.FS               // rooted at the user config tree ($XDG_CONFIG_HOME/openshell)
+	SysFS   fs.FS               // rooted at the system base (/etc/openshell or override)
+	UserDir string              // absolute path of the user config tree ("" when unknown/test)
+	SysDir  string              // absolute path of the system config tree ("" when unknown/test)
 }
 
 // Source identifies which tree a resolved gateway came from.
@@ -52,7 +54,7 @@ func Load(env Env, name string) (*Resolved, error) {
 			return nil, perr
 		}
 		if present {
-			return newResolved(env.UserFS, name, SourceUser, m), nil
+			return newResolved(env.UserFS, name, SourceUser, m, env.UserDir), nil
 		}
 	}
 	if env.SysFS != nil {
@@ -61,19 +63,24 @@ func Load(env Env, name string) (*Resolved, error) {
 			return nil, perr
 		}
 		if present {
-			return newResolved(env.SysFS, name, SourceSystem, m), nil
+			return newResolved(env.SysFS, name, SourceSystem, m, env.SysDir), nil
 		}
 	}
 	return nil, &GatewayNotFoundError{Name: name}
 }
 
-func newResolved(root fs.FS, name string, src Source, m Metadata) *Resolved {
+func newResolved(root fs.FS, name string, src Source, m Metadata, rootDir string) *Resolved {
 	sub, err := fs.Sub(root, GatewayDir(name))
 	if err != nil {
 		sub = nil
 	}
+	var dir string
+	if rootDir != "" {
+		dir = rootDir + "/" + GatewayDir(name)
+	}
 	return &Resolved{
 		Name:     name,
+		Dir:      dir,
 		Source:   src,
 		Metadata: m,
 		FS:       sub,

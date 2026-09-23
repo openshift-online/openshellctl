@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	v1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
@@ -23,6 +24,7 @@ import (
 var (
 	ErrPlaintextWithTLSMaterial = errors.New("plaintext (http://) endpoint cannot use TLS material")
 	ErrPlaintextWithAuth        = errors.New("plaintext (http://) endpoint cannot carry bearer auth")
+	ErrRelativeTLSPath          = errors.New("TLS material paths must be absolute after root resolution")
 )
 
 // DialConfig configures a gateway connection.
@@ -136,6 +138,12 @@ func buildTLSConfig(cfg DialConfig) (*tls.Config, error) {
 	}
 	if !cfg.TLS.Present {
 		return tlsCfg, nil
+	}
+	for _, p := range []string{cfg.TLS.CAFile, cfg.TLS.CertFile, cfg.TLS.KeyFile} {
+		resolved := underRoot(cfg.TLSRoot, p)
+		if resolved != "" && !filepath.IsAbs(resolved) {
+			return nil, fmt.Errorf("%w: %q", ErrRelativeTLSPath, resolved)
+		}
 	}
 	if ca := underRoot(cfg.TLSRoot, cfg.TLS.CAFile); ca != "" {
 		pem, err := os.ReadFile(ca)
