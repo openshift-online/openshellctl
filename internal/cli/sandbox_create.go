@@ -83,17 +83,13 @@ func newSandboxCreateCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				pol, perr := resolveManifestPolicy(manifest, file)
-				if perr != nil {
-					return perr
-				}
-				if pol != nil && flags.Policy != nil {
-					return &UsageError{Err: fmt.Errorf("--policy and manifest policy are mutually exclusive")}
-				}
-				if pol != nil {
-					flags.Policy = pol
-				}
 			}
+
+			pol, perr := resolveCreatePolicy(flags.Policy, policyFile != "", manifest, file, os.Getenv)
+			if perr != nil {
+				return perr
+			}
+			flags.Policy = pol
 
 			req, err := sandbox.MergeManifestAndFlags(manifest, flags)
 			if err != nil {
@@ -317,9 +313,6 @@ func buildCreateFlags(cmd *cobra.Command, in createFlagInput) (sandbox.CreateFla
 		}
 		f.DriverConfig = dc
 	}
-	if in.policyFile == "" {
-		in.policyFile = os.Getenv("OPENSHELL_SANDBOX_POLICY")
-	}
 	if in.policyFile != "" {
 		pol, err := loadPolicy(in.policyFile)
 		if err != nil {
@@ -424,7 +417,7 @@ func loadManifest(cmd *cobra.Command, path string) (*v1alpha1.Sandbox, error) {
 func loadPolicy(path string) (*types.SandboxPolicy, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read policy file %q: %w", path, err)
+		return nil, &UsageError{Err: fmt.Errorf("failed to read policy file %q: %w", path, err)}
 	}
 	p, err := policyyaml.Parse(data)
 	if err != nil {
@@ -436,6 +429,7 @@ func loadPolicy(path string) (*types.SandboxPolicy, error) {
 // resolveManifestPolicy converts a manifest's spec.policy (inline) or
 // spec.policyFile (path) to the SDK type. Returns nil when neither is set.
 // The policyFile path is resolved relative to the manifest file's directory.
+// When the manifest is read from stdin, policyFile must be an absolute path.
 func resolveManifestPolicy(m *v1alpha1.Sandbox, manifestPath string) (*types.SandboxPolicy, error) {
 	if m.Spec.Policy != nil {
 		p, err := policyyaml.ParseInline(m.Spec.Policy)
@@ -446,11 +440,62 @@ func resolveManifestPolicy(m *v1alpha1.Sandbox, manifestPath string) (*types.San
 	}
 	if m.Spec.PolicyFile != "" {
 		path := m.Spec.PolicyFile
-		if manifestPath != "" && manifestPath != "-" && !filepath.IsAbs(path) {
-			path = filepath.Join(filepath.Dir(manifestPath), path)
+		if !filepath.IsAbs(path) {
+			if manifestPath == "-" {
+				return nil, &UsageError{Err: fmt.Errorf("spec.policyFile %q must be an absolute path when the manifest is read from stdin", path)}
+			}
+			if manifestPath != "" {
+				path = filepath.Join(filepath.Dir(manifestPath), path)
+			}
 		}
 		return loadPolicy(path)
 	}
+	return nil, nil
+}
+
+// resolveCreatePolicy merges the policy from the --policy flag (or env var
+// fallback) with the manifest's policy fields. Precedence:
+//   - explicit --policy flag + manifest policy → error (mutually exclusive)
+//   - env var OPENSHELL_SANDBOX_POLICY + manifest policy → manifest wins
+//   - manifest policy alone → manifest
+//   - flag or env alone → flag/env
+//   - none → nil
+func resolveCreatePolicy(
+	flagPolicy *types.SandboxPolicy,
+	flagExplicit bool,
+	manifest *v1alpha1.Sandbox,
+	manifestPath string,
+	env func(string) string,
+) (*types.SandboxPolicy, error) {
+	var manifestPolicy *types.SandboxPolicy
+	if manifest != nil {
+		p, err := resolveManifestPolicy(manifest, manifestPath)
+		if err != nil {
+			return nil, err
+		}
+		manifestPolicy = p
+	}
+
+	if manifestPolicy != nil && flagPolicy != nil && flagExplicit {
+		return nil, &UsageError{Err: fmt.Errorf("--policy flag and manifest policy (spec.policy/spec.policyFile) are mutually exclusive")}
+	}
+
+	if manifestPolicy != nil {
+		return manifestPolicy, nil
+	}
+
+	if flagPolicy != nil {
+		return flagPolicy, nil
+	}
+
+	envPath := ""
+	if env != nil {
+		envPath = env("OPENSHELL_SANDBOX_POLICY")
+	}
+	if envPath != "" {
+		return loadPolicy(envPath)
+	}
+
 	return nil, nil
 }
 

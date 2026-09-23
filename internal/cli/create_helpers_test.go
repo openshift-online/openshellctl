@@ -252,6 +252,10 @@ func TestLoadPolicy_MissingFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Errorf("missing file should be UsageError, got %T: %v", err, err)
+	}
 	if !strings.Contains(err.Error(), "failed to read policy file") {
 		t.Errorf("err = %v", err)
 	}
@@ -339,7 +343,7 @@ func TestResolveManifestPolicy_Nil(t *testing.T) {
 	}
 }
 
-func TestResolveManifestPolicy_StdinManifest(t *testing.T) {
+func TestResolveManifestPolicy_StdinAbsolutePath(t *testing.T) {
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "policy.yaml")
 	_ = os.WriteFile(policyPath, []byte("version: 1\n"), 0o600)
@@ -356,34 +360,229 @@ func TestResolveManifestPolicy_StdinManifest(t *testing.T) {
 	}
 }
 
-func TestBuildCreateFlags_PolicyEnvFallback(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "env-policy.yaml")
-	_ = os.WriteFile(path, []byte("version: 1\n"), 0o600)
-
-	t.Setenv("OPENSHELL_SANDBOX_POLICY", path)
-	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{})
-	if err != nil {
-		t.Fatal(err)
+func TestResolveManifestPolicy_StdinRelativePathErrors(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{PolicyFile: "relative.yaml"},
 	}
-	if f.Policy == nil || f.Policy.Version != 1 {
-		t.Errorf("env policy = %+v", f.Policy)
+	_, err := resolveManifestPolicy(m, "-")
+	if err == nil {
+		t.Fatal("expected error for relative policyFile with stdin manifest")
+	}
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Errorf("err should be UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "must be an absolute path when the manifest is read from stdin") {
+		t.Errorf("err = %v", err)
 	}
 }
 
-func TestBuildCreateFlags_PolicyFlagOverridesEnv(t *testing.T) {
-	dir := t.TempDir()
-	flagPath := filepath.Join(dir, "flag-policy.yaml")
-	_ = os.WriteFile(flagPath, []byte("version: 1\nfilesystem_policy:\n  include_workdir: true\n"), 0o600)
-	envPath := filepath.Join(dir, "env-policy.yaml")
-	_ = os.WriteFile(envPath, []byte("version: 1\n"), 0o600)
+func TestResolveManifestPolicy_InlineInvalid(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Policy: map[string]any{
+				"version":       float64(1),
+				"unknown_field": "should fail strict decode",
+			},
+		},
+	}
+	_, err := resolveManifestPolicy(m, "manifest.yaml")
+	if err == nil {
+		t.Fatal("expected error for unknown field in inline policy")
+	}
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Errorf("err should be UsageError, got %T: %v", err, err)
+	}
+}
 
-	t.Setenv("OPENSHELL_SANDBOX_POLICY", envPath)
-	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{policyFile: flagPath})
+func TestResolveCreatePolicy(t *testing.T) {
+	dir := t.TempDir()
+	flagPath := filepath.Join(dir, "flag.yaml")
+	_ = os.WriteFile(flagPath, []byte("version: 1\nfilesystem_policy:\n  include_workdir: true\n"), 0o600)
+	envPath := filepath.Join(dir, "env.yaml")
+	_ = os.WriteFile(envPath, []byte("version: 1\n"), 0o600)
+	manifestPolicyPath := filepath.Join(dir, "manifest-policy.yaml")
+	_ = os.WriteFile(manifestPolicyPath, []byte("version: 1\nlandlock:\n  compatibility: best_effort\n"), 0o600)
+	manifestPath := filepath.Join(dir, "manifest.yaml")
+
+	flagPolicy, _ := loadPolicy(flagPath)
+	envFunc := func(k string) string {
+		if k == "OPENSHELL_SANDBOX_POLICY" {
+			return envPath
+		}
+		return ""
+	}
+	noEnv := func(string) string { return "" }
+
+	manifestWithInline := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Policy: map[string]any{"version": float64(1), "landlock": map[string]any{"compatibility": "best_effort"}},
+		},
+	}
+	manifestWithFile := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{PolicyFile: "manifest-policy.yaml"},
+	}
+	manifestNone := &v1alpha1.Sandbox{Spec: v1alpha1.SandboxSpec{Image: "img"}}
+
+	tests := []struct {
+		name         string
+		flagPolicy   *types.SandboxPolicy
+		flagExplicit bool
+		manifest     *v1alpha1.Sandbox
+		env          func(string) string
+		wantErr      string
+		wantNil      bool
+		checkPolicy  func(*testing.T, *types.SandboxPolicy)
+	}{
+		{
+			name:         "flag only",
+			flagPolicy:   flagPolicy,
+			flagExplicit: true,
+			env:          noEnv,
+			checkPolicy: func(t *testing.T, p *types.SandboxPolicy) {
+				if p.Filesystem == nil || !p.Filesystem.IncludeWorkdir {
+					t.Error("flag policy should have filesystem")
+				}
+			},
+		},
+		{
+			name: "env only",
+			env:  envFunc,
+			checkPolicy: func(t *testing.T, p *types.SandboxPolicy) {
+				if p.Version != 1 {
+					t.Errorf("version = %d", p.Version)
+				}
+			},
+		},
+		{
+			name:     "manifest inline only",
+			manifest: manifestWithInline,
+			env:      noEnv,
+			checkPolicy: func(t *testing.T, p *types.SandboxPolicy) {
+				if p.Landlock == nil || p.Landlock.Compatibility != "best_effort" {
+					t.Error("manifest inline policy should have landlock")
+				}
+			},
+		},
+		{
+			name:     "manifest file only",
+			manifest: manifestWithFile,
+			env:      noEnv,
+			checkPolicy: func(t *testing.T, p *types.SandboxPolicy) {
+				if p.Landlock == nil || p.Landlock.Compatibility != "best_effort" {
+					t.Error("manifest file policy should have landlock")
+				}
+			},
+		},
+		{
+			name:         "flag + manifest inline = error",
+			flagPolicy:   flagPolicy,
+			flagExplicit: true,
+			manifest:     manifestWithInline,
+			env:          noEnv,
+			wantErr:      "mutually exclusive",
+		},
+		{
+			name:         "flag + manifest file = error",
+			flagPolicy:   flagPolicy,
+			flagExplicit: true,
+			manifest:     manifestWithFile,
+			env:          noEnv,
+			wantErr:      "mutually exclusive",
+		},
+		{
+			name:     "env + manifest inline = manifest wins",
+			manifest: manifestWithInline,
+			env:      envFunc,
+			checkPolicy: func(t *testing.T, p *types.SandboxPolicy) {
+				if p.Landlock == nil || p.Landlock.Compatibility != "best_effort" {
+					t.Error("manifest policy should win over env")
+				}
+				if p.Filesystem != nil {
+					t.Error("should not have filesystem from env policy")
+				}
+			},
+		},
+		{
+			name:     "env + manifest file = manifest wins",
+			manifest: manifestWithFile,
+			env:      envFunc,
+			checkPolicy: func(t *testing.T, p *types.SandboxPolicy) {
+				if p.Landlock == nil || p.Landlock.Compatibility != "best_effort" {
+					t.Error("manifest file policy should win over env")
+				}
+			},
+		},
+		{
+			name:     "env + manifest no policy = env used",
+			manifest: manifestNone,
+			env:      envFunc,
+			checkPolicy: func(t *testing.T, p *types.SandboxPolicy) {
+				if p.Version != 1 {
+					t.Errorf("env policy should be used: version = %d", p.Version)
+				}
+			},
+		},
+		{
+			name:    "none",
+			env:     noEnv,
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := resolveCreatePolicy(tt.flagPolicy, tt.flagExplicit, tt.manifest, manifestPath, tt.env)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantNil {
+				if p != nil {
+					t.Errorf("expected nil, got %+v", p)
+				}
+				return
+			}
+			if p == nil {
+				t.Fatal("expected non-nil policy")
+			}
+			if tt.checkPolicy != nil {
+				tt.checkPolicy(t, p)
+			}
+		})
+	}
+}
+
+func TestBuildCreateFlags_PolicyFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "flag-policy.yaml")
+	_ = os.WriteFile(path, []byte("version: 1\nfilesystem_policy:\n  include_workdir: true\n"), 0o600)
+
+	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{policyFile: path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if f.Policy == nil || f.Policy.Filesystem == nil || !f.Policy.Filesystem.IncludeWorkdir {
-		t.Errorf("flag policy should override env: %+v", f.Policy)
+		t.Errorf("flag policy = %+v", f.Policy)
+	}
+}
+
+func TestBuildCreateFlags_NoPolicyNoEnv(t *testing.T) {
+	t.Setenv("OPENSHELL_SANDBOX_POLICY", "")
+	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Policy != nil {
+		t.Errorf("policy should be nil when no flag and no env: %+v", f.Policy)
 	}
 }
