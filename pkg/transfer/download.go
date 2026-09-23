@@ -312,12 +312,17 @@ func extractTar(r io.Reader, dir string) error {
 				return err
 			}
 		case tar.TypeSymlink:
-			if err := validateSymlinkTarget(hdr.Linkname); err != nil {
+			parent := filepath.Dir(name)
+			if err := validateSymlinkTarget(hdr.Linkname, parent); err != nil {
 				return fmt.Errorf("refusing symlink %q: %w", name, err)
 			}
-			parent := filepath.Dir(name)
 			if parent != "." {
 				if err := root.MkdirAll(parent, 0o755); err != nil {
+					return err
+				}
+			}
+			if info, err := root.Lstat(name); err == nil && !info.IsDir() {
+				if err := root.Remove(name); err != nil {
 					return err
 				}
 			}
@@ -365,15 +370,17 @@ func sanitizeTarName(name string) (string, error) {
 	return clean, nil
 }
 
-// validateSymlinkTarget rejects symlink targets that are absolute or escape
-// their parent via ".." traversal.
-func validateSymlinkTarget(target string) error {
+// validateSymlinkTarget rejects symlink targets that are absolute or that,
+// when resolved relative to the link's own directory, escape the extraction
+// root. linkdir is the directory containing the link (filepath.Dir of the
+// archive entry name); it must be a clean relative path inside the root.
+func validateSymlinkTarget(target, linkdir string) error {
 	if filepath.IsAbs(target) || strings.HasPrefix(target, "/") {
 		return fmt.Errorf("absolute symlink target %q", target)
 	}
-	clean := filepath.Clean(target)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("symlink target %q escapes destination", target)
+	resolved := filepath.Clean(filepath.Join(linkdir, target))
+	if resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("symlink target %q (from %q) escapes destination", target, linkdir)
 	}
 	return nil
 }

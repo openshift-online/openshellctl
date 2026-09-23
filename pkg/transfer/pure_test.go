@@ -100,15 +100,33 @@ func TestSanitizeTarName(t *testing.T) {
 }
 
 func TestValidateSymlinkTarget(t *testing.T) {
-	for _, bad := range []string{"/etc/passwd", "../../escape", ".."} {
-		if err := validateSymlinkTarget(bad); err == nil {
-			t.Errorf("validateSymlinkTarget(%q) should be rejected", bad)
-		}
+	cases := []struct {
+		name     string
+		linkname string
+		linkdir  string
+		wantErr  bool
+	}{
+		{"absolute target", "/etc/passwd", ".", true},
+		{"dot-dot escapes from root", "../../escape", ".", true},
+		{"bare dot-dot from root", "..", ".", true},
+		{"relative sibling", "f.txt", ".", false},
+		{"relative in subdir", "sub/f.txt", ".", false},
+		{"dot target", ".", ".", false},
+		{"deep relative stays inside from subdir", "../../pkg/bin/tool", "node_modules/.bin", false},
+		{"relative up from nested dir stays inside", "../lib/mod.py", "venv/lib64", false},
+		{"relative up from root escapes", "../outside", ".", true},
+		{"deep escape from subdir", "../../../escape", "sub/deep", true},
 	}
-	for _, ok := range []string{"f.txt", "sub/f.txt", "."} {
-		if err := validateSymlinkTarget(ok); err != nil {
-			t.Errorf("validateSymlinkTarget(%q) unexpected error: %v", ok, err)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSymlinkTarget(tc.linkname, tc.linkdir)
+			if tc.wantErr && err == nil {
+				t.Errorf("validateSymlinkTarget(%q, %q) should have been rejected", tc.linkname, tc.linkdir)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("validateSymlinkTarget(%q, %q) unexpected error: %v", tc.linkname, tc.linkdir, err)
+			}
+		})
 	}
 }
 
@@ -461,6 +479,13 @@ func TestExtractTar_DirFileSymlink(t *testing.T) {
 	_ = tw.WriteHeader(&tar.Header{Name: "sub/f.txt", Typeflag: tar.TypeReg, Size: 2, Mode: 0o644})
 	_, _ = tw.Write([]byte("hi"))
 	_ = tw.WriteHeader(&tar.Header{Name: "sub/link", Typeflag: tar.TypeSymlink, Linkname: "f.txt"})
+	_ = tw.WriteHeader(&tar.Header{Name: "pkg/", Typeflag: tar.TypeDir, Mode: 0o755})
+	_ = tw.WriteHeader(&tar.Header{Name: "pkg/bin/", Typeflag: tar.TypeDir, Mode: 0o755})
+	_ = tw.WriteHeader(&tar.Header{Name: "pkg/bin/tool", Typeflag: tar.TypeReg, Size: 4, Mode: 0o755})
+	_, _ = tw.Write([]byte("exec"))
+	_ = tw.WriteHeader(&tar.Header{Name: "node_modules/", Typeflag: tar.TypeDir, Mode: 0o755})
+	_ = tw.WriteHeader(&tar.Header{Name: "node_modules/.bin/", Typeflag: tar.TypeDir, Mode: 0o755})
+	_ = tw.WriteHeader(&tar.Header{Name: "node_modules/.bin/tool", Typeflag: tar.TypeSymlink, Linkname: "../../pkg/bin/tool"})
 	_ = tw.Close()
 
 	if err := extractTar(&buf, dst); err != nil {
@@ -473,74 +498,95 @@ func TestExtractTar_DirFileSymlink(t *testing.T) {
 	if err != nil || target != "f.txt" {
 		t.Errorf("symlink target = %q err %v", target, err)
 	}
+	target, err = readlinkAt(dst, "node_modules/.bin/tool")
+	if err != nil || target != "../../pkg/bin/tool" {
+		t.Errorf("relative-up symlink target = %q err %v", target, err)
+	}
 }
 
 func TestExtractTar_SymlinkTraversal(t *testing.T) {
 	cases := []struct {
 		name    string
-		setup   func(t *testing.T, dst string)
-		entries []tar.Header
+		setup   func(t *testing.T, dst, outside string)
+		entries func(outside string) []tar.Header
 		data    map[string]string // hdr.Name → content for TypeReg entries
 	}{
 		{
-			name: "absolute linkname",
-			entries: []tar.Header{
-				{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "/etc/shadow"},
+			name: "absolute linkname targets outside",
+			entries: func(outside string) []tar.Header {
+				return []tar.Header{
+					{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: outside},
+				}
 			},
 		},
 		{
-			name: "dot-dot linkname escapes dest",
-			entries: []tar.Header{
-				{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "../../etc/passwd"},
+			name: "dot-dot linkname escapes to sibling",
+			entries: func(_ string) []tar.Header {
+				return []tar.Header{
+					{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "../outside"},
+				}
 			},
 		},
 		{
 			name: "regular entry through same-archive symlink",
-			entries: []tar.Header{
-				{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "../../.."},
-				{Name: "evil/pwned", Typeflag: tar.TypeReg, Size: 3, Mode: 0o644},
+			entries: func(_ string) []tar.Header {
+				return []tar.Header{
+					{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "../outside"},
+					{Name: "evil/pwned", Typeflag: tar.TypeReg, Size: 3, Mode: 0o644},
+				}
 			},
 			data: map[string]string{"evil/pwned": "bad"},
 		},
 		{
 			name: "regular entry through pre-existing symlink in dest",
-			setup: func(t *testing.T, dst string) {
+			setup: func(t *testing.T, dst, outside string) {
 				t.Helper()
-				if err := os.Symlink(t.TempDir(), filepath.Join(dst, "escape")); err != nil {
+				if err := os.Symlink(outside, filepath.Join(dst, "escape")); err != nil {
 					t.Fatal(err)
 				}
 			},
-			entries: []tar.Header{
-				{Name: "escape/pwned.txt", Typeflag: tar.TypeReg, Size: 6, Mode: 0o644},
+			entries: func(_ string) []tar.Header {
+				return []tar.Header{
+					{Name: "escape/pwned.txt", Typeflag: tar.TypeReg, Size: 6, Mode: 0o644},
+				}
 			},
 			data: map[string]string{"escape/pwned.txt": "gotcha"},
 		},
 		{
 			name: "symlink replaces existing directory",
-			setup: func(t *testing.T, dst string) {
+			setup: func(t *testing.T, dst, outside string) {
 				t.Helper()
 				if err := os.MkdirAll(filepath.Join(dst, "mydir", "child"), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			},
-			entries: []tar.Header{
-				{Name: "mydir", Typeflag: tar.TypeSymlink, Linkname: "/tmp"},
+			entries: func(outside string) []tar.Header {
+				return []tar.Header{
+					{Name: "mydir", Typeflag: tar.TypeSymlink, Linkname: outside},
+				}
 			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dst := t.TempDir()
-			outside := t.TempDir()
-			_ = outside // sentinel to verify nothing lands here
-
-			if tc.setup != nil {
-				tc.setup(t, dst)
+			parent := t.TempDir()
+			dst := filepath.Join(parent, "dst")
+			outside := filepath.Join(parent, "outside")
+			if err := os.MkdirAll(dst, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(outside, 0o755); err != nil {
+				t.Fatal(err)
 			}
 
+			if tc.setup != nil {
+				tc.setup(t, dst, outside)
+			}
+
+			headers := tc.entries(outside)
 			var buf bytes.Buffer
 			tw := tar.NewWriter(&buf)
-			for _, hdr := range tc.entries {
+			for _, hdr := range headers {
 				h := hdr
 				if content, ok := tc.data[h.Name]; ok {
 					h.Size = int64(len(content))
@@ -563,13 +609,62 @@ func TestExtractTar_SymlinkTraversal(t *testing.T) {
 				t.Fatal("extractTar should have returned an error for symlink traversal attack")
 			}
 
-			// Verify no file was written outside dst.
 			entries, _ := os.ReadDir(outside)
 			if len(entries) > 0 {
 				t.Errorf("files written outside destination: %v", entries)
 			}
 		})
 	}
+}
+
+func TestExtractTar_ReExtract(t *testing.T) {
+	mkArchive := func() bytes.Buffer {
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		_ = tw.WriteHeader(&tar.Header{Name: "sub/", Typeflag: tar.TypeDir, Mode: 0o755})
+		_ = tw.WriteHeader(&tar.Header{Name: "sub/f.txt", Typeflag: tar.TypeReg, Size: 2, Mode: 0o644})
+		_, _ = tw.Write([]byte("v1"))
+		_ = tw.WriteHeader(&tar.Header{Name: "sub/link", Typeflag: tar.TypeSymlink, Linkname: "f.txt"})
+		_ = tw.Close()
+		return buf
+	}
+
+	t.Run("second extract into same dest succeeds", func(t *testing.T) {
+		dst := t.TempDir()
+		buf1 := mkArchive()
+		if err := extractTar(&buf1, dst); err != nil {
+			t.Fatalf("first extract: %v", err)
+		}
+
+		buf2 := mkArchive()
+		if err := extractTar(&buf2, dst); err != nil {
+			t.Fatalf("second extract should succeed: %v", err)
+		}
+
+		if b, err := readFileAt(dst, "sub/f.txt"); err != nil || string(b) != "v1" {
+			t.Errorf("file after re-extract = %q err %v", b, err)
+		}
+		target, err := readlinkAt(dst, "sub/link")
+		if err != nil || target != "f.txt" {
+			t.Errorf("symlink after re-extract = %q err %v", target, err)
+		}
+	})
+
+	t.Run("symlink over existing directory still errors", func(t *testing.T) {
+		dst := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dst, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		_ = tw.WriteHeader(&tar.Header{Name: "sub", Typeflag: tar.TypeSymlink, Linkname: "other"})
+		_ = tw.Close()
+
+		if err := extractTar(&buf, dst); err == nil {
+			t.Fatal("replacing a directory with a symlink should error")
+		}
+	})
 }
 
 func TestOSFSRejectsInvalidPaths(t *testing.T) {
