@@ -2,6 +2,7 @@ package gatewayconfig
 
 import (
 	"io/fs"
+	"path/filepath"
 	"strings"
 )
 
@@ -76,7 +77,7 @@ func newResolved(root fs.FS, name string, src Source, m Metadata, rootDir string
 	}
 	var dir string
 	if rootDir != "" {
-		dir = rootDir + "/" + GatewayDir(name)
+		dir = filepath.Join(rootDir, GatewayDir(name))
 	}
 	return &Resolved{
 		Name:     name,

@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+func TestNewOSEnv_UserDirPopulated(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("HOME", "/should-not-be-used")
+
+	env, err := NewOSEnv()
+	if err != nil {
+		t.Fatalf("NewOSEnv: %v", err)
+	}
+	want := filepath.Join(tmp, "openshell")
+	if env.UserDir != want {
+		t.Errorf("UserDir = %q, want %q", env.UserDir, want)
+	}
+}
+
 func TestOSWriter_AtomicWriteAndPerms(t *testing.T) {
 	root := t.TempDir()
 	w := &OSWriter{Root: root}

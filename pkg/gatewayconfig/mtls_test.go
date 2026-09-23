@@ -32,6 +32,12 @@ func TestTLSMaterialFor_CAOnly(t *testing.T) {
 	if m.HasClientCert() {
 		t.Error("HasClientCert should be false without cert+key")
 	}
+	if m.CAFile != "mtls/ca.crt" {
+		t.Errorf("CAFile = %q, want mtls/ca.crt", m.CAFile)
+	}
+	if m.CertFile != "" || m.KeyFile != "" {
+		t.Errorf("CA-only: CertFile=%q KeyFile=%q, want both empty", m.CertFile, m.KeyFile)
+	}
 }
 
 func TestTLSMaterialFor_None(t *testing.T) {
