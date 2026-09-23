@@ -576,8 +576,7 @@ func TestBuildCreateFlags_PolicyFlag(t *testing.T) {
 	}
 }
 
-func TestBuildCreateFlags_NoPolicyNoEnv(t *testing.T) {
-	t.Setenv("OPENSHELL_SANDBOX_POLICY", "")
+func TestBuildCreateFlags_NoPolicy(t *testing.T) {
 	f, err := buildCreateFlags(&cobra.Command{}, createFlagInput{})
 	if err != nil {
 		t.Fatal(err)

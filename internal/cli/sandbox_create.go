@@ -85,6 +85,7 @@ func newSandboxCreateCommand() *cobra.Command {
 				}
 			}
 
+			// flagExplicit is always true when flagPolicy != nil in production; the parameter exists for the test contract.
 			pol, perr := resolveCreatePolicy(flags.Policy, policyFile != "", manifest, file, os.Getenv)
 			if perr != nil {
 				return perr
