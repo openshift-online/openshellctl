@@ -1,6 +1,6 @@
 # openshellctl
 
-Lightweight Go CLI and embeddable client for NVIDIA OpenShell gateways.
+Lightweight Go CLI and embeddable client for NVIDIA OpenShell gateways, built for HyperShell integration with automatic OIDC token refresh and YAML-templated sandbox configuration processing (sandbox-as-code).
 Pure-Go reimplementation of the upstream Rust CLI — no shell-out to ssh, tar, git, or any external binary.
 
 ## Build and test
