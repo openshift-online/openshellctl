@@ -282,7 +282,17 @@ func streamTarInto(cli *ssh.Client, cmd, dir string) error {
 }
 
 // extractTar unpacks a tar stream into dir, guarding against path traversal.
+//
+// All filesystem operations go through os.Root, which refuses to follow
+// symlinks that leave the root directory. Symlink entries are additionally
+// validated: absolute targets and ".." escapes are rejected outright.
 func extractTar(r io.Reader, dir string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("failed to open extraction root %q: %w", dir, err)
+	}
+	defer func() { _ = root.Close() }()
+
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
@@ -292,36 +302,35 @@ func extractTar(r io.Reader, dir string) error {
 		if err != nil {
 			return err
 		}
-		target, err := safeJoin(dir, hdr.Name)
+		name, err := sanitizeTarName(hdr.Name)
 		if err != nil {
 			return err
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)&os.ModePerm|0o700); err != nil {
+			if err := root.MkdirAll(name, os.FileMode(hdr.Mode)&os.ModePerm|0o700); err != nil {
 				return err
 			}
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
+			parent := filepath.Dir(name)
+			if err := validateSymlinkTarget(hdr.Linkname, parent); err != nil {
+				return fmt.Errorf("refusing symlink %q: %w", name, err)
 			}
-			_ = os.Remove(target)
-			if err := os.Symlink(hdr.Linkname, target); err != nil {
+			if parent != "." {
+				if err := root.MkdirAll(parent, 0o755); err != nil {
+					return err
+				}
+			}
+			if info, err := root.Lstat(name); err == nil && !info.IsDir() {
+				if err := root.Remove(name); err != nil {
+					return err
+				}
+			}
+			if err := root.Symlink(hdr.Linkname, name); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&os.ModePerm)
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(f, tr); err != nil { //nolint:gosec // tar from a trusted per-session gateway tunnel
-				_ = f.Close()
-				return err
-			}
-			if err := f.Close(); err != nil {
+			if err := extractRegularFile(root, tr, name, hdr.Mode); err != nil {
 				return err
 			}
 		default:
@@ -330,8 +339,27 @@ func extractTar(r io.Reader, dir string) error {
 	}
 }
 
-// safeJoin joins name onto dir, rejecting absolute paths and ".." escapes.
-func safeJoin(dir, name string) (string, error) {
+func extractRegularFile(root *os.Root, tr *tar.Reader, name string, mode int64) error {
+	parent := filepath.Dir(name)
+	if parent != "." {
+		if err := root.MkdirAll(parent, 0o755); err != nil {
+			return err
+		}
+	}
+	f, err := root.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(mode)&os.ModePerm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, tr); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// sanitizeTarName validates and cleans an archive entry name, rejecting
+// absolute paths and ".." escapes.
+func sanitizeTarName(name string) (string, error) {
 	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
 		return "", fmt.Errorf("refusing to extract absolute path %q", name)
 	}
@@ -339,12 +367,22 @@ func safeJoin(dir, name string) (string, error) {
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("refusing to extract path outside destination %q", name)
 	}
-	joined := filepath.Join(dir, clean)
-	rel, err := filepath.Rel(dir, joined)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("refusing to extract path outside destination %q", name)
+	return clean, nil
+}
+
+// validateSymlinkTarget rejects symlink targets that are absolute or that,
+// when resolved relative to the link's own directory, escape the extraction
+// root. linkdir is the directory containing the link (filepath.Dir of the
+// archive entry name); it must be a clean relative path inside the root.
+func validateSymlinkTarget(target, linkdir string) error {
+	if filepath.IsAbs(target) || strings.HasPrefix(target, "/") {
+		return fmt.Errorf("absolute symlink target %q", target)
 	}
-	return joined, nil
+	resolved := filepath.Clean(filepath.Join(linkdir, target))
+	if resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("symlink target %q (from %q) escapes destination", target, linkdir)
+	}
+	return nil
 }
 
 // decodeProbeStdout strips one trailing \n then one trailing \r (ssh.rs:1124).
