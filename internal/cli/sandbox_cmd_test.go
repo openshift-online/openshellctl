@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,11 +11,25 @@ import (
 	"github.com/spf13/viper"
 )
 
+// runCmd builds the root command tree, runs it with args, and returns
+// combined stdout+stderr and any error. For a command that needs injected
+// cliDeps (deps.go), use runCmdWithGateway instead.
 func runCmd(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	return runCmdCtx(t, nil, args...)
+}
+
+// runCmdCtx is runCmd, but executes with ctx (via root.SetContext) when ctx is
+// non-nil. runCmd and runCmdWithGateway (runcmd_gateway_test.go) are both thin
+// wrappers around this.
+func runCmdCtx(t *testing.T, ctx context.Context, args ...string) (string, error) {
 	t.Helper()
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 	root := NewRootCommand()
+	if ctx != nil {
+		root.SetContext(ctx)
+	}
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)

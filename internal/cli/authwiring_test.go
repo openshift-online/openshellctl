@@ -6,7 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"go.uber.org/mock/gomock"
+
+	"github.com/openshift-online/openshellctl/pkg/auth"
+	"github.com/openshift-online/openshellctl/pkg/gateway/mock"
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 )
 
 func TestClientSecretProvider_None(t *testing.T) {
@@ -56,5 +62,110 @@ func TestClientSecretProvider_EnvWins(t *testing.T) {
 	}
 	if got != "from-env" {
 		t.Errorf("secret = %q, want from-env", got)
+	}
+}
+
+// cmdWithContext returns a bare *cobra.Command carrying ctx, enough to
+// exercise resolveAuth/dialOrInjected without building a full command tree.
+func cmdWithContext(ctx context.Context) *cobra.Command {
+	c := &cobra.Command{}
+	c.SetContext(ctx)
+	return c
+}
+
+// TestResolveAuth_TokenSourceOnlyInjected locks in the fix for the seam
+// inconsistency flagged in review: previously withGatewayTarget keyed only on
+// deps.Gateway and resolveAuth only on deps.TokenSource, so a TokenSource-only
+// injection was silently ignored by withGatewayTarget (it fell through to a
+// real resolveTokenSource call instead of using the injected source). Now
+// resolveAuth treats either field as "this call is test-injected" and returns
+// the injected TokenSource unchanged.
+func TestResolveAuth_TokenSourceOnlyInjected(t *testing.T) {
+	want := auth.NewNoAuthSource("probe")
+	ctx := withDeps(context.Background(), cliDeps{TokenSource: want})
+	src, target, err := resolveAuth(cmdWithContext(ctx))
+	if err != nil {
+		t.Fatalf("resolveAuth: %v", err)
+	}
+	if src != auth.TokenSource(want) {
+		t.Errorf("resolveAuth returned a different TokenSource than the one injected")
+	}
+	if target != injectedTarget {
+		t.Errorf("target = %+v, want the injectedTarget default (deps.Target was nil)", target)
+	}
+}
+
+// TestResolveAuth_GatewayOnlyInjected covers the complementary case: a
+// Gateway injected with no TokenSource must not panic callers that call
+// src.Token() (e.g. token show) — resolveAuth substitutes a NoAuthSource
+// rather than returning nil.
+func TestResolveAuth_GatewayOnlyInjected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	ctx := withDeps(context.Background(), cliDeps{Gateway: gw})
+	src, target, err := resolveAuth(cmdWithContext(ctx))
+	if err != nil {
+		t.Fatalf("resolveAuth: %v", err)
+	}
+	if src == nil {
+		t.Fatal("resolveAuth returned a nil TokenSource for a Gateway-only injection")
+	}
+	tok, err := src.Token(context.Background())
+	if err != nil {
+		t.Fatalf("src.Token() on the substituted source: %v", err)
+	}
+	if tok.Source != auth.SourceNone {
+		t.Errorf("substituted source = %+v, want SourceNone", tok)
+	}
+	if target != injectedTarget {
+		t.Errorf("target = %+v, want the injectedTarget default", target)
+	}
+}
+
+// TestResolveAuth_ExplicitTargetPreserved confirms an explicitly-injected
+// Target is passed through unchanged, not overridden by injectedTarget.
+func TestResolveAuth_ExplicitTargetPreserved(t *testing.T) {
+	want := &gatewayconfig.Target{Name: "explicit"}
+	ctx := withDeps(context.Background(), cliDeps{TokenSource: auth.NewNoAuthSource(""), Target: want})
+	_, target, err := resolveAuth(cmdWithContext(ctx))
+	if err != nil {
+		t.Fatalf("resolveAuth: %v", err)
+	}
+	if target != want {
+		t.Errorf("target = %+v, want the explicitly injected %+v", target, want)
+	}
+}
+
+// TestResolveAuth_NoDepsFallsThrough confirms the absence of any injected
+// cliDeps still reaches the real resolveTokenSource (here observed indirectly:
+// it returns an error, since no gateway/credentials are configured in this
+// test's environment, rather than silently succeeding via some injected
+// value it was never given).
+func TestResolveAuth_NoDepsFallsThrough(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_, _, err := resolveAuth(cmdWithContext(context.Background()))
+	if err == nil {
+		t.Fatal("expected an error from the real resolveTokenSource path (no gateway configured)")
+	}
+}
+
+// TestDialOrInjected_GatewayInjected confirms dialOrInjected returns the
+// injected gateway and a no-op closer, without dialing.
+func TestDialOrInjected_GatewayInjected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockGW := mock.NewMockGateway(ctrl)
+	ctx := withDeps(context.Background(), cliDeps{Gateway: mockGW})
+	gw, closer, err := dialOrInjected(cmdWithContext(ctx), nil, nil)
+	if err != nil {
+		t.Fatalf("dialOrInjected: %v", err)
+	}
+	if gw != mockGW {
+		t.Error("dialOrInjected did not return the injected gateway")
+	}
+	if err := closer.Close(); err != nil {
+		t.Errorf("no-op closer returned an error: %v", err)
 	}
 }

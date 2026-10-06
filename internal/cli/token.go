@@ -75,7 +75,7 @@ func newTokenShowCommand() *cobra.Command {
 		Short: "Show the resolved token (age, expiry, subject, audience, roles)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			src, target, err := resolveTokenSource(cmd)
+			src, target, err := resolveAuth(cmd)
 			if err != nil {
 				return err
 			}
@@ -104,7 +104,7 @@ func reportCurrentUser(cmd *cobra.Command, target *gatewayconfig.Target, src aut
 	if output != "text" {
 		return
 	}
-	gw, conn, err := dialGateway(target, src)
+	gw, conn, err := dialOrInjected(cmd, target, src)
 	if err != nil {
 		cmd.PrintErrf("warning: could not reach gateway for whoami: %v\n", err)
 		return
@@ -180,7 +180,7 @@ func newTokenRefreshCommand() *cobra.Command {
 			if write {
 				viper.Set("write-token", true)
 			}
-			src, target, err := resolveTokenSource(cmd)
+			src, target, err := resolveAuth(cmd)
 			if err != nil {
 				return err
 			}

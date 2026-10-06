@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -134,6 +135,60 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 		return nil, target, err
 	}
 	return src, target, nil
+}
+
+// injectedTarget is the Target substituted for a nil deps.Target on the
+// injected path, so callers that read target.Name/target.Endpoint without a
+// nil-guard get a well-defined test value instead of a nil-pointer panic.
+// Resolved stays nil, matching the normal "endpoint-only" state elsewhere in
+// this package.
+var injectedTarget = &gatewayconfig.Target{Name: "test", Endpoint: "https://test.invalid"}
+
+// resolveAuth is resolveTokenSource, but honors cliDeps (deps.go) injected on
+// the command's context: if either Gateway or TokenSource was injected, it
+// returns the injected TokenSource (or, when only Gateway was injected, a
+// auth.NoAuthSource stand-in — never nil, so a caller that calls src.Token()
+// doesn't panic) and the injected Target (defaulted via injectedTarget when
+// nil), skipping the real resolveTokenSource entirely. Checking Gateway here
+// too (not just TokenSource) keeps this in lockstep with dialOrInjected/
+// withGatewayTarget, which key off the same two fields — see the package doc
+// on cliDeps for why a single command must never see one seam honor an
+// injected dep that another seam on the same call ignores.
+//
+// Production code never sets cliDeps, so this always falls through to the
+// real resolveTokenSource there.
+func resolveAuth(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Target, error) {
+	deps, ok := depsFrom(cmd.Context())
+	if !ok || (deps.TokenSource == nil && deps.Gateway == nil) {
+		return resolveTokenSource(cmd)
+	}
+	target := deps.Target
+	if target == nil {
+		target = injectedTarget
+	}
+	src := deps.TokenSource
+	if src == nil {
+		src = auth.NewNoAuthSource("test gateway injected, no token source injected")
+	}
+	return src, target, nil
+}
+
+// noopCloser is an io.Closer that does nothing, used by dialOrInjected to
+// stand in for the real *gateway.Conn when the gateway was test-injected and
+// there is nothing to close.
+type noopCloser struct{}
+
+func (noopCloser) Close() error { return nil }
+
+// dialOrInjected is dialGateway, but returns a Gateway injected via cliDeps
+// (deps.go) on the command's context when present, skipping the real dial.
+// The returned io.Closer is a no-op in that case; *gateway.Conn (dialGateway's
+// real return) already satisfies io.Closer, so callers need no other change.
+func dialOrInjected(cmd *cobra.Command, target *gatewayconfig.Target, src auth.TokenSource) (gateway.Gateway, io.Closer, error) {
+	if deps, ok := depsFrom(cmd.Context()); ok && deps.Gateway != nil {
+		return deps.Gateway, noopCloser{}, nil
+	}
+	return dialGateway(target, src)
 }
 
 // dialGateway builds a gateway.Gateway from a resolved target and token source.
