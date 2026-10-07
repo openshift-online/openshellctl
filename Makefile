@@ -168,7 +168,7 @@ image: ## Build the container image
 		--build-arg VERSION=$(VERSION) \
 		--build-arg COMMIT=$(COMMIT) \
 		--build-arg OPENSHELL_PIN=$(OPENSHELL_PIN) \
-		-f build/Dockerfile -t $(IMAGE):$(IMAGE_TAG) .
+		-f build/Containerfile -t $(IMAGE):$(IMAGE_TAG) .
 
 .PHONY: ensure-goreleaser
 ensure-goreleaser: ## Ensure goreleaser is installed
