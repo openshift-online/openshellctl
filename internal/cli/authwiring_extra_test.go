@@ -65,12 +65,6 @@ func TestOIDCConfigFetcher_UntrustedCertFailsByDefault(t *testing.T) {
 }
 
 // TestOIDCConfigFetcher_GatewayInsecureSkipsVerification confirms
-// --gateway-insecure (the same flag the real gRPC dial already honors, see
-// pkg/gateway/dial.go) also lets the discovery probe skip TLS verification —
-// without it, a gateway add against a self-signed/internal-CA staging
-// gateway can never succeed, since no gateway is registered yet at the
-// discovery step for a per-gateway CA bundle to apply.
-// TestOIDCConfigFetcher_GatewayInsecureSkipsVerification confirms
 // oidcConfigFetcher inherits the global --gateway-insecure transport
 // override (applyGatewayInsecureTransport, root.go) rather than keeping its
 // own separate per-call override — one place decides "skip verification,"
