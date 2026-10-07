@@ -155,7 +155,6 @@ func TestRequireTokenWriter_NamedResolvedGateway_Succeeds(t *testing.T) {
 		Endpoint: "https://gw",
 		Resolved: &gatewayconfig.Resolved{Name: "rosa"},
 	}
-	_ = root // the real writer construction uses gatewayconfig.NewOSWriter() (HOME/XDG), not root directly
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	w, err := requireTokenWriter(target)
