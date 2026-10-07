@@ -86,6 +86,14 @@ func newTokenShowCommand() *cobra.Command {
 			if err := writeToken(cmd.OutOrStdout(), tok, src.Describe(), output); err != nil {
 				return err
 			}
+			// Preflight warnings (audience mismatch, no realm roles) — text
+			// only, to keep -o json output machine-parseable (same reasoning
+			// as reportCurrentUser just below).
+			if output == "text" {
+				for _, w := range auth.PreflightWarnings(tok, viper.GetString("oidc-audience")) {
+					cmd.PrintErrf("warning: %s\n", w)
+				}
+			}
 			// whoami parity: report the gateway's view of the caller (§8.3).
 			// Best-effort — a dial/RPC failure is a warning, not an error, so
 			// `token show` still succeeds offline.
@@ -181,7 +189,21 @@ func newTokenRefreshCommand() *cobra.Command {
 				viper.Set("write-token", true)
 			}
 			src, target, err := resolveAuth(cmd)
+
+			// --write requires somewhere to persist to, independent of
+			// whether auth resolution itself succeeded — check this first so
+			// the more specific, actionable problem ("nowhere to write to")
+			// is reported ahead of a more generic resolution error.
+			if write {
+				if _, werr := requireTokenWriter(target); werr != nil {
+					return werr
+				}
+			}
+
 			if err != nil {
+				if errors.Is(err, auth.ErrNoCredentials) {
+					return &auth.ErrNothingToRefresh{Cause: err}
+				}
 				return err
 			}
 			src.Invalidate()
@@ -197,20 +219,25 @@ func newTokenRefreshCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// A resolved source with no openshellctl-managed bearer token at
+			// all (an explicit no-auth gateway, or a real mTLS gateway) has
+			// nothing to refresh, by definition — not a fake success.
+			if tok.Source == auth.SourceNone {
+				return &auth.ErrNothingToRefresh{}
+			}
+
 			cmd.Printf("refreshed token for subject %q (expires %s)\n", tok.Subject, tokExpiryStr(tok))
 
 			if write && tok.Source == auth.SourceClientCredentials {
-				w, err := tokenWriterFor(target)
+				w, err := requireTokenWriter(target)
 				if err != nil {
 					return err
 				}
-				if w == nil {
-					cmd.PrintErrln("warning: --write ignored: no named gateway resolved to write to")
-				} else if err := auth.WriteBundle(w, tok); err != nil {
+				if err := auth.WriteBundle(w, tok); err != nil {
 					return fmt.Errorf("write oidc_token.json: %w", err)
-				} else {
-					cmd.Printf("wrote oidc_token.json for gateway %q (Rust CLI schema)\n", target.Name)
 				}
+				cmd.Printf("wrote oidc_token.json for gateway %q (Rust CLI schema)\n", target.Name)
 			}
 			return nil
 		},
