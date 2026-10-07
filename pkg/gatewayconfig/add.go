@@ -44,7 +44,7 @@ func NewMetadata(in AddInput) (Metadata, error) {
 		return Metadata{}, &MTLSUnsupportedError{}
 	}
 
-	endpoint, err := normalizeAddEndpoint(in.Endpoint)
+	endpoint, err := NormalizeEndpoint(in.Endpoint)
 	if err != nil {
 		return Metadata{}, err
 	}
@@ -92,9 +92,11 @@ func NewMetadata(in AddInput) (Metadata, error) {
 	return m, nil
 }
 
-// normalizeAddEndpoint defaults a missing scheme to https:// and validates
-// the result parses as a URL with a non-empty host.
-func normalizeAddEndpoint(endpoint string) (string, error) {
+// NormalizeEndpoint defaults a missing scheme to https:// and validates the
+// result parses as a URL with a non-empty host. Exported so internal/cli can
+// normalize an endpoint before an OIDC-discovery probe, using the exact same
+// rule NewMetadata applies when it normalizes again internally.
+func NormalizeEndpoint(endpoint string) (string, error) {
 	if endpoint == "" {
 		return "", &InvalidEndpointError{Endpoint: endpoint, Cause: errors.New("empty endpoint")}
 	}
