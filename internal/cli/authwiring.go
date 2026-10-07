@@ -123,6 +123,7 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 		Audience:          viper.GetString("oidc-audience"),
 		Gateway:           target.Resolved,
 		GatewayEndpoint:   target.Endpoint,
+		TLSPresent:        target.Resolved != nil && gatewayconfig.TLSMaterialFor(target.Resolved).Present,
 		OIDCConfigFetcher: oidcConfigFetcher,
 	}
 	if scopes := viper.GetString("oidc-scopes"); scopes != "" {

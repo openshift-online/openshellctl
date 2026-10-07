@@ -22,6 +22,15 @@ type ResolveInput struct {
 	Gateway         *gatewayconfig.Resolved // may be nil (endpoint-only)
 	GatewayEndpoint string                  // for /auth/oidc-config fallback
 
+	// TLSPresent reports whether mTLS material (mtls/ca.crt, at minimum) is
+	// present for the resolved gateway — the caller is expected to compute
+	// this via gatewayconfig.TLSMaterialFor(Gateway).Present (see
+	// internal/cli/authwiring.go's resolveTokenSource). It is what lets
+	// Resolve tell a genuinely no-auth-needed mTLS gateway apart from a
+	// gateway (or no gateway at all) with literally nothing configured —
+	// see rule 5/6 below.
+	TLSPresent bool
+
 	// OIDCConfigFetcher fetches {issuer, audience} from GET <endpoint>/auth/oidc-config.
 	// nil disables the fallback.
 	OIDCConfigFetcher func(ctx context.Context, endpoint string) (issuer, audience string, err error)
@@ -42,9 +51,17 @@ type ResolveInput struct {
 //  2. client secret present → client-credentials (overrides, then metadata, then
 //     /auth/oidc-config fallback for issuer/audience);
 //  3. no secret, gateway resolved, auth_mode oidc → on-disk bundle;
-//  4. auth_mode none/plaintext → NoAuth;
-//  5. auth_mode unset/mtls → NoAuth (gateway layer enforces the mTLS triple);
-//  6. cloudflare_jwt → ErrUnsupportedAuthMode.
+//  4. auth_mode none/plaintext → NoAuth (an explicit, resolved declaration
+//     that no auth is needed);
+//  5. auth_mode unset/mtls, TLSPresent → NoAuth (a real, resolved mTLS
+//     gateway; the dial layer enforces the cert triple, this package's job
+//     is just "no bearer token needed");
+//  6. auth_mode unset/mtls, NOT TLSPresent → ErrNoCredentials: nothing at
+//     all was configured (no static token, no secret, no disk bundle, no
+//     TLS material) — this is the "truly nothing to authenticate with" case
+//     that previously, incorrectly, still returned a working-looking
+//     NoAuthSource;
+//  7. cloudflare_jwt → ErrUnsupportedAuthMode.
 func Resolve(ctx context.Context, in ResolveInput, ex Exchanger) (TokenSource, error) {
 	clock := in.Clock
 	if clock == nil {
@@ -79,7 +96,10 @@ func Resolve(ctx context.Context, in ResolveInput, ex Exchanger) (TokenSource, e
 	case gatewayconfig.AuthModeNone, gatewayconfig.AuthModePlaintext:
 		return NewNoAuthSource(string(mode)), nil
 	case gatewayconfig.AuthModeUnset, gatewayconfig.AuthModeMTLS:
-		return NewNoAuthSource("mtls"), nil
+		if in.TLSPresent {
+			return NewNoAuthSource("mtls"), nil
+		}
+		return nil, ErrNoCredentials
 	case gatewayconfig.AuthModeCloudflareJWT:
 		return nil, &ErrUnsupportedAuthMode{Mode: string(mode)}
 	default:

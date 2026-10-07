@@ -10,6 +10,30 @@ import (
 // The SDK's NewClientCredentialsAuth enforces the same invariant (spec §5.2).
 var ErrNoExpiry = errors.New("token has no positive expiry (expires_in <= 0)")
 
+// ErrNoCredentials is returned by Resolve when nothing at all was configured
+// to authenticate with — no static token, no client secret, no resolved
+// OIDC disk bundle, and no TLS material for an mTLS gateway. Previously this
+// case silently fell through to a working-looking NoAuthSource instead of
+// telling the caller nothing was actually configured.
+var ErrNoCredentials = errors.New("no credentials configured")
+
+// ErrNothingToRefresh is returned by `token refresh` when the resolved auth
+// has no openshellctl-managed bearer token to refresh at all — either
+// because Resolve returned ErrNoCredentials (wrapped as Cause), or because
+// the resolved TokenSource legitimately has no token (an explicit no-auth
+// gateway, or a real mTLS gateway, both of which are auth.SourceNone).
+type ErrNothingToRefresh struct{ Cause error }
+
+func (e *ErrNothingToRefresh) Error() string {
+	if e.Cause != nil {
+		return "nothing to refresh: " + e.Cause.Error()
+	}
+	return "nothing to refresh: no token-based auth is configured for this gateway"
+}
+
+// Unwrap returns the underlying cause, if any.
+func (e *ErrNothingToRefresh) Unwrap() error { return e.Cause }
+
 // errBackoff is the cause used when a retry is suppressed by the failure backoff.
 var errBackoff = errors.New("token exchange is in backoff after a recent failure")
 
