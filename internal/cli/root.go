@@ -184,10 +184,10 @@ func Execute() int {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
 		}
 		code := exitCodeFor(err)
-		if code == ExitAuth {
+		if hint := hintFor(err); hint != "" {
 			msg := err.Error()
 			if !strings.Contains(msg, "openshellctl token refresh") && !strings.Contains(msg, "openshellctl login") {
-				fmt.Fprintf(os.Stderr, "Hint: try `openshellctl token refresh` to obtain a new token.\n")
+				fmt.Fprintf(os.Stderr, "%s\n", hint)
 			}
 		}
 		return code

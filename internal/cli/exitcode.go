@@ -15,10 +15,11 @@ const (
 	ExitOK        = 0 // success
 	ExitError     = 1 // generic / RPC error
 	ExitUsage     = 2 // usage: flag parse, validation, unsupported flag combos
-	ExitAuth      = 3 // authentication failures
+	ExitAuth      = 3 // authentication failures (unauthenticated, expired, no credentials)
 	ExitNotFound  = 4 // sandbox/gateway not found
 	ExitConflict  = 5 // conflict / already-exists
 	ExitProvision = 6 // provisioning timeout/failure, lifecycle
+	ExitForbidden = 7 // authenticated, but not authorized (permission denied)
 )
 
 // UsageError marks an error as a usage error (exit code 2). Command layers wrap
@@ -70,14 +71,26 @@ func exitCodeFor(err error) int {
 		return ExitUsage
 	}
 
-	// Authentication failures → 3.
+	// Permission denied → 7 (authenticated, but not authorized). Checked
+	// before the generic auth bucket below since it is NOT an auth failure.
+	var gwPerm *gateway.PermissionDeniedError
+	if errors.As(err, &gwPerm) {
+		return ExitForbidden
+	}
+
+	// Authentication failures → 3 (missing, expired, or otherwise unusable
+	// credentials — never an authorization/permission problem).
 	var expired *auth.ErrTokenExpired
 	var exchange *auth.ExchangeError
 	var oidcMissing *auth.ErrOIDCConfigMissing
 	var gwUnauth *gateway.UnauthenticatedError
-	var gwPerm *gateway.PermissionDeniedError
+	var bundleInvalid *auth.ErrBundleInvalid
+	var mtlsMissing *auth.ErrMTLSMaterialMissing
+	var nothingToRefresh *auth.ErrNothingToRefresh
 	if errors.As(err, &expired) || errors.As(err, &exchange) || errors.As(err, &oidcMissing) ||
-		errors.As(err, &gwUnauth) || errors.As(err, &gwPerm) {
+		errors.As(err, &gwUnauth) || errors.As(err, &bundleInvalid) || errors.As(err, &mtlsMissing) ||
+		errors.As(err, &nothingToRefresh) ||
+		errors.Is(err, auth.ErrNoExpiry) || errors.Is(err, auth.ErrNoCredentials) {
 		return ExitAuth
 	}
 
@@ -96,11 +109,15 @@ func exitCodeFor(err error) int {
 		return ExitUsage
 	}
 
-	// gatewayconfig usage errors → 2 (bad input to gateway add/select/remove).
+	// gatewayconfig usage errors → 2 (bad input to gateway add/select/remove,
+	// or corrupt local config/an auth mode this client doesn't support).
+	var metadataParse *gatewayconfig.MetadataParseError
+	var unsupportedAuthMode *auth.ErrUnsupportedAuthMode
 	if errors.Is(err, gatewayconfig.ErrInvalidGatewayName) ||
 		errors.Is(err, gatewayconfig.ErrEdgeGatewayUnsupported) ||
 		errors.Is(err, gatewayconfig.ErrMTLSUnsupported) ||
-		errors.Is(err, gatewayconfig.ErrInvalidEndpoint) {
+		errors.Is(err, gatewayconfig.ErrInvalidEndpoint) ||
+		errors.As(err, &metadataParse) || errors.As(err, &unsupportedAuthMode) {
 		return ExitUsage
 	}
 
@@ -123,5 +140,48 @@ func exitCodeFor(err error) int {
 		return ExitProvision
 	}
 
+	// Everything else — including gateway.UnavailableError, DeadlineError,
+	// and the RPCError catch-all — is a generic/connectivity error → 1.
 	return ExitError
+}
+
+// hintFor returns an actionable, one-line hint for an error, or "" when none
+// applies. It is keyed on error type, not on the resulting exit code, so
+// that semantically different problems that happen to share an exit code
+// (e.g. an expired token vs. a permission-denied response, both auth-ish)
+// get distinct, accurate hints rather than one generic message.
+func hintFor(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	// Permission-denied is authorization, not expiry — re-running `token
+	// refresh` cannot fix it, so it must never get the refresh hint.
+	var gwPerm *gateway.PermissionDeniedError
+	if errors.As(err, &gwPerm) {
+		return "Hint: you are authenticated, but the gateway denied this action due to insufficient " +
+			"permissions. Ask an administrator to grant the required role — obtaining a new token will not help."
+	}
+
+	// ErrNothingToRefresh's own message already explains the problem fully
+	// (e.g. "nothing to refresh: no credentials configured") — suggesting
+	// `token refresh` on an error raised by `token refresh` itself would be
+	// circular and unhelpful.
+	var nothingToRefresh *auth.ErrNothingToRefresh
+	if errors.As(err, &nothingToRefresh) {
+		return ""
+	}
+
+	// Everything else that's "your credentials are stale, missing, or
+	// couldn't be obtained" benefits from the same refresh hint.
+	var expired *auth.ErrTokenExpired
+	var exchange *auth.ExchangeError
+	var oidcMissing *auth.ErrOIDCConfigMissing
+	var gwUnauth *gateway.UnauthenticatedError
+	if errors.As(err, &expired) || errors.As(err, &exchange) || errors.As(err, &oidcMissing) ||
+		errors.As(err, &gwUnauth) || errors.Is(err, auth.ErrNoCredentials) {
+		return "Hint: try `openshellctl token refresh` to obtain a new token."
+	}
+
+	return ""
 }
