@@ -4,8 +4,10 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -68,6 +70,12 @@ func NewRootCommand() *cobra.Command {
 	registerPersistentFlags(root, pf)
 	bindViper(root)
 
+	// Runs once, after flags are parsed but before any subcommand's RunE.
+	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+		applyGatewayInsecureTransport()
+		return nil
+	}
+
 	root.AddCommand(
 		newSandboxCommand(),
 		newLogsCommand(),
@@ -110,6 +118,32 @@ func bindViper(root *cobra.Command) {
 	viper.SetEnvKeyReplacer(envKeyReplacer())
 	// Persistent flags are bound to viper so env vars back them.
 	_ = viper.BindPFlags(root.PersistentFlags())
+}
+
+// applyGatewayInsecureTransport overrides the process-wide http.DefaultTransport
+// to skip TLS certificate verification when --gateway-insecure/
+// OPENSHELL_GATEWAY_INSECURE is set. This is a deliberately broad,
+// process-global side effect — there is no narrower lever available: the
+// OpenShell SDK's own OIDC discovery and token-endpoint HTTP calls
+// (github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/oidc, used by the
+// client-credentials exchange and the browser login flow) go through an
+// unexported package-level *http.Client with no Transport override of its
+// own — meaning it falls back to http.DefaultTransport — and the SDK exposes
+// no LoginOption to inject a custom client or skip verification. Without
+// this, --gateway-insecure would cover the real gRPC dial (pkg/gateway/
+// dial.go) and openshellctl's own /auth/oidc-config discovery probe
+// (oidcConfigFetcher, authwiring.go) but not the SDK's own issuer discovery,
+// which is exactly the gap a staging/internal-CA OIDC issuer hits.
+//
+// The user has already explicitly opted into "skip TLS verification" via the
+// flag, accepting that scope; this is a no-op when the flag is unset.
+func applyGatewayInsecureTransport() {
+	if !viper.GetBool("gateway-insecure") {
+		return
+	}
+	http.DefaultTransport = &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // explicit opt-in via --gateway-insecure
+	}
 }
 
 // Execute builds and runs the root command, returning a process exit code.
