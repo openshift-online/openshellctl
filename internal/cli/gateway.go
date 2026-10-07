@@ -10,6 +10,7 @@ import (
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
+	"github.com/openshift-online/openshellctl/pkg/output"
 )
 
 // newGatewayCommand builds `gateway` (alias `gw`) and its subcommands.
@@ -21,8 +22,144 @@ func newGatewayCommand() *cobra.Command {
 	}
 	g.AddCommand(
 		newGatewayAddCommand(),
+		newGatewayListCommand(),
+		newGatewaySelectCommand(),
+		newGatewayRemoveCommand(),
+		newGatewayLogoutCommand(),
+		newGatewayLoginCommand(),
 	)
 	return g
+}
+
+// newGatewayLoginCommand is a thin alias of the root login command, under
+// `gateway` for discoverability. A *cobra.Command can't be added to two
+// parents, so this is a separate instance sharing runLogin (login.go).
+func newGatewayLoginCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "login",
+		Short: "Log in to a gateway via OIDC browser flow",
+		Long:  "Open a browser for OIDC authentication and persist the token to disk.",
+		Args:  cobra.NoArgs,
+		RunE:  runLogin,
+	}
+}
+
+// newGatewayListCommand builds `gateway list`.
+func newGatewayListCommand() *cobra.Command {
+	var format string
+	c := &cobra.Command{
+		Use:   "list",
+		Short: "List registered gateways",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			env, err := gatewayconfig.NewOSEnv()
+			if err != nil {
+				return err
+			}
+			gateways, err := gatewayconfig.ListDetailed(env)
+			if err != nil {
+				return err
+			}
+			return output.RenderGatewayList(cmd.OutOrStdout(), gateways, output.Format(format))
+		},
+	}
+	c.Flags().StringVarP(&format, "output", "o", "table", "output format: table|json|yaml")
+	return c
+}
+
+// newGatewaySelectCommand builds `gateway select <name>`.
+func newGatewaySelectCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "select <name>",
+		Short: "Set the active gateway",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			env, err := gatewayconfig.NewOSEnv()
+			if err != nil {
+				return err
+			}
+			if _, err := gatewayconfig.Load(env, name); err != nil {
+				return err
+			}
+			w, err := gatewayconfig.NewOSWriter()
+			if err != nil {
+				return err
+			}
+			if err := gatewayconfig.SetActive(w, name); err != nil {
+				return err
+			}
+			cmd.Printf("✓ Gateway '%s' is now active\n", name)
+			return nil
+		},
+	}
+}
+
+// newGatewayRemoveCommand builds `gateway remove <name>`.
+func newGatewayRemoveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <name>",
+		Short: "Remove a gateway registration",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			env, err := gatewayconfig.NewOSEnv()
+			if err != nil {
+				return err
+			}
+			exists, err := gatewayconfig.Exists(env, name)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return &gatewayconfig.GatewayNotFoundError{Name: name}
+			}
+			w, err := gatewayconfig.NewOSWriter()
+			if err != nil {
+				return err
+			}
+			if err := gatewayconfig.RemoveGateway(w, name); err != nil {
+				return err
+			}
+			if err := gatewayconfig.ClearActiveIfMatches(w, name); err != nil {
+				return err
+			}
+			cmd.Printf("✓ Gateway '%s' removed\n", name)
+			return nil
+		},
+	}
+}
+
+// newGatewayLogoutCommand builds `gateway logout` — defaults to the active
+// gateway (or -g/--gateway) like login does, via the same Resolve call.
+func newGatewayLogoutCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout",
+		Short: "Remove the cached token for a gateway, keeping its registration",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			env, err := gatewayconfig.NewOSEnv()
+			if err != nil {
+				return err
+			}
+			target, err := gatewayconfig.Resolve(env, gatewayconfig.ResolveInput{
+				Endpoint: viper.GetString("gateway-endpoint"),
+				Name:     viper.GetString("gateway"),
+			})
+			if err != nil {
+				return err
+			}
+			w, err := gatewayconfig.NewOSWriter()
+			if err != nil {
+				return err
+			}
+			if err := gatewayconfig.Logout(w, target.Name); err != nil {
+				return err
+			}
+			cmd.Printf("✓ Logged out of gateway '%s'\n", target.Name)
+			return nil
+		},
+	}
 }
 
 // newGatewayAddCommand builds `gateway add <endpoint>`. It only registers
