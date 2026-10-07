@@ -529,11 +529,13 @@ openshellctl gateway login
 | Flag | Description |
 |------|-------------|
 | `--name` | Gateway name (`gateway add`; default: derived from the endpoint host) |
+| `--force` | `gateway add`: overwrite an existing registration under the same name |
+| `--no-browser` | Skip the browser-login fallback when no client secret is available (env `OPENSHELL_NO_BROWSER`, real boolean — `0`/`false` means browser allowed) |
 | `--oidc-issuer` | OIDC issuer URL override — skips discovery (global flag, also used by `token`/`whoami`) |
 | `--oidc-client-id`, `--oidc-audience`, `--oidc-scopes` | OIDC overrides (global flags) |
 | `-o`, `--output` | `gateway list` format: `table` (default), `json`, `yaml` |
 
-`gateway add` only registers OIDC gateways. A gateway that doesn't answer `/auth/oidc-config` and has no `--oidc-issuer` override fails with a clear error rather than being silently misregistered — see [`docs/gateway.md`](docs/gateway.md) for the metadata schema and the full list of differences from the upstream Rust CLI (no mTLS registration, no default browser login when a secret is absent and `OPENSHELL_NO_BROWSER` is set).
+`gateway add` only registers OIDC gateways. A gateway that doesn't answer `/auth/oidc-config` and has no `--oidc-issuer` override fails with a clear error rather than being silently misregistered. If authentication fails after registration (wrong secret, unreachable issuer), the registration is automatically rolled back — a corrected retry doesn't need a manual `gateway remove` first. See [`docs/gateway.md`](docs/gateway.md) for the metadata schema and the full list of differences from the upstream Rust CLI.
 
 ### `token`
 
@@ -629,7 +631,7 @@ openshellctl logs                                       # reuses my-sandbox
 | `OPENSHELL_OIDC_ISSUER` | OIDC issuer URL override (default from gateway metadata) |
 | `OPENSHELL_SANDBOX_POLICY` | Default sandbox policy file path |
 | `NO_COLOR` | Disable coloured output (any value) |
-| `OPENSHELL_NO_BROWSER` | When set (any non-empty value) and `gateway add` has no client secret available, register the gateway and print a login hint instead of opening a browser (any value) |
+| `OPENSHELL_NO_BROWSER` | Boolean (`1`/`true`, case-insensitive): when a client secret is unavailable, `gateway add` registers the gateway and prints a login hint instead of opening a browser |
 
 ## Differences from the upstream Rust CLI
 

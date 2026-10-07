@@ -32,9 +32,12 @@ fixture, sourced from `openshift-online/rosa-agent`).
 
 `Marshal()` reproduces the exact byte layout `serde_json::to_string_pretty`
 would (2-space indent, struct-field order, no HTML escaping, no trailing
-newline) — a `gateway add`-written `metadata.json` is byte-for-byte
-indistinguishable from one an upstream-equivalent writer would produce for
-the same fields.
+newline) for whatever fields are set — a `gateway add`-written `metadata.json`
+is byte-for-byte identical in formatting to one an upstream-equivalent writer
+would produce for the same field values. It always sets `oidc_client_id`
+explicitly (defaulting to `openshell-cli` when `--oidc-client-id` isn't
+given, printing a warning when a client secret is also present — see
+"Differences from the upstream Rust CLI" below).
 
 ## Auth mode inference
 
@@ -80,3 +83,19 @@ from the upstream Rust CLI" below.
   are written via `OSWriter` (temp file + rename), always `0600` with `0700`
   parent directories — not shell `cat > file <<EOF` + a separate `chmod`
   step, which has a brief window where the file exists world-readable.
+- **Automatic rollback on authentication failure.** If `gateway add` writes
+  `metadata.json` but then fails to authenticate (wrong secret, wrong client
+  ID, unreachable issuer), it removes the registration and restores whichever
+  gateway was previously active (or clears `active_gateway` if there wasn't
+  one) before returning the error — a corrected retry doesn't need a manual
+  `gateway remove` first. Pass `--force` to intentionally overwrite an
+  existing registration under the same name (e.g. to fix a stale endpoint).
+- **`gateway remove` never touches `mtls/` or `last_sandbox`.** It only
+  removes `metadata.json` and `oidc_token.json` — the two files this CLI
+  itself can recreate. mTLS certificates are typically admin-issued and not
+  recoverable from the CLI, so removing a registration to fix a typo and
+  re-adding it must never destroy them.
+- **`OPENSHELL_NO_BROWSER` is a real boolean**, bound the same way every
+  other `OPENSHELL_*` flag/env pair in this CLI is (via `--no-browser` and
+  viper): `0`/`false` (case-insensitive) means "browser allowed," not merely
+  "the variable is unset."
