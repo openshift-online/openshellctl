@@ -13,7 +13,7 @@ func newWhoamiCommand() *cobra.Command {
 		Long:  "Print the current user's identity as seen by the gateway. Use -v for full token details (same as `token show`).",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			src, target, err := resolveTokenSource(cmd)
+			src, target, err := resolveAuth(cmd)
 			if err != nil {
 				return err
 			}
@@ -31,7 +31,7 @@ func newWhoamiCommand() *cobra.Command {
 				return nil
 			}
 
-			gw, conn, err := dialGateway(target, src)
+			gw, conn, err := dialOrInjected(cmd, target, src)
 			if err != nil {
 				return err
 			}

@@ -11,7 +11,12 @@ import (
 	"testing"
 	"time"
 
+	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
 	"github.com/spf13/viper"
+	"go.uber.org/mock/gomock"
+
+	"github.com/openshift-online/openshellctl/pkg/auth"
+	"github.com/openshift-online/openshellctl/pkg/gateway/mock"
 )
 
 // setupGatewayTree writes a minimal user config tree with one oidc gateway and
@@ -52,27 +57,34 @@ func staticJWT(t *testing.T) string {
 	return enc(map[string]any{"alg": "RS256"}) + "." + enc(payload) + ".c2ln"
 }
 
-// TestTokenShow_StaticToken exercises resolveTokenSource end-to-end with a
-// static token against a temp gateway tree (no network for token resolution;
-// the whoami dial is best-effort and its failure is a warning).
+// TestTokenShow_StaticToken runs `token show` end to end through the cliDeps
+// seam (deps.go) with both an explicit TokenSource (a real auth.StaticSource
+// wrapping a JWT, so the printed claims are genuine) and a mock.MockGateway
+// (so reportCurrentUser's whoami dial hits the mock instead of a real
+// network dial) injected together — fully hermetic, no env vars or on-disk
+// gateway tree involved.
 func TestTokenShow_StaticToken(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	setupGatewayTree(t)
-	t.Setenv("OPENSHELL_TOKEN", staticJWT(t))
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gw.EXPECT().CurrentUser(gomock.Any()).Return(&types.CurrentUser{
+		Subject: "user-9",
+		Roles:   []string{"openshell-user"},
+	}, nil)
 
-	root := NewRootCommand()
-	var out bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&out)
-	root.SetArgs([]string{"token", "show"})
-	if err := root.Execute(); err != nil {
+	deps := cliDeps{
+		Gateway:     gw,
+		TokenSource: auth.NewStaticSource(staticJWT(t), nil),
+	}
+	out, err := runCmdWithGateway(t, deps, "token", "show")
+	if err != nil {
 		t.Fatalf("token show: %v", err)
 	}
-	got := out.String()
+	if !strings.Contains(out, "Gateway view (whoami):") {
+		t.Errorf("token show output missing gateway view section; got:\n%s", out)
+	}
 	for _, want := range []string{"user-9", "openshell-cli", "openshell-user"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("token show output missing %q; got:\n%s", want, got)
+		if !strings.Contains(out, want) {
+			t.Errorf("token show output missing %q; got:\n%s", want, out)
 		}
 	}
 }

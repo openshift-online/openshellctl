@@ -24,12 +24,21 @@ func withGateway(cmd *cobra.Command, fn func(gw gateway.Gateway) error) error {
 
 // withGatewayTarget is withGateway but also passes the resolved target, so
 // callers can read/write last_sandbox and the gateway name.
+//
+// This composes resolveAuth + dialOrInjected (authwiring.go) — the same two
+// functions whoami.go/token.go use — so there is exactly one place that
+// decides whether a command sees injected cliDeps (deps.go) or the real
+// resolve+dial path, rather than withGatewayTarget keying off deps.Gateway
+// alone while resolveAuth/dialOrInjected keyed off deps.TokenSource/
+// deps.Gateway independently (which used to let a TokenSource-only injection
+// silently fall through to a real dial here). Production code never sets
+// cliDeps, so this path is test-only.
 func withGatewayTarget(cmd *cobra.Command, fn func(gw gateway.Gateway, target *gatewayconfig.Target) error) error {
-	src, target, err := resolveTokenSource(cmd)
+	src, target, err := resolveAuth(cmd)
 	if err != nil {
 		return err
 	}
-	gw, conn, err := dialGateway(target, src)
+	gw, conn, err := dialOrInjected(cmd, target, src)
 	if err != nil {
 		return err
 	}
