@@ -45,6 +45,9 @@ func TestRenderGatewayList_Table(t *testing.T) {
 	if !strings.Contains(lines[0], "AUTH") {
 		t.Errorf("header missing AUTH column: %q", lines[0])
 	}
+	if !strings.Contains(lines[0], "SOURCE") {
+		t.Errorf("header missing SOURCE column: %q", lines[0])
+	}
 	var activeLine, otherLine string
 	for _, l := range lines[1:] {
 		if strings.Contains(l, "test-gw") {
@@ -53,6 +56,9 @@ func TestRenderGatewayList_Table(t *testing.T) {
 		if strings.Contains(l, "other") {
 			otherLine = l
 		}
+	}
+	if !strings.Contains(activeLine, "user") {
+		t.Errorf("row missing SOURCE=user: %q", activeLine)
 	}
 	if !strings.HasPrefix(activeLine, "*") {
 		t.Errorf("active row should be prefixed with *, got: %q", activeLine)

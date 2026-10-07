@@ -35,21 +35,24 @@ func renderGatewayListTable(w io.Writer, gateways []gatewayconfig.DetailedInfo) 
 	markedNames := make([]string, len(gateways))
 	endpoints := make([]string, len(gateways))
 	types := make([]string, len(gateways))
+	sources := make([]string, len(gateways))
 	for i, g := range gateways {
 		markedNames[i] = activeMarker(g.Active) + g.Name
 		endpoints[i] = g.Endpoint
 		types[i] = g.Type
+		sources[i] = string(g.Source)
 	}
 	nameWidth := maxLen(markedNames, 6) // "NAME" has no marker prefix; floor covers short names
 	endpointWidth := maxLen(endpoints, 8)
 	typeWidth := maxLen(types, 4)
+	sourceWidth := maxLen(sources, 6)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s  %s  %s  %s\n",
-		pad("NAME", nameWidth), pad("ENDPOINT", endpointWidth), pad("TYPE", typeWidth), "AUTH")
+	fmt.Fprintf(&b, "%s  %s  %s  %s  %s\n",
+		pad("NAME", nameWidth), pad("ENDPOINT", endpointWidth), pad("TYPE", typeWidth), pad("AUTH", 4), "SOURCE")
 	for i, g := range gateways {
-		fmt.Fprintf(&b, "%s  %s  %s  %s\n",
-			pad(markedNames[i], nameWidth), pad(g.Endpoint, endpointWidth), pad(g.Type, typeWidth), g.Auth)
+		fmt.Fprintf(&b, "%s  %s  %s  %s  %s\n",
+			pad(markedNames[i], nameWidth), pad(g.Endpoint, endpointWidth), pad(g.Type, typeWidth), pad(g.Auth, 4), pad(sources[i], sourceWidth))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
