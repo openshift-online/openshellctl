@@ -99,6 +99,15 @@ from the upstream Rust CLI" below.
   other `OPENSHELL_*` flag/env pair in this CLI is (via `--no-browser` and
   viper): `0`/`false` (case-insensitive) means "browser allowed," not merely
   "the variable is unset."
+- **`--gateway-insecure` also covers the OIDC-discovery probe**, not just the
+  gRPC dial. A staging/internal gateway whose certificate isn't in the public
+  trust store would otherwise make discovery fail even though the gateway is
+  reachable — and since no gateway is registered yet at the discovery step,
+  there's no per-gateway `mtls/ca.crt` this call could use instead. Pass
+  `--gateway-insecure` (or export `OPENSHELL_GATEWAY_INSECURE=1`) on
+  `gateway add` itself if discovery needs it; remember it's also needed on
+  every later command (`whoami`, `sandbox list`, ...) against that same
+  gateway, since it isn't persisted into `metadata.json`.
 
 ## Deferred: `--no-select` / `--no-login`
 

@@ -131,7 +131,7 @@ These flags apply to every command:
 |------|---------|-------------|
 | `--gateway`, `-g` | `OPENSHELL_GATEWAY` | Gateway name (selects config directory) |
 | `--gateway-endpoint` | `OPENSHELL_GATEWAY_ENDPOINT` | Gateway gRPC endpoint URL |
-| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification |
+| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification (gRPC dial, and `gateway add`'s OIDC-discovery probe) |
 | `--workspace` | `OPENSHELL_WORKSPACE` | Workspace name (default: `default`) |
 | `--token` | `OPENSHELL_TOKEN` | Bearer token (overrides OIDC) |
 | `--config` | — | Config file path |
