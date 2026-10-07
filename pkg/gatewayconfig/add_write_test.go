@@ -63,7 +63,7 @@ func TestWriteGateway_WritesMetadataAt0600(t *testing.T) {
 	env := Env{UserFS: fstest.MapFS{}}
 	m := Metadata{Name: "rosa", GatewayEndpoint: "https://gw", IsRemote: true}
 
-	if err := WriteGateway(w, env, "rosa", m); err != nil {
+	if err := WriteGateway(w, env, m, false); err != nil {
 		t.Fatalf("WriteGateway: %v", err)
 	}
 	rel := "gateways/rosa/metadata.json"
@@ -88,7 +88,7 @@ func TestWriteGateway_AlreadyExists(t *testing.T) {
 	env := Env{UserFS: mapFSWith(map[string]string{
 		"gateways/rosa/metadata.json": md("rosa", "https://gw"),
 	})}
-	err := WriteGateway(w, env, "rosa", Metadata{Name: "rosa", GatewayEndpoint: "https://other"})
+	err := WriteGateway(w, env, Metadata{Name: "rosa", GatewayEndpoint: "https://other"}, false)
 	var exists *GatewayExistsError
 	if !errors.As(err, &exists) {
 		t.Fatalf("err = %v, want GatewayExistsError", err)
@@ -97,14 +97,63 @@ func TestWriteGateway_AlreadyExists(t *testing.T) {
 		t.Error("err should match ErrGatewayExists")
 	}
 	if len(w.files) != 0 {
-		t.Error("WriteGateway must not write when the gateway already exists")
+		t.Error("WriteGateway must not overwrite an existing registration without force")
+	}
+}
+
+// TestWriteGateway_Force confirms force=true overwrites an existing
+// registration instead of returning GatewayExistsError — the explicit
+// re-registration path, as opposed to gateway add's default refusal to
+// clobber an existing name by accident.
+func TestWriteGateway_Force(t *testing.T) {
+	w := newMemWriter()
+	_ = w.WriteFile("gateways/rosa/metadata.json", []byte(md("rosa", "https://old")), 0o600)
+	env := Env{UserFS: mapFSWith(map[string]string{
+		"gateways/rosa/metadata.json": md("rosa", "https://old"),
+	})}
+
+	m := Metadata{Name: "rosa", GatewayEndpoint: "https://new"}
+	if err := WriteGateway(w, env, m, true); err != nil {
+		t.Fatalf("WriteGateway with force: %v", err)
+	}
+	got, err := ParseMetadata("rosa", w.files["gateways/rosa/metadata.json"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GatewayEndpoint != "https://new" {
+		t.Errorf("GatewayEndpoint = %q, want the overwritten value", got.GatewayEndpoint)
+	}
+}
+
+// TestWriteGateway_ShadowsSystemEntry confirms a name that exists only in the
+// system tree can still be registered in the user tree (shadowing it) — Load
+// already documents "the user entry shadows the system entry" as the read-
+// side rule; WriteGateway's existence check must only consult the user tree,
+// not block a legitimate shadow registration because Load/Exists (which walk
+// user-then-system) would otherwise report it as already existing.
+func TestWriteGateway_ShadowsSystemEntry(t *testing.T) {
+	w := newMemWriter()
+	env := Env{
+		UserFS: fstest.MapFS{},
+		SysFS:  mapFSWith(map[string]string{"gateways/rosa/metadata.json": md("rosa", "https://sys")}),
+	}
+	m := Metadata{Name: "rosa", GatewayEndpoint: "https://user"}
+	if err := WriteGateway(w, env, m, false); err != nil {
+		t.Fatalf("WriteGateway should shadow a system-tree-only entry, got: %v", err)
+	}
+	got, err := ParseMetadata("rosa", w.files["gateways/rosa/metadata.json"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GatewayEndpoint != "https://user" {
+		t.Errorf("GatewayEndpoint = %q, want the new user-tree registration", got.GatewayEndpoint)
 	}
 }
 
 func TestWriteGateway_InvalidName(t *testing.T) {
 	w := newPermCapturingWriter()
 	env := Env{UserFS: fstest.MapFS{}}
-	err := WriteGateway(w, env, "has/slash", Metadata{Name: "has/slash"})
+	err := WriteGateway(w, env, Metadata{Name: "has/slash"}, false)
 	var invalid *InvalidGatewayNameError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("err = %v, want InvalidGatewayNameError", err)
@@ -122,7 +171,7 @@ func TestWriteGateway_RealOSWriter_PermsAndAtomicity(t *testing.T) {
 	env := Env{UserFS: os.DirFS(root)}
 
 	m := Metadata{Name: "rosa", GatewayEndpoint: "https://gw", IsRemote: true}
-	if err := WriteGateway(w, env, "rosa", m); err != nil {
+	if err := WriteGateway(w, env, m, false); err != nil {
 		t.Fatalf("WriteGateway: %v", err)
 	}
 

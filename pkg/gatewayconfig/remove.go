@@ -7,17 +7,16 @@ import "strings"
 // path readActive reads in config.go).
 const activeGatewayRel = "active_gateway"
 
-// knownGatewayFiles are every file gateway add/login/token-refresh may create
-// under a gateway's directory. RemoveGateway removes each (a missing file is
-// a no-op, per the Writer contract) rather than requiring a directory-walk
-// method on the Writer interface.
+// knownGatewayFiles are the files RemoveGateway removes: only the ones
+// openshellctl itself writes and can recreate from scratch (metadata.json,
+// oidc_token.json). last_sandbox and mtls/{ca.crt,tls.crt,tls.key} are
+// deliberately NOT here: a last_sandbox pointer is harmless to leave behind,
+// but mTLS material is typically admin-issued and not recoverable by this
+// CLI — removing a registration (e.g. to fix a typo'd endpoint and re-add it)
+// must never destroy a cert the user cannot get back.
 var knownGatewayFiles = []string{
 	"metadata.json",
 	"oidc_token.json",
-	"last_sandbox",
-	"mtls/ca.crt",
-	"mtls/tls.crt",
-	"mtls/tls.key",
 }
 
 // SetActive writes name to the active_gateway pointer file.

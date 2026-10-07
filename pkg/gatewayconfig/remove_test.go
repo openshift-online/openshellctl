@@ -53,12 +53,10 @@ func TestClearActiveIfMatches_MissingFile(t *testing.T) {
 	}
 }
 
-func TestRemoveGateway_RemovesKnownFiles(t *testing.T) {
+func TestRemoveGateway_RemovesMetadataAndToken(t *testing.T) {
 	w := newMemWriter()
 	_ = w.WriteFile("gateways/rosa/metadata.json", []byte("{}"), 0o600)
 	_ = w.WriteFile("gateways/rosa/oidc_token.json", []byte("{}"), 0o600)
-	_ = w.WriteFile("gateways/rosa/last_sandbox", []byte("default\nsb"), 0o600)
-	_ = w.WriteFile("gateways/rosa/mtls/ca.crt", []byte("ca"), 0o600)
 	// unrelated file in another gateway must survive
 	_ = w.WriteFile("gateways/other/metadata.json", []byte("{}"), 0o600)
 
@@ -73,6 +71,36 @@ func TestRemoveGateway_RemovesKnownFiles(t *testing.T) {
 	}
 	if _, ok := w.files["gateways/other/metadata.json"]; !ok {
 		t.Error("unrelated gateway's files must survive")
+	}
+}
+
+// TestRemoveGateway_PreservesMTLSAndLastSandbox confirms RemoveGateway never
+// deletes mtls/ material or last_sandbox: mTLS certs/keys are typically
+// admin-issued and not recreatable by this CLI, so removing a registration
+// (e.g. to fix a typo'd endpoint and re-add it) must never destroy them.
+// last_sandbox is harmless to leave behind (it's just a pointer, trivially
+// stale) and is kept for the same reason: only the two files this CLI itself
+// creates and can recreate (metadata.json, oidc_token.json) are removed.
+func TestRemoveGateway_PreservesMTLSAndLastSandbox(t *testing.T) {
+	w := newMemWriter()
+	_ = w.WriteFile("gateways/rosa/metadata.json", []byte("{}"), 0o600)
+	_ = w.WriteFile("gateways/rosa/last_sandbox", []byte("default\nsb"), 0o600)
+	_ = w.WriteFile("gateways/rosa/mtls/ca.crt", []byte("ca"), 0o600)
+	_ = w.WriteFile("gateways/rosa/mtls/tls.crt", []byte("cert"), 0o600)
+	_ = w.WriteFile("gateways/rosa/mtls/tls.key", []byte("key"), 0o600)
+
+	if err := RemoveGateway(w, "rosa"); err != nil {
+		t.Fatalf("RemoveGateway: %v", err)
+	}
+	for _, rel := range []string{
+		"gateways/rosa/last_sandbox",
+		"gateways/rosa/mtls/ca.crt",
+		"gateways/rosa/mtls/tls.crt",
+		"gateways/rosa/mtls/tls.key",
+	} {
+		if _, ok := w.files[rel]; !ok {
+			t.Errorf("%q should survive RemoveGateway (not recreatable by this CLI)", rel)
+		}
 	}
 }
 

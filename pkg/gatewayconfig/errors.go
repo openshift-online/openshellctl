@@ -99,20 +99,36 @@ func (e *GatewayExistsError) Is(target error) bool { return target == ErrGateway
 // OIDC issuer for the endpoint (no --oidc-issuer override and no successful
 // /auth/oidc-config discovery) — i.e. the gateway doesn't look OIDC-configured.
 // openshellctl's `gateway add` only supports registering OIDC gateways.
-type EdgeGatewayUnsupportedError struct{ Endpoint string }
+//
+// Cause, when non-nil, is the discovery probe's own error — a DNS failure,
+// TLS error, or timeout, as opposed to a clean non-200 response. Threading it
+// through means a typo'd hostname is told what actually went wrong, instead
+// of getting the same "pass --oidc-issuer" remediation a real non-OIDC
+// gateway gets.
+type EdgeGatewayUnsupportedError struct {
+	Endpoint string
+	Cause    error
+}
 
 func (e *EdgeGatewayUnsupportedError) Error() string {
-	return fmt.Sprintf(
+	msg := fmt.Sprintf(
 		"gateway at %q does not appear to be OIDC-configured (no --oidc-issuer given and "+
 			"/auth/oidc-config discovery did not succeed); non-OIDC (edge) gateway registration "+
 			"is not supported — pass --oidc-issuer explicitly if this gateway is OIDC-configured",
 		e.Endpoint)
+	if e.Cause != nil {
+		msg += fmt.Sprintf("; discovery failed: %v", e.Cause)
+	}
+	return msg
 }
 
 // Is matches the ErrEdgeGatewayUnsupported sentinel.
 func (e *EdgeGatewayUnsupportedError) Is(target error) bool {
 	return target == ErrEdgeGatewayUnsupported
 }
+
+// Unwrap returns the discovery probe's own error, if any.
+func (e *EdgeGatewayUnsupportedError) Unwrap() error { return e.Cause }
 
 // MTLSUnsupportedError reports that mTLS gateway registration was requested.
 // Out of scope for this epic (ROSAENG-68825) — openshellctl's `gateway add`

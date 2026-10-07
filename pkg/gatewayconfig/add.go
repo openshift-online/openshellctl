@@ -25,7 +25,8 @@ type AddInput struct {
 	OIDCClientID string
 	OIDCAudience string
 	OIDCScopes   string
-	Discovered   *DiscoveredOIDC // result of a prior /auth/oidc-config probe; nil if not attempted or it failed
+	Discovered   *DiscoveredOIDC // result of a successful /auth/oidc-config probe; nil if not attempted or it failed
+	DiscoveryErr error           // the probe's own error, when Discovered is nil and a probe was attempted; threaded into EdgeGatewayUnsupportedError so a DNS/TLS/timeout failure isn't reported identically to a clean "not OIDC" 404
 	AuthMode     AuthMode        // "" (default) infers OIDC via OIDCIssuer/Discovered; AuthModeMTLS is rejected
 }
 
@@ -34,19 +35,29 @@ type AddInput struct {
 // defaults Name from the endpoint host when empty, and resolves the OIDC
 // issuer/audience from an explicit override or a prior discovery result.
 //
-// gateway add only ever registers OIDC gateways (IsRemote: true, GatewayPort:
-// 0 — matching the rosa-agent CronJob's own convention for a remote
-// endpoint-addressed gateway, see metadata_marshal_test.go). mTLS gateway
-// registration and non-OIDC ("edge") gateways are out of scope for this epic
-// and return typed errors rather than being silently misregistered.
+// gateway add only ever registers OIDC gateways over https (IsRemote: true,
+// GatewayPort: 0 — matching the rosa-agent CronJob's own convention for a
+// remote endpoint-addressed gateway, see metadata_marshal_test.go). A
+// plaintext (http://) endpoint is rejected: pkg/gateway's Dial refuses a
+// plaintext endpoint carrying bearer auth (ErrPlaintextWithAuth), so writing
+// auth_mode: oidc for one would produce a registration that can never dial.
+// mTLS gateway registration and non-OIDC ("edge") gateways are likewise out
+// of scope for this epic and return typed errors rather than being silently
+// misregistered.
 func NewMetadata(in AddInput) (Metadata, error) {
 	if in.AuthMode == AuthModeMTLS {
 		return Metadata{}, &MTLSUnsupportedError{}
 	}
 
-	endpoint, err := NormalizeEndpoint(in.Endpoint)
+	endpoint, err := EnsureScheme(in.Endpoint)
 	if err != nil {
 		return Metadata{}, err
+	}
+	if !strings.HasPrefix(endpoint, "https://") {
+		return Metadata{}, &InvalidEndpointError{
+			Endpoint: endpoint,
+			Cause:    fmt.Errorf("OIDC gateway registration requires https (got %q)", endpoint),
+		}
 	}
 
 	name := in.Name
@@ -61,12 +72,21 @@ func NewMetadata(in AddInput) (Metadata, error) {
 	audience := in.OIDCAudience
 	if issuer == "" {
 		if in.Discovered == nil || in.Discovered.Issuer == "" {
-			return Metadata{}, &EdgeGatewayUnsupportedError{Endpoint: endpoint}
+			return Metadata{}, &EdgeGatewayUnsupportedError{Endpoint: endpoint, Cause: in.DiscoveryErr}
 		}
 		issuer = in.Discovered.Issuer
 		if audience == "" {
 			audience = in.Discovered.Audience
 		}
+	}
+
+	clientID := in.OIDCClientID
+	if clientID == "" {
+		// Always write an explicit oidc_client_id (defaulting the same way
+		// Metadata.OIDCClientIDOrDefault would at read time) so the
+		// registration is self-describing rather than relying on every
+		// reader to know the default.
+		clientID = Metadata{}.OIDCClientIDOrDefault()
 	}
 
 	m := Metadata{
@@ -76,10 +96,7 @@ func NewMetadata(in AddInput) (Metadata, error) {
 		GatewayPort:     0,
 		AuthMode:        AuthModeOIDC,
 		OIDCIssuer:      &issuer,
-	}
-	if in.OIDCClientID != "" {
-		clientID := in.OIDCClientID
-		m.OIDCClientID = &clientID
+		OIDCClientID:    &clientID,
 	}
 	if audience != "" {
 		aud := audience
@@ -92,11 +109,16 @@ func NewMetadata(in AddInput) (Metadata, error) {
 	return m, nil
 }
 
-// NormalizeEndpoint defaults a missing scheme to https:// and validates the
+// EnsureScheme defaults a missing scheme to https:// and validates the
 // result parses as a URL with a non-empty host. Exported so internal/cli can
 // normalize an endpoint before an OIDC-discovery probe, using the exact same
 // rule NewMetadata applies when it normalizes again internally.
-func NormalizeEndpoint(endpoint string) (string, error) {
+//
+// Named EnsureScheme (not NormalizeEndpoint) to leave that name free for
+// Feature C's endpoint-matching normalization (default-port stripping,
+// lower-casing) — a different operation that happens to want the same
+// obvious name.
+func EnsureScheme(endpoint string) (string, error) {
 	if endpoint == "" {
 		return "", &InvalidEndpointError{Endpoint: endpoint, Cause: errors.New("empty endpoint")}
 	}
@@ -123,11 +145,31 @@ func defaultNameFromEndpoint(endpoint string) string {
 	return u.Hostname()
 }
 
+// existsInUserTree reports whether name has a metadata.json in the user tree
+// specifically (not the system tree) — the write-side existence check.
+// Unlike Exists/Load (which walk user-then-system for reads, since the user
+// entry is documented to shadow the system entry), a write must only be
+// blocked by a conflicting entry it would actually collide with: the user
+// tree is the only tree OSWriter ever writes to, so a name that exists only
+// in the system tree is a legitimate shadow registration, not a conflict.
+func existsInUserTree(env Env, name string) (bool, error) {
+	if err := ValidateGatewayName(name); err != nil {
+		return false, err
+	}
+	if env.UserFS == nil {
+		return false, nil
+	}
+	_, present, err := readMetadataFile(env.UserFS, name)
+	if err != nil {
+		return false, err
+	}
+	return present, nil
+}
+
 // Exists reports whether a gateway named name is already registered (user or
 // system tree). Unlike Load, a "not found" result is not an error — any other
 // error (an invalid name, or a present-but-unparseable metadata.json) is
-// propagated so WriteGateway's caller sees the real problem rather than a
-// false "doesn't exist".
+// propagated.
 func Exists(env Env, name string) (bool, error) {
 	_, err := Load(env, name)
 	if err == nil {
@@ -139,27 +181,33 @@ func Exists(env Env, name string) (bool, error) {
 	return false, err
 }
 
-// WriteGateway writes m as gateways/<name>/metadata.json via w (0600, 0700
+// WriteGateway writes m as gateways/<m.Name>/metadata.json via w (0600, 0700
 // parent dir, atomic temp+rename — all already provided by the real Writer
 // implementation, OSWriter; WriteGateway itself adds no new I/O primitive, it
-// just drives the existing one correctly). Fails with GatewayExistsError if
-// name is already registered — callers must not overwrite a gateway by
-// accident; pass through gateway remove first to re-register under the same
-// name.
-func WriteGateway(w Writer, env Env, name string, m Metadata) error {
-	if err := ValidateGatewayName(name); err != nil {
+// just drives the existing one correctly).
+//
+// Fails with GatewayExistsError if m.Name is already registered **in the
+// user tree** — a name that exists only in the system tree is a legitimate
+// shadow registration, not a conflict (see existsInUserTree). Pass force to
+// skip this check entirely and overwrite — the explicit re-registration path
+// (gateway add --force), as opposed to the default refusal to clobber a name
+// by accident.
+func WriteGateway(w Writer, env Env, m Metadata, force bool) error {
+	if err := ValidateGatewayName(m.Name); err != nil {
 		return err
 	}
-	exists, err := Exists(env, name)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return &GatewayExistsError{Name: name}
+	if !force {
+		exists, err := existsInUserTree(env, m.Name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return &GatewayExistsError{Name: m.Name}
+		}
 	}
 	data, err := m.Marshal()
 	if err != nil {
 		return err
 	}
-	return w.WriteFile(GatewayDir(name)+"/metadata.json", data, 0o600)
+	return w.WriteFile(GatewayDir(m.Name)+"/metadata.json", data, 0o600)
 }

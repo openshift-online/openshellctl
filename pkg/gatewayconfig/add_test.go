@@ -2,6 +2,7 @@ package gatewayconfig
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -168,5 +169,53 @@ func TestNewMetadata_ScopesSet(t *testing.T) {
 	}
 	if m.OIDCScopes == nil || *m.OIDCScopes != "openid profile" {
 		t.Errorf("OIDCScopes = %v", m.OIDCScopes)
+	}
+}
+
+// TestNewMetadata_ClientIDDefaultedWhenEmpty confirms metadata.json always
+// carries an explicit oidc_client_id (matching Metadata.OIDCClientIDOrDefault's
+// "openshell-cli" default) rather than omitting the field when --oidc-client-id
+// wasn't given — so the written registration is self-describing, and a caller
+// reading it back doesn't need to separately know the default.
+func TestNewMetadata_ClientIDDefaultedWhenEmpty(t *testing.T) {
+	m, err := NewMetadata(AddInput{Endpoint: "https://gw.example.com", OIDCIssuer: "https://issuer"})
+	if err != nil {
+		t.Fatalf("NewMetadata: %v", err)
+	}
+	if m.OIDCClientID == nil || *m.OIDCClientID != "openshell-cli" {
+		t.Errorf("OIDCClientID = %v, want the defaulted \"openshell-cli\"", m.OIDCClientID)
+	}
+}
+
+// TestNewMetadata_RejectsNonHTTPSEndpoint confirms NewMetadata refuses to
+// register an OIDC gateway over a non-https endpoint: pkg/gateway's Dial
+// rejects a plaintext (http://) endpoint carrying bearer auth with
+// ErrPlaintextWithAuth, so writing auth_mode: oidc for one would produce an
+// undialable registration.
+func TestNewMetadata_RejectsNonHTTPSEndpoint(t *testing.T) {
+	_, err := NewMetadata(AddInput{Endpoint: "http://gw.example.com", OIDCIssuer: "https://issuer"})
+	var invalid *InvalidEndpointError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("err = %v, want InvalidEndpointError for a non-https endpoint", err)
+	}
+}
+
+// TestNewMetadata_EdgeGatewayUnsupported_CarriesDiscoveryCause confirms a
+// discovery-probe error (DNS failure, timeout, TLS error — anything other
+// than a clean "not OIDC" signal) is surfaced in EdgeGatewayUnsupportedError
+// rather than collapsed into the same generic message a real 404 gets, so a
+// typo'd hostname doesn't get told "this looks like a non-OIDC gateway."
+func TestNewMetadata_EdgeGatewayUnsupported_CarriesDiscoveryCause(t *testing.T) {
+	cause := errors.New("dial tcp: lookup gw.example.com: no such host")
+	_, err := NewMetadata(AddInput{Endpoint: "https://gw.example.com", DiscoveryErr: cause})
+	var edge *EdgeGatewayUnsupportedError
+	if !errors.As(err, &edge) {
+		t.Fatalf("err = %v, want EdgeGatewayUnsupportedError", err)
+	}
+	if edge.Cause != cause {
+		t.Errorf("Cause = %v, want the discovery error threaded through", edge.Cause)
+	}
+	if !strings.Contains(err.Error(), "no such host") {
+		t.Errorf("message should include the discovery cause, got: %v", err)
 	}
 }
