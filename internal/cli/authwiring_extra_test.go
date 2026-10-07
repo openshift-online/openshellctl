@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -115,6 +116,54 @@ func TestTokenWriterFor_NilForEndpointOnly(t *testing.T) {
 	}
 	if w != nil {
 		t.Error("endpoint-only target should yield no writer")
+	}
+}
+
+// TestRequireTokenWriter_EndpointOnly_UsageError confirms requireTokenWriter
+// returns a typed usage error (naming `gateway add`) instead of
+// tokenWriterFor's silent (nil, nil) — the fix for --write's swallowed
+// warning-then-exit-0 bug.
+func TestRequireTokenWriter_EndpointOnly_UsageError(t *testing.T) {
+	_, err := requireTokenWriter(&gatewayconfig.Target{Name: "", Endpoint: "https://x"})
+	var usage *UsageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("err = %v, want UsageError", err)
+	}
+	if !strings.Contains(err.Error(), "gateway add") {
+		t.Errorf("error should name `gateway add`, got: %v", err)
+	}
+}
+
+// TestRequireTokenWriter_NilTarget_UsageError confirms a nil target (no
+// gateway resolved at all) is treated the same way.
+func TestRequireTokenWriter_NilTarget_UsageError(t *testing.T) {
+	_, err := requireTokenWriter(nil)
+	var usage *UsageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("err = %v, want UsageError", err)
+	}
+}
+
+// TestRequireTokenWriter_NamedResolvedGateway_Succeeds confirms a real,
+// registered gateway still gets a working writer (requireTokenWriter is not
+// stricter than tokenWriterFor in the success case, only in the failure
+// case).
+func TestRequireTokenWriter_NamedResolvedGateway_Succeeds(t *testing.T) {
+	root := t.TempDir()
+	target := &gatewayconfig.Target{
+		Name:     "rosa",
+		Endpoint: "https://gw",
+		Resolved: &gatewayconfig.Resolved{Name: "rosa"},
+	}
+	_ = root // the real writer construction uses gatewayconfig.NewOSWriter() (HOME/XDG), not root directly
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	w, err := requireTokenWriter(target)
+	if err != nil {
+		t.Fatalf("requireTokenWriter: %v", err)
+	}
+	if w == nil {
+		t.Error("expected a non-nil writer for a named, resolved gateway")
 	}
 }
 

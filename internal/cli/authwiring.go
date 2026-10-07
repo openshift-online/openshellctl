@@ -65,6 +65,25 @@ func tokenWriterFor(target *gatewayconfig.Target) (auth.Writer, error) {
 	return authWriterAdapter{w: w, gatewayName: target.Name}, nil
 }
 
+// requireTokenWriter is tokenWriterFor, but returns a typed usage error
+// instead of a silent (nil, nil) when there's no named, registered gateway
+// to write to. Callers where --write (or similar) is an explicit request to
+// persist something must use this, not tokenWriterFor directly — silently
+// no-op'ing an explicit --write and still exiting 0 is exactly the
+// swallowed-warning bug this exists to close.
+func requireTokenWriter(target *gatewayconfig.Target) (auth.Writer, error) {
+	w, err := tokenWriterFor(target)
+	if err != nil {
+		return nil, err
+	}
+	if w == nil {
+		return nil, &UsageError{Err: fmt.Errorf(
+			"--write requires a named, registered gateway; register one first: " +
+				"openshellctl gateway add <endpoint> --name <name>")}
+	}
+	return w, nil
+}
+
 // oidcConfigFetcher fetches {issuer, audience} from GET <endpoint>/auth/oidc-config.
 // Uses http.DefaultTransport (no Transport override of its own), so it
 // automatically honors --gateway-insecure once applyGatewayInsecureTransport
