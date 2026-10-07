@@ -117,6 +117,7 @@ func exitCodeFor(err error) int {
 		errors.Is(err, gatewayconfig.ErrEdgeGatewayUnsupported) ||
 		errors.Is(err, gatewayconfig.ErrMTLSUnsupported) ||
 		errors.Is(err, gatewayconfig.ErrInvalidEndpoint) ||
+		errors.Is(err, auth.ErrNotJWT) ||
 		errors.As(err, &metadataParse) || errors.As(err, &unsupportedAuthMode) {
 		return ExitUsage
 	}

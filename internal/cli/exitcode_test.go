@@ -60,6 +60,7 @@ func TestExitCodeFor(t *testing.T) {
 		{"no credentials (sentinel) → auth", auth.ErrNoCredentials, ExitAuth},
 		{"nothing to refresh → auth", &auth.ErrNothingToRefresh{}, ExitAuth},
 		{"wrapped nothing to refresh → auth", errWrap(&auth.ErrNothingToRefresh{}), ExitAuth},
+		{"not a jwt (sentinel) → usage", auth.ErrNotJWT, ExitUsage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

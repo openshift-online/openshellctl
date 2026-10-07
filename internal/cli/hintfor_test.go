@@ -35,9 +35,21 @@ func TestHintFor(t *testing.T) {
 		// nothing-to-refresh carries its own complete explanation already.
 		{"nothing to refresh -> no hint", &auth.ErrNothingToRefresh{}, true, ""},
 
-		// Unrelated error types get no hint.
+		// Every other exported error type in pkg/auth and pkg/gateway gets no
+		// hint (per the ticket's acceptance criterion: a test row for every
+		// exported error type in both packages).
 		{"bundle invalid -> no hint", &auth.ErrBundleInvalid{Reason: "x"}, true, ""},
+		{"mtls material missing -> no hint", &auth.ErrMTLSMaterialMissing{Gateway: "x"}, true, ""},
+		{"unsupported auth mode -> no hint", &auth.ErrUnsupportedAuthMode{Mode: "x"}, true, ""},
+		{"no expiry -> no hint", auth.ErrNoExpiry, true, ""},
+		{"not a jwt -> no hint", auth.ErrNotJWT, true, ""},
 		{"not found -> no hint", &gateway.NotFoundError{Name: "x"}, true, ""},
+		{"already exists -> no hint", &gateway.AlreadyExistsError{Name: "x"}, true, ""},
+		{"conflict -> no hint", &gateway.ConflictError{Message: "x"}, true, ""},
+		{"invalid argument -> no hint", &gateway.InvalidArgumentError{Message: "x"}, true, ""},
+		{"unavailable -> no hint", &gateway.UnavailableError{Message: "x"}, true, ""},
+		{"deadline exceeded -> no hint", &gateway.DeadlineError{}, true, ""},
+		{"rpc error (catch-all) -> no hint", &gateway.RPCError{Message: "x"}, true, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
