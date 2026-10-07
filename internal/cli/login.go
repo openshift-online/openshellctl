@@ -17,32 +17,37 @@ func newLoginCommand() *cobra.Command {
 		Short: "Log in to a gateway via OIDC browser flow",
 		Long:  "Open a browser for OIDC authentication and persist the token to disk.",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			env, err := gatewayconfig.NewOSEnv()
-			if err != nil {
-				return err
-			}
-
-			name := viper.GetString("gateway")
-			endpoint := viper.GetString("gateway-endpoint")
-
-			target, err := gatewayconfig.Resolve(env, gatewayconfig.ResolveInput{
-				Endpoint: endpoint,
-				Name:     name,
-			})
-			if err != nil {
-				return err
-			}
-
-			if target.Name == "" {
-				return &UsageError{Err: fmt.Errorf("no gateway specified; use -g <name> or set OPENSHELL_GATEWAY")}
-			}
-
-			cmd.PrintErrln("Opening browser for OIDC authentication...")
-			return loginAndReport(cmd, target)
-		},
+		RunE:  runLogin,
 	}
 	return c
+}
+
+// runLogin is newLoginCommand's RunE body, factored out so gateway login
+// (internal/cli/gateway.go) can share it — a *cobra.Command can't be added to
+// two parents, so the two commands are separate instances with the same RunE.
+func runLogin(cmd *cobra.Command, _ []string) error {
+	env, err := gatewayconfig.NewOSEnv()
+	if err != nil {
+		return err
+	}
+
+	name := viper.GetString("gateway")
+	endpoint := viper.GetString("gateway-endpoint")
+
+	target, err := gatewayconfig.Resolve(env, gatewayconfig.ResolveInput{
+		Endpoint: endpoint,
+		Name:     name,
+	})
+	if err != nil {
+		return err
+	}
+
+	if target.Name == "" {
+		return &UsageError{Err: fmt.Errorf("no gateway specified; use -g <name> or set OPENSHELL_GATEWAY")}
+	}
+
+	cmd.PrintErrln("Opening browser for OIDC authentication...")
+	return loginAndReport(cmd, target)
 }
 
 // loginAndReport runs the OIDC browser login flow for the resolved gateway and

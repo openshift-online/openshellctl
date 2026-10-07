@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/viper"
+
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 )
 
@@ -38,6 +40,56 @@ func TestOIDCConfigFetcher_Non200(t *testing.T) {
 	defer srv.Close()
 	if _, _, err := oidcConfigFetcher(context.Background(), srv.URL); err == nil {
 		t.Error("expected an error for non-200")
+	}
+}
+
+// TestOIDCConfigFetcher_UntrustedCertFailsByDefault confirms the discovery
+// probe performs real TLS verification by default — a self-signed/
+// internal-CA cert (common for staging gateways) is rejected, just like any
+// other HTTPS client, unless --gateway-insecure opts out of it.
+func TestOIDCConfigFetcher_UntrustedCertFailsByDefault(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"issuer":"https://issuer","audience":"openshell-cli"}`))
+	}))
+	defer srv.Close()
+
+	_, _, err := oidcConfigFetcher(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("expected a certificate verification error against an untrusted self-signed cert")
+	}
+	if !strings.Contains(err.Error(), "certificate") && !strings.Contains(err.Error(), "x509") {
+		t.Errorf("expected a certificate-verification error, got: %v", err)
+	}
+}
+
+// TestOIDCConfigFetcher_GatewayInsecureSkipsVerification confirms
+// oidcConfigFetcher inherits the global --gateway-insecure transport
+// override (applyGatewayInsecureTransport, root.go) rather than keeping its
+// own separate per-call override — one place decides "skip verification,"
+// not two that could drift (the SDK's own OIDC HTTP client needs the global
+// override regardless, since it has no per-call injection point at all; see
+// root.go's applyGatewayInsecureTransport doc comment).
+func TestOIDCConfigFetcher_GatewayInsecureSkipsVerification(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"issuer":"https://issuer","audience":"openshell-cli"}`))
+	}))
+	defer srv.Close()
+
+	viper.Set("gateway-insecure", true)
+	applyGatewayInsecureTransport()
+	iss, aud, err := oidcConfigFetcher(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("fetch with --gateway-insecure: %v", err)
+	}
+	if iss != "https://issuer" || aud != "openshell-cli" {
+		t.Errorf("got issuer=%q audience=%q", iss, aud)
 	}
 }
 

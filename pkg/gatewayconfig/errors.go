@@ -8,11 +8,15 @@ import (
 // Sentinels for errors.Is matching. The concrete error types below carry
 // context (the offending name, the parse cause) and match these via Is.
 var (
-	ErrInvalidGatewayName = errors.New("invalid gateway name")
-	ErrGatewayNotFound    = errors.New("gateway not found")
-	ErrNoActiveGateway    = errors.New("no active gateway")
-	ErrUnknownGateway     = errors.New("unknown gateway")
-	ErrMetadataParse      = errors.New("metadata parse error")
+	ErrInvalidGatewayName     = errors.New("invalid gateway name")
+	ErrGatewayNotFound        = errors.New("gateway not found")
+	ErrNoActiveGateway        = errors.New("no active gateway")
+	ErrUnknownGateway         = errors.New("unknown gateway")
+	ErrMetadataParse          = errors.New("metadata parse error")
+	ErrGatewayExists          = errors.New("gateway already exists")
+	ErrEdgeGatewayUnsupported = errors.New("edge gateway registration unsupported")
+	ErrMTLSUnsupported        = errors.New("mTLS gateway registration unsupported")
+	ErrInvalidEndpoint        = errors.New("invalid gateway endpoint")
 )
 
 // InvalidGatewayNameError reports a name that is not a single path component.
@@ -79,3 +83,78 @@ func (e *MetadataParseError) Is(target error) bool { return target == ErrMetadat
 
 // Unwrap returns the underlying JSON decode error.
 func (e *MetadataParseError) Unwrap() error { return e.Cause }
+
+// GatewayExistsError reports that WriteGateway was asked to create a gateway
+// that already has a metadata.json.
+type GatewayExistsError struct{ Name string }
+
+func (e *GatewayExistsError) Error() string {
+	return fmt.Sprintf("gateway %q already exists", e.Name)
+}
+
+// Is matches the ErrGatewayExists sentinel.
+func (e *GatewayExistsError) Is(target error) bool { return target == ErrGatewayExists }
+
+// EdgeGatewayUnsupportedError reports that NewMetadata could not determine an
+// OIDC issuer for the endpoint (no --oidc-issuer override and no successful
+// /auth/oidc-config discovery) — i.e. the gateway doesn't look OIDC-configured.
+// openshellctl's `gateway add` only supports registering OIDC gateways.
+//
+// Cause, when non-nil, is the discovery probe's own error — a DNS failure,
+// TLS error, or timeout, as opposed to a clean non-200 response. Threading it
+// through means a typo'd hostname is told what actually went wrong, instead
+// of getting the same "pass --oidc-issuer" remediation a real non-OIDC
+// gateway gets.
+type EdgeGatewayUnsupportedError struct {
+	Endpoint string
+	Cause    error
+}
+
+func (e *EdgeGatewayUnsupportedError) Error() string {
+	msg := fmt.Sprintf(
+		"gateway at %q does not appear to be OIDC-configured (no --oidc-issuer given and "+
+			"/auth/oidc-config discovery did not succeed); non-OIDC (edge) gateway registration "+
+			"is not supported — pass --oidc-issuer explicitly if this gateway is OIDC-configured",
+		e.Endpoint)
+	if e.Cause != nil {
+		msg += fmt.Sprintf("; discovery failed: %v", e.Cause)
+	}
+	return msg
+}
+
+// Is matches the ErrEdgeGatewayUnsupported sentinel.
+func (e *EdgeGatewayUnsupportedError) Is(target error) bool {
+	return target == ErrEdgeGatewayUnsupported
+}
+
+// Unwrap returns the discovery probe's own error, if any.
+func (e *EdgeGatewayUnsupportedError) Unwrap() error { return e.Cause }
+
+// MTLSUnsupportedError reports that mTLS gateway registration was requested.
+// Out of scope for this epic (ROSAENG-68825) — openshellctl's `gateway add`
+// only registers OIDC gateways.
+type MTLSUnsupportedError struct{}
+
+func (e *MTLSUnsupportedError) Error() string {
+	return "mTLS gateway registration is not supported by `gateway add`"
+}
+
+// Is matches the ErrMTLSUnsupported sentinel.
+func (e *MTLSUnsupportedError) Is(target error) bool { return target == ErrMTLSUnsupported }
+
+// InvalidEndpointError reports a gateway endpoint that could not be parsed as
+// a URL (after scheme defaulting), or was empty.
+type InvalidEndpointError struct {
+	Endpoint string
+	Cause    error
+}
+
+func (e *InvalidEndpointError) Error() string {
+	return fmt.Sprintf("invalid gateway endpoint %q: %v", e.Endpoint, e.Cause)
+}
+
+// Is matches the ErrInvalidEndpoint sentinel.
+func (e *InvalidEndpointError) Is(target error) bool { return target == ErrInvalidEndpoint }
+
+// Unwrap returns the underlying URL parse error, if any.
+func (e *InvalidEndpointError) Unwrap() error { return e.Cause }

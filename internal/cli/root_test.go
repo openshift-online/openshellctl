@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -59,5 +60,67 @@ func TestFlagParseErrorIsUsage(t *testing.T) {
 	}
 	if got := exitCodeFor(err); got != ExitUsage {
 		t.Errorf("unknown flag exit code = %d, want %d (usage)", got, ExitUsage)
+	}
+}
+
+// TestGatewayInsecureFlag_OverridesDefaultTransport confirms --gateway-insecure
+// swaps http.DefaultTransport to one that skips TLS verification. This is the
+// only lever available to make the OpenShell SDK's internal OIDC
+// discovery/token HTTP client (an unexported package-level *http.Client with
+// no Transport override, hence http.DefaultTransport) respect the flag — the
+// SDK exposes no option to inject a custom client or skip verification.
+func TestGatewayInsecureFlag_OverridesDefaultTransport(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+
+	root := NewRootCommand()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root.SetArgs([]string{"--gateway-insecure", "version"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	tr, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("DefaultTransport = %T, want *http.Transport", http.DefaultTransport)
+	}
+	if tr.TLSClientConfig == nil || !tr.TLSClientConfig.InsecureSkipVerify {
+		t.Error("expected InsecureSkipVerify to be true after --gateway-insecure")
+	}
+	// The replacement must be a clone of the real default transport, not a
+	// bare &http.Transport{} — a bare one silently drops proxy support
+	// (HTTPS_PROXY/NO_PROXY), dial/handshake timeouts, keepalives, and
+	// HTTP/2, which would regress every HTTP call in the process the moment
+	// --gateway-insecure is set, not just the TLS verification it's meant to
+	// relax.
+	if tr.Proxy == nil {
+		t.Error("expected the replacement transport to keep Proxy (http.ProxyFromEnvironment), got nil")
+	}
+	if tr.DialContext == nil {
+		t.Error("expected the replacement transport to keep DialContext (dial timeouts), got nil")
+	}
+}
+
+// TestGatewayInsecureFlag_NotSetLeavesTransportAlone confirms the common case
+// (no --gateway-insecure) never touches the global transport.
+func TestGatewayInsecureFlag_NotSetLeavesTransportAlone(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+
+	root := NewRootCommand()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root.SetArgs([]string{"version"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if http.DefaultTransport != original {
+		t.Error("DefaultTransport should be untouched when --gateway-insecure is not set")
 	}
 }

@@ -4,8 +4,10 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -43,6 +45,7 @@ type persistentFlags struct {
 	oidcScopes       string
 	tokenLeeway      string
 	writeToken       bool
+	noBrowser        bool
 }
 
 // NewRootCommand builds the full command tree. It is exported so tests (parity,
@@ -67,6 +70,12 @@ func NewRootCommand() *cobra.Command {
 	registerPersistentFlags(root, pf)
 	bindViper(root)
 
+	// Runs once, after flags are parsed but before any subcommand's RunE.
+	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+		applyGatewayInsecureTransport()
+		return nil
+	}
+
 	root.AddCommand(
 		newSandboxCommand(),
 		newLogsCommand(),
@@ -75,6 +84,7 @@ func NewRootCommand() *cobra.Command {
 		newVersionCommand(),
 		newWhoamiCommand(),
 		newLoginCommand(),
+		newGatewayCommand(),
 	)
 
 	return root
@@ -98,6 +108,7 @@ func registerPersistentFlags(root *cobra.Command, pf *persistentFlags) {
 	f.StringVar(&pf.oidcScopes, "oidc-scopes", "", "OIDC scopes override (space-separated)")
 	f.StringVar(&pf.tokenLeeway, "token-leeway", "30s", "token expiry leeway")
 	f.BoolVar(&pf.writeToken, "write-token", false, "write refreshed tokens back to disk (Rust CLI schema)")
+	f.BoolVar(&pf.noBrowser, "no-browser", false, "skip browser login when no client secret is available, e.g. for service accounts (env OPENSHELL_NO_BROWSER)")
 }
 
 // bindViper wires the OPENSHELL_* environment prefix and flag binding, per §5.9.
@@ -107,6 +118,49 @@ func bindViper(root *cobra.Command) {
 	viper.SetEnvKeyReplacer(envKeyReplacer())
 	// Persistent flags are bound to viper so env vars back them.
 	_ = viper.BindPFlags(root.PersistentFlags())
+}
+
+// applyGatewayInsecureTransport overrides the process-wide http.DefaultTransport
+// to skip TLS certificate verification when --gateway-insecure/
+// OPENSHELL_GATEWAY_INSECURE is set. This is a deliberately broad,
+// process-global side effect — there is no narrower lever available: the
+// OpenShell SDK's own OIDC discovery and token-endpoint HTTP calls
+// (github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/oidc, used by the
+// client-credentials exchange and the browser login flow) go through an
+// unexported package-level *http.Client with no Transport override of its
+// own — meaning it falls back to http.DefaultTransport — and the SDK exposes
+// no LoginOption to inject a custom client or skip verification (an upstream
+// WithHTTPClient option would remove the need for this entirely). Without
+// this, --gateway-insecure would cover the real gRPC dial (pkg/gateway/
+// dial.go) and openshellctl's own /auth/oidc-config discovery probe
+// (oidcConfigFetcher, authwiring.go) but not the SDK's own issuer discovery,
+// which is exactly the gap a staging/internal-CA OIDC issuer hits. Matches
+// upstream's own gateway_insecure handling, which applies to its OIDC HTTP
+// client too (oidc_auth.rs: danger_accept_invalid_certs) — parity, not an
+// extension.
+//
+// Clones the real default transport rather than replacing it with a bare
+// &http.Transport{}: a bare one silently drops proxy support (HTTPS_PROXY/
+// NO_PROXY), dial/handshake timeouts, keepalives, and HTTP/2 — a regression
+// that would hit every HTTP call in the process, not just the TLS
+// verification this is meant to relax. The user has already explicitly
+// opted into "skip TLS verification" via the flag, accepting that scope;
+// this is a no-op when the flag is unset.
+func applyGatewayInsecureTransport() {
+	if !viper.GetBool("gateway-insecure") {
+		return
+	}
+	var tr *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = base.Clone()
+	} else {
+		tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{}
+	}
+	tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // explicit opt-in via --gateway-insecure
+	http.DefaultTransport = tr
 }
 
 // Execute builds and runs the root command, returning a process exit code.

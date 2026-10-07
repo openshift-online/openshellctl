@@ -96,10 +96,18 @@ func exitCodeFor(err error) int {
 		return ExitUsage
 	}
 
+	// gatewayconfig usage errors → 2 (bad input to gateway add/select/remove).
+	if errors.Is(err, gatewayconfig.ErrInvalidGatewayName) ||
+		errors.Is(err, gatewayconfig.ErrEdgeGatewayUnsupported) ||
+		errors.Is(err, gatewayconfig.ErrMTLSUnsupported) ||
+		errors.Is(err, gatewayconfig.ErrInvalidEndpoint) {
+		return ExitUsage
+	}
+
 	// Conflict / already-exists → 5.
 	var gwExists *gateway.AlreadyExistsError
 	var gwConflict *gateway.ConflictError
-	if errors.As(err, &gwExists) || errors.As(err, &gwConflict) {
+	if errors.As(err, &gwExists) || errors.As(err, &gwConflict) || errors.Is(err, gatewayconfig.ErrGatewayExists) {
 		return ExitConflict
 	}
 

@@ -1,6 +1,7 @@
 package gatewayconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
 )
@@ -22,8 +23,9 @@ const (
 
 // Metadata mirrors GatewayMetadata (metadata.rs:14-74). Unknown fields are
 // ignored on read. The four leading fields are always emitted; Option fields
-// use omitempty. openshellctl never writes metadata.json in v1 (read-only), but
-// the tags are kept faithful for round-trips.
+// use omitempty. Marshal reproduces the same byte-for-byte shape the upstream
+// Rust CLI (and the rosa-agent CronJobs' heredoc) write, so gateway add's
+// output is indistinguishable from an upstream-written metadata.json.
 type Metadata struct {
 	Name             string   `json:"name"`
 	GatewayEndpoint  string   `json:"gateway_endpoint"`
@@ -39,6 +41,24 @@ type Metadata struct {
 	OIDCAudience     *string  `json:"oidc_audience,omitempty"`
 	OIDCScopes       *string  `json:"oidc_scopes,omitempty"`
 	VMDriverStateDir *string  `json:"vm_driver_state_dir,omitempty"`
+}
+
+// Marshal encodes m as serde_json::to_string_pretty would: 2-space indent,
+// struct-field order = JSON key order, no HTML escaping, no trailing newline.
+// Mirrors auth.DiskBundle.Marshal's exact idiom (pkg/auth/diskbundle.go).
+func (m Metadata) Marshal() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(m); err != nil {
+		return nil, err
+	}
+	out := buf.Bytes()
+	if n := len(out); n > 0 && out[n-1] == '\n' {
+		out = out[:n-1]
+	}
+	return out, nil
 }
 
 // metadataAliases captures the serde read-aliases upstream accepts

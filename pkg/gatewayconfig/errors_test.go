@@ -39,6 +39,41 @@ func TestErrorMessages(t *testing.T) {
 	if mp.Unwrap() == nil {
 		t.Error("MetadataParseError should unwrap")
 	}
+
+	ge := &GatewayExistsError{Name: "dup"}
+	if !strings.Contains(ge.Error(), "dup") {
+		t.Errorf("GatewayExistsError = %q", ge.Error())
+	}
+	if !errors.Is(ge, ErrGatewayExists) {
+		t.Error("GatewayExistsError should match ErrGatewayExists")
+	}
+
+	edge := &EdgeGatewayUnsupportedError{Endpoint: "https://edge.example.com"}
+	if !strings.Contains(edge.Error(), "https://edge.example.com") || !strings.Contains(edge.Error(), "--oidc-issuer") {
+		t.Errorf("EdgeGatewayUnsupportedError = %q", edge.Error())
+	}
+	if !errors.Is(edge, ErrEdgeGatewayUnsupported) {
+		t.Error("EdgeGatewayUnsupportedError should match ErrEdgeGatewayUnsupported")
+	}
+
+	mtls := &MTLSUnsupportedError{}
+	if !strings.Contains(mtls.Error(), "mTLS") {
+		t.Errorf("MTLSUnsupportedError = %q", mtls.Error())
+	}
+	if !errors.Is(mtls, ErrMTLSUnsupported) {
+		t.Error("MTLSUnsupportedError should match ErrMTLSUnsupported")
+	}
+
+	ie := &InvalidEndpointError{Endpoint: "bad", Cause: errors.New("boom")}
+	if !strings.Contains(ie.Error(), "bad") || !strings.Contains(ie.Error(), "boom") {
+		t.Errorf("InvalidEndpointError = %q", ie.Error())
+	}
+	if !errors.Is(ie, ErrInvalidEndpoint) {
+		t.Error("InvalidEndpointError should match ErrInvalidEndpoint")
+	}
+	if ie.Unwrap() == nil {
+		t.Error("InvalidEndpointError should unwrap")
+	}
 }
 
 func TestFindByEndpoint_ScansAllGateways(t *testing.T) {

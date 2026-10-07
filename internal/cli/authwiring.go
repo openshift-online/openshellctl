@@ -66,6 +66,12 @@ func tokenWriterFor(target *gatewayconfig.Target) (auth.Writer, error) {
 }
 
 // oidcConfigFetcher fetches {issuer, audience} from GET <endpoint>/auth/oidc-config.
+// Uses http.DefaultTransport (no Transport override of its own), so it
+// automatically honors --gateway-insecure once applyGatewayInsecureTransport
+// (root.go) has run — the same global override the SDK's own OIDC HTTP
+// client needs regardless, since it has no per-call injection point at all.
+// Keeping a single place that decides "skip verification" avoids this call
+// and the SDK's calls disagreeing about whether --gateway-insecure applies.
 func oidcConfigFetcher(ctx context.Context, endpoint string) (string, string, error) {
 	url := strings.TrimSuffix(endpoint, "/") + "/auth/oidc-config"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

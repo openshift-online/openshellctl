@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/openshift-online/openshellctl/pkg/gateway"
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
 )
 
@@ -35,6 +36,13 @@ func TestExitCodeFor(t *testing.T) {
 		{"provision timeout → provision", &sandbox.ErrProvisionTimeout{}, ExitProvision},
 		{"lifecycle error → provision", &sandbox.ErrLifecycle{Target: "Stopped"}, ExitProvision},
 		{"lifecycle timeout → provision", &sandbox.ErrLifecycleTimeout{Target: "Ready"}, ExitProvision},
+
+		// gatewayconfig typed errors (gateway add/list/select/remove/logout).
+		{"gateway exists → conflict", &gatewayconfig.GatewayExistsError{Name: "x"}, ExitConflict},
+		{"edge gateway unsupported → usage", &gatewayconfig.EdgeGatewayUnsupportedError{Endpoint: "https://x"}, ExitUsage},
+		{"mtls unsupported → usage", &gatewayconfig.MTLSUnsupportedError{}, ExitUsage},
+		{"invalid endpoint → usage", &gatewayconfig.InvalidEndpointError{Endpoint: "x", Cause: errors.New("bad")}, ExitUsage},
+		{"invalid gateway name → usage", &gatewayconfig.InvalidGatewayNameError{Name: "a/b"}, ExitUsage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
