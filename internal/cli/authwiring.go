@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,6 +67,12 @@ func tokenWriterFor(target *gatewayconfig.Target) (auth.Writer, error) {
 }
 
 // oidcConfigFetcher fetches {issuer, audience} from GET <endpoint>/auth/oidc-config.
+// Honors --gateway-insecure the same way the real gRPC dial does (see
+// pkg/gateway/dial.go's Insecure field): a staging/internal gateway whose
+// certificate isn't in the public trust store would otherwise make `gateway
+// add` discovery fail even when the gateway is perfectly reachable — and
+// since no gateway is registered yet at this point, there's no per-gateway
+// CA bundle (gatewayconfig's mtls/ca.crt) this call could use instead.
 func oidcConfigFetcher(ctx context.Context, endpoint string) (string, string, error) {
 	url := strings.TrimSuffix(endpoint, "/") + "/auth/oidc-config"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -73,6 +80,9 @@ func oidcConfigFetcher(ctx context.Context, endpoint string) (string, string, er
 		return "", "", err
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
+	if viper.GetBool("gateway-insecure") {
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // explicit opt-in via --gateway-insecure, mirroring pkg/gateway/dial.go
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", err
