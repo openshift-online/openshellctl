@@ -90,6 +90,18 @@ func TestGatewayInsecureFlag_OverridesDefaultTransport(t *testing.T) {
 	if tr.TLSClientConfig == nil || !tr.TLSClientConfig.InsecureSkipVerify {
 		t.Error("expected InsecureSkipVerify to be true after --gateway-insecure")
 	}
+	// The replacement must be a clone of the real default transport, not a
+	// bare &http.Transport{} — a bare one silently drops proxy support
+	// (HTTPS_PROXY/NO_PROXY), dial/handshake timeouts, keepalives, and
+	// HTTP/2, which would regress every HTTP call in the process the moment
+	// --gateway-insecure is set, not just the TLS verification it's meant to
+	// relax.
+	if tr.Proxy == nil {
+		t.Error("expected the replacement transport to keep Proxy (http.ProxyFromEnvironment), got nil")
+	}
+	if tr.DialContext == nil {
+		t.Error("expected the replacement transport to keep DialContext (dial timeouts), got nil")
+	}
 }
 
 // TestGatewayInsecureFlag_NotSetLeavesTransportAlone confirms the common case

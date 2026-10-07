@@ -129,21 +129,38 @@ func bindViper(root *cobra.Command) {
 // client-credentials exchange and the browser login flow) go through an
 // unexported package-level *http.Client with no Transport override of its
 // own — meaning it falls back to http.DefaultTransport — and the SDK exposes
-// no LoginOption to inject a custom client or skip verification. Without
+// no LoginOption to inject a custom client or skip verification (an upstream
+// WithHTTPClient option would remove the need for this entirely). Without
 // this, --gateway-insecure would cover the real gRPC dial (pkg/gateway/
 // dial.go) and openshellctl's own /auth/oidc-config discovery probe
 // (oidcConfigFetcher, authwiring.go) but not the SDK's own issuer discovery,
-// which is exactly the gap a staging/internal-CA OIDC issuer hits.
+// which is exactly the gap a staging/internal-CA OIDC issuer hits. Matches
+// upstream's own gateway_insecure handling, which applies to its OIDC HTTP
+// client too (oidc_auth.rs: danger_accept_invalid_certs) — parity, not an
+// extension.
 //
-// The user has already explicitly opted into "skip TLS verification" via the
-// flag, accepting that scope; this is a no-op when the flag is unset.
+// Clones the real default transport rather than replacing it with a bare
+// &http.Transport{}: a bare one silently drops proxy support (HTTPS_PROXY/
+// NO_PROXY), dial/handshake timeouts, keepalives, and HTTP/2 — a regression
+// that would hit every HTTP call in the process, not just the TLS
+// verification this is meant to relax. The user has already explicitly
+// opted into "skip TLS verification" via the flag, accepting that scope;
+// this is a no-op when the flag is unset.
 func applyGatewayInsecureTransport() {
 	if !viper.GetBool("gateway-insecure") {
 		return
 	}
-	http.DefaultTransport = &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // explicit opt-in via --gateway-insecure
+	var tr *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = base.Clone()
+	} else {
+		tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
 	}
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{}
+	}
+	tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // explicit opt-in via --gateway-insecure
+	http.DefaultTransport = tr
 }
 
 // Execute builds and runs the root command, returning a process exit code.

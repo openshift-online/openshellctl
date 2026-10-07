@@ -70,15 +70,26 @@ func TestOIDCConfigFetcher_UntrustedCertFailsByDefault(t *testing.T) {
 // without it, a gateway add against a self-signed/internal-CA staging
 // gateway can never succeed, since no gateway is registered yet at the
 // discovery step for a per-gateway CA bundle to apply.
+// TestOIDCConfigFetcher_GatewayInsecureSkipsVerification confirms
+// oidcConfigFetcher inherits the global --gateway-insecure transport
+// override (applyGatewayInsecureTransport, root.go) rather than keeping its
+// own separate per-call override — one place decides "skip verification,"
+// not two that could drift (the SDK's own OIDC HTTP client needs the global
+// override regardless, since it has no per-call injection point at all; see
+// root.go's applyGatewayInsecureTransport doc comment).
 func TestOIDCConfigFetcher_GatewayInsecureSkipsVerification(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"issuer":"https://issuer","audience":"openshell-cli"}`))
 	}))
 	defer srv.Close()
 
 	viper.Set("gateway-insecure", true)
+	applyGatewayInsecureTransport()
 	iss, aud, err := oidcConfigFetcher(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("fetch with --gateway-insecure: %v", err)

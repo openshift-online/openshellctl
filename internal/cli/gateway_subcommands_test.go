@@ -191,6 +191,26 @@ func TestGatewayLogout_NoActiveGateway(t *testing.T) {
 	}
 }
 
+// TestGatewayLogout_UnmatchedEndpointDoesNotFalselySucceed confirms logout
+// with a --gateway-endpoint that doesn't match any registered gateway fails
+// with a clear not-found error, rather than silently "succeeding": without
+// the Load check in newGatewayLogoutCommand, gatewayconfig.Resolve's
+// endpoint-only fallback sets target.Name to the raw endpoint string when no
+// registered gateway matches it, and — for an endpoint value that happens to
+// also be a valid single path component (no slash) — Logout's underlying
+// Writer.Remove on a never-written path is a silent no-op, reporting success
+// for a gateway that was never registered.
+func TestGatewayLogout_UnmatchedEndpointDoesNotFalselySucceed(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_, err := runCmd(t, "gateway", "logout", "--gateway-endpoint", "never-registered-host")
+	if err == nil {
+		t.Fatal("expected an error logging out of an endpoint that matches no registered gateway")
+	}
+	if exitCodeFor(err) != ExitNotFound {
+		t.Errorf("exit = %d, want not-found, got err: %v", exitCodeFor(err), err)
+	}
+}
+
 func TestGatewayLogin_RequiresGateway(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	_, err := runCmd(t, "gateway", "login")
