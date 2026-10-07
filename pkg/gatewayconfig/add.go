@@ -120,3 +120,44 @@ func defaultNameFromEndpoint(endpoint string) string {
 	}
 	return u.Hostname()
 }
+
+// Exists reports whether a gateway named name is already registered (user or
+// system tree). Unlike Load, a "not found" result is not an error — any other
+// error (an invalid name, or a present-but-unparseable metadata.json) is
+// propagated so WriteGateway's caller sees the real problem rather than a
+// false "doesn't exist".
+func Exists(env Env, name string) (bool, error) {
+	_, err := Load(env, name)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, ErrGatewayNotFound) {
+		return false, nil
+	}
+	return false, err
+}
+
+// WriteGateway writes m as gateways/<name>/metadata.json via w (0600, 0700
+// parent dir, atomic temp+rename — all already provided by the real Writer
+// implementation, OSWriter; WriteGateway itself adds no new I/O primitive, it
+// just drives the existing one correctly). Fails with GatewayExistsError if
+// name is already registered — callers must not overwrite a gateway by
+// accident; pass through gateway remove first to re-register under the same
+// name.
+func WriteGateway(w Writer, env Env, name string, m Metadata) error {
+	if err := ValidateGatewayName(name); err != nil {
+		return err
+	}
+	exists, err := Exists(env, name)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return &GatewayExistsError{Name: name}
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		return err
+	}
+	return w.WriteFile(GatewayDir(name)+"/metadata.json", data, 0o600)
+}
