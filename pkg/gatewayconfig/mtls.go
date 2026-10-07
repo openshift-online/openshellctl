@@ -25,21 +25,29 @@ func (m TLSMaterial) HasClientCert() bool {
 
 // TLSMaterialFor resolves the mtls/ file paths for a resolved gateway. Paths are
 // relative to the gateway sub-FS (r.FS). Present is true iff ca.crt exists.
+// CertFile/KeyFile are only set when both exist (full client-cert triple);
+// ca.crt alone means "verify server with this CA" (no client cert).
 func TLSMaterialFor(r *Resolved) TLSMaterial {
 	var m TLSMaterial
 	if r == nil || r.FS == nil {
 		return m
 	}
-	m.CAFile = "mtls/ca.crt"
-	m.CertFile = "mtls/tls.crt"
-	m.KeyFile = "mtls/tls.key"
-	m.caExists = fileExists(r.FS, m.CAFile)
-	m.certExists = fileExists(r.FS, m.CertFile)
-	m.keyExists = fileExists(r.FS, m.KeyFile)
-	m.Present = m.caExists
-	if !m.Present {
-		// No CA present: report no material at all (system roots case).
+	const (
+		caPath   = "mtls/ca.crt"
+		certPath = "mtls/tls.crt"
+		keyPath  = "mtls/tls.key"
+	)
+	m.caExists = fileExists(r.FS, caPath)
+	if !m.caExists {
 		return TLSMaterial{}
+	}
+	m.CAFile = caPath
+	m.Present = true
+	m.certExists = fileExists(r.FS, certPath)
+	m.keyExists = fileExists(r.FS, keyPath)
+	if m.HasClientCert() {
+		m.CertFile = certPath
+		m.KeyFile = keyPath
 	}
 	return m
 }
