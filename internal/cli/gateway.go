@@ -312,6 +312,16 @@ func rollbackFailedAdd(w gatewayconfig.Writer, failedName, previousActive string
 	}
 }
 
+// shouldRegisterOnly is the pure decision authenticateNewGateway's "no
+// client secret" branch makes: register the gateway and print a hint rather
+// than attempting the interactive browser login flow. Extracted as its own
+// function so it has a hermetic unit test (TestShouldRegisterOnly) — the
+// alternative, --no-browser=false, drives a real oidc.Login call (network +
+// a real browser launch), which must never run inside a test.
+func shouldRegisterOnly(hasSecret, noBrowser bool) bool {
+	return !hasSecret && noBrowser
+}
+
 // authenticateNewGateway attempts to authenticate the just-registered
 // gateway:
 //   - a client secret is configured: client-credentials exchange, printing
@@ -330,16 +340,6 @@ func rollbackFailedAdd(w gatewayconfig.Writer, failedName, previousActive string
 // dir) — NewOSEnv snapshots whether the user config dir exists at call time,
 // so reusing an Env obtained before the directory existed would see a nil
 // UserFS even after the write.
-// shouldRegisterOnly is the pure decision authenticateNewGateway's "no
-// client secret" branch makes: register the gateway and print a hint rather
-// than attempting the interactive browser login flow. Extracted as its own
-// function so it has a hermetic unit test (TestShouldRegisterOnly) — the
-// alternative, --no-browser=false, drives a real oidc.Login call (network +
-// a real browser launch), which must never run inside a test.
-func shouldRegisterOnly(hasSecret, noBrowser bool) bool {
-	return !hasSecret && noBrowser
-}
-
 func authenticateNewGateway(cmd *cobra.Command, name string) error {
 	env, err := gatewayconfig.NewOSEnv()
 	if err != nil {
