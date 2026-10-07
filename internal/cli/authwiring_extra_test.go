@@ -172,3 +172,26 @@ func TestUserAgent(t *testing.T) {
 		t.Errorf("user agent = %q", ua)
 	}
 }
+
+// TestWriteTokenFlag_EndpointOnlyTarget_UsageError confirms --write-token (the
+// persistent flag honored by every command that resolves auth via
+// resolveTokenSource, not just `token refresh --write`) now fails loudly
+// against an endpoint-only target instead of silently no-oping — the same
+// swallowed-warning shape this story fixed for `token refresh --write`,
+// caught by PR review on a different command surface. No real dial happens:
+// resolveTokenSource returns the usage error before auth.Resolve/dial are
+// ever reached.
+func TestWriteTokenFlag_EndpointOnlyTarget_UsageError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_, err := runCmd(t, "sandbox", "list", "--write-token", "--gateway-endpoint", "https://nowhere.invalid")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var usage *UsageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("err = %v, want UsageError", err)
+	}
+	if !strings.Contains(err.Error(), "gateway add") {
+		t.Errorf("error should name `gateway add`, got: %v", err)
+	}
+}

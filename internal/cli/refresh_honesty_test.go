@@ -15,6 +15,7 @@ import (
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
 	"github.com/openshift-online/openshellctl/pkg/gateway/mock"
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 )
 
 // TestTokenRefresh_NoCredentials_NothingToRefresh confirms the actual
@@ -40,8 +41,15 @@ func TestTokenRefresh_NoCredentials_NothingToRefresh(t *testing.T) {
 	if !errors.As(err, &nothingToRefresh) {
 		t.Fatalf("err = %v, want ErrNothingToRefresh", err)
 	}
-	if err.Error() != "nothing to refresh: no credentials configured" {
-		t.Errorf("message = %q, want exactly %q", err.Error(), "nothing to refresh: no credentials configured")
+	// The message now also lists what was checked (PR review: a bare "no
+	// credentials configured" gives the user no idea where to look), so this
+	// checks the stable prefix and the checked-paths detail separately
+	// rather than the whole string verbatim.
+	if !strings.HasPrefix(err.Error(), "nothing to refresh: no credentials configured") {
+		t.Errorf("message = %q, want it to start with %q", err.Error(), "nothing to refresh: no credentials configured")
+	}
+	if !strings.Contains(err.Error(), "OPENSHELL_OIDC_CLIENT_SECRET") || !strings.Contains(err.Error(), "mtls/") {
+		t.Errorf("message = %q, want it to list what was checked", err.Error())
 	}
 	// exitCodeFor's mapping for ErrNothingToRefresh is added in a later
 	// commit (exit-code completion); see exitcode_test.go for that assertion.
@@ -72,29 +80,54 @@ func TestTokenRefresh_WriteWithUnresolvedGateway_UsageError(t *testing.T) {
 	}
 }
 
-// TestTokenRefresh_WriteWithNothingConfigured_UsageError confirms --write's
-// early requireTokenWriter check takes priority even when resolveAuth itself
-// fails with the (unrelated, pre-existing, correct) NoActiveGatewayError —
-// i.e. absolutely nothing is registered and no --gateway*/flag was given at
-// all. "Nowhere to write to" is still the more specific, actionable problem,
-// so this intentionally changes the exit code for this exact invocation from
-// 4 (NoActiveGatewayError) to 2 (UsageError) — a deliberate, not merely
-// incidental, consequence of the ordering in newTokenRefreshCommand.
-func TestTokenRefresh_WriteWithNothingConfigured_UsageError(t *testing.T) {
+// TestTokenRefresh_WriteWithUnknownGateway_SurfacesResolveError confirms
+// --write's early requireTokenWriter check does NOT run for a resolve error
+// other than ErrNoCredentials: `--write -g <typo'd name>` must surface the
+// real problem (UnknownGatewayError, exit 4) rather than the generic writer
+// usage error (exit 2), which would mask the typo and the actionable
+// "list available gateways" remediation UnknownGatewayError already gives.
+// This is the regression a PR review caught in the original "preempt
+// unconditionally" implementation.
+func TestTokenRefresh_WriteWithUnknownGateway_SurfacesResolveError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_, err := runCmd(t, "token", "refresh", "--write", "--gateway", "bogus")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var usage *UsageError
+	if errors.As(err, &usage) {
+		t.Fatalf("err = %v, want the resolve error (UnknownGatewayError), not the writer usage error", err)
+	}
+	if !errors.Is(err, gatewayconfig.ErrUnknownGateway) {
+		t.Fatalf("err = %v, want UnknownGatewayError", err)
+	}
+	if exitCodeFor(err) != ExitNotFound {
+		t.Errorf("exit = %d, want ExitNotFound", exitCodeFor(err))
+	}
+}
+
+// TestTokenRefresh_WriteWithNothingConfigured_SurfacesNoActiveGateway
+// confirms that with absolutely nothing registered and no flags at all,
+// --write surfaces the pre-existing, already-correct NoActiveGatewayError
+// (exit 4) rather than the writer usage error: per PR review, the early
+// writer check must be scoped to ErrNoCredentials specifically, not to
+// "any resolve error", so it never masks a more fundamental problem
+// (unregistered gateway, typo'd name) with a less specific one.
+func TestTokenRefresh_WriteWithNothingConfigured_SurfacesNoActiveGateway(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	_, err := runCmd(t, "token", "refresh", "--write")
 	if err == nil {
 		t.Fatal("expected an error")
 	}
 	var usage *UsageError
-	if !errors.As(err, &usage) {
-		t.Fatalf("err = %v, want UsageError", err)
+	if errors.As(err, &usage) {
+		t.Fatalf("err = %v, want NoActiveGatewayError, not the writer usage error", err)
 	}
-	if !strings.Contains(err.Error(), "gateway add") {
-		t.Errorf("error should name `gateway add`, got: %v", err)
+	if !errors.Is(err, gatewayconfig.ErrNoActiveGateway) {
+		t.Fatalf("err = %v, want NoActiveGatewayError", err)
 	}
-	if exitCodeFor(err) != ExitUsage {
-		t.Errorf("exit = %d, want ExitUsage", exitCodeFor(err))
+	if exitCodeFor(err) != ExitNotFound {
+		t.Errorf("exit = %d, want ExitNotFound", exitCodeFor(err))
 	}
 }
 

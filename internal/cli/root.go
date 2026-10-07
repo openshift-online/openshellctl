@@ -185,8 +185,18 @@ func Execute() int {
 		}
 		code := exitCodeFor(err)
 		if hint := hintFor(err); hint != "" {
-			msg := err.Error()
-			if !strings.Contains(msg, "openshellctl token refresh") && !strings.Contains(msg, "openshellctl login") {
+			// The "don't repeat yourself" suppression only makes sense for the
+			// generic refresh hint — e.g. ErrTokenExpired's own message
+			// sometimes already names `openshellctl login` as its remediation.
+			// Other hints (permission-denied, no-credentials, audience/issuer
+			// mismatches) are never redundant with the error text itself, so
+			// they must not be silently dropped by the same check.
+			suppress := hint == refreshHint
+			if suppress {
+				msg := err.Error()
+				suppress = strings.Contains(msg, "openshellctl token refresh") || strings.Contains(msg, "openshellctl login")
+			}
+			if !suppress {
 				fmt.Fprintf(os.Stderr, "%s\n", hint)
 			}
 		}

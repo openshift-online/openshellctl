@@ -50,7 +50,8 @@ func TestResolveTokenSource_TLSPresentWiring(t *testing.T) {
 	t.Run("mtls material present -> no ErrNoCredentials", func(t *testing.T) {
 		setupGatewayTreeNoAuthMode(t, true)
 		_, err := runCmd(t, "token", "show")
-		if err != nil && errors.Is(err, auth.ErrNoCredentials) {
+		var noCreds *auth.ErrNoCredentials
+		if err != nil && errors.As(err, &noCreds) {
 			t.Fatalf("expected no ErrNoCredentials with mtls material present, got: %v", err)
 		}
 	})
@@ -58,8 +59,9 @@ func TestResolveTokenSource_TLSPresentWiring(t *testing.T) {
 	t.Run("no tls material at all -> ErrNoCredentials", func(t *testing.T) {
 		setupGatewayTreeNoAuthMode(t, false)
 		_, err := runCmd(t, "token", "show")
-		if !errors.Is(err, auth.ErrNoCredentials) {
-			t.Fatalf("err = %v, want ErrNoCredentials", err)
+		var noCreds *auth.ErrNoCredentials
+		if !errors.As(err, &noCreds) {
+			t.Fatalf("err = %v, want *ErrNoCredentials", err)
 		}
 	})
 }

@@ -149,11 +149,18 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 		in.Scopes = strings.Fields(scopes)
 	}
 
-	// Wire write-back when requested and a named gateway is resolved.
+	// Wire write-back when requested and a named gateway is resolved. Uses
+	// requireTokenWriter, not tokenWriterFor, so an explicit --write-token
+	// against an endpoint-only target (no named, registered gateway) fails
+	// loudly instead of silently no-oping — the same swallowed-warning shape
+	// `token refresh --write` used to have, on every other command that
+	// resolves auth (sandbox list, exec, ...), not just `token refresh`.
 	if viper.GetBool("write-token") {
-		if w, werr := tokenWriterFor(target); werr == nil && w != nil {
-			in.TokenWriter = w
+		w, werr := requireTokenWriter(target)
+		if werr != nil {
+			return nil, target, werr
 		}
+		in.TokenWriter = w
 	}
 
 	src, err := auth.Resolve(cmd.Context(), in, auth.NewSDKExchanger())

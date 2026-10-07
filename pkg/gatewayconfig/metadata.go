@@ -97,6 +97,16 @@ func (m Metadata) OIDCClientIDOrDefault() string {
 	return "openshell-cli"
 }
 
+// OIDCAudienceOrDefault returns the configured oidc_audience or the same
+// upstream default "openshell-cli" used for the client ID — the gateway's
+// default audience matches its default client ID when neither is overridden.
+func (m Metadata) OIDCAudienceOrDefault() string {
+	if m.OIDCAudience != nil && *m.OIDCAudience != "" {
+		return *m.OIDCAudience
+	}
+	return "openshell-cli"
+}
+
 // readMetadataFile reads and parses gateways/<name>/metadata.json from fsys.
 func readMetadataFile(fsys fs.FS, name string) (Metadata, bool, error) {
 	rel := GatewayDir(name) + "/metadata.json"

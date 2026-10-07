@@ -40,6 +40,7 @@ func TestExitCodeFor(t *testing.T) {
 		{"provision timeout → provision", &sandbox.ErrProvisionTimeout{}, ExitProvision},
 		{"lifecycle error → provision", &sandbox.ErrLifecycle{Target: "Stopped"}, ExitProvision},
 		{"lifecycle timeout → provision", &sandbox.ErrLifecycleTimeout{Target: "Ready"}, ExitProvision},
+		{"delete timeout → provision", &sandbox.ErrDeleteTimeout{Name: "sb"}, ExitProvision},
 
 		// gatewayconfig typed errors (gateway add/list/select/remove/logout).
 		{"gateway exists → conflict", &gatewayconfig.GatewayExistsError{Name: "x"}, ExitConflict},
@@ -57,7 +58,8 @@ func TestExitCodeFor(t *testing.T) {
 		{"mtls material missing → auth", &auth.ErrMTLSMaterialMissing{Gateway: "x"}, ExitAuth},
 		{"unsupported auth mode → usage", &auth.ErrUnsupportedAuthMode{Mode: "cloudflare_jwt"}, ExitUsage},
 		{"no expiry (sentinel) → auth", auth.ErrNoExpiry, ExitAuth},
-		{"no credentials (sentinel) → auth", auth.ErrNoCredentials, ExitAuth},
+		{"no credentials → auth", &auth.ErrNoCredentials{}, ExitAuth},
+		{"wrapped no credentials → auth", errWrap(&auth.ErrNoCredentials{}), ExitAuth},
 		{"nothing to refresh → auth", &auth.ErrNothingToRefresh{}, ExitAuth},
 		{"wrapped nothing to refresh → auth", errWrap(&auth.ErrNothingToRefresh{}), ExitAuth},
 		{"not a jwt (sentinel) → usage", auth.ErrNotJWT, ExitUsage},

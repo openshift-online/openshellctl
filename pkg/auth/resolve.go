@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -99,11 +100,28 @@ func Resolve(ctx context.Context, in ResolveInput, ex Exchanger) (TokenSource, e
 		if in.TLSPresent {
 			return NewNoAuthSource("mtls"), nil
 		}
-		return nil, ErrNoCredentials
+		return nil, &ErrNoCredentials{Endpoint: in.GatewayEndpoint, Checked: in.noCredentialsChecked()}
 	case gatewayconfig.AuthModeCloudflareJWT:
 		return nil, &ErrUnsupportedAuthMode{Mode: string(mode)}
 	default:
 		return nil, &ErrUnsupportedAuthMode{Mode: string(mode)}
+	}
+}
+
+// noCredentialsChecked lists, in resolution order, every place Resolve
+// inspected before concluding nothing was configured — so ErrNoCredentials's
+// message tells the user exactly where to look instead of making them guess.
+func (in ResolveInput) noCredentialsChecked() []string {
+	metadataPath, mtlsPath := "gateways/<name>/metadata.json", "gateways/<name>/mtls/"
+	if in.Gateway != nil && in.Gateway.Name != "" {
+		metadataPath = fmt.Sprintf("gateways/%s/metadata.json", in.Gateway.Name)
+		mtlsPath = fmt.Sprintf("gateways/%s/mtls/", in.Gateway.Name)
+	}
+	return []string{
+		"--token / OPENSHELL_TOKEN",
+		"OPENSHELL_OIDC_CLIENT_SECRET (or --client-secret-file)",
+		metadataPath,
+		mtlsPath,
 	}
 }
 

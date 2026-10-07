@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -205,13 +206,17 @@ func TestResolve_NoCredentialsMatrix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Resolve(context.Background(), tt.in, &fakeExchanger{})
+			var noCreds *ErrNoCredentials
 			if tt.wantNoCred {
-				if !errors.Is(err, ErrNoCredentials) {
-					t.Fatalf("err = %v, want ErrNoCredentials", err)
+				if !errors.As(err, &noCreds) {
+					t.Fatalf("err = %v, want *ErrNoCredentials", err)
+				}
+				if len(noCreds.Checked) == 0 {
+					t.Error("ErrNoCredentials.Checked should list what was inspected, got none")
 				}
 				return
 			}
-			if errors.Is(err, ErrNoCredentials) {
+			if errors.As(err, &noCreds) {
 				t.Fatalf("unexpected ErrNoCredentials for input %+v", tt.in)
 			}
 		})
@@ -239,4 +244,54 @@ func TestResolve_DefaultClockUsed(t *testing.T) {
 	if _, err := Resolve(context.Background(), in, &fakeExchanger{}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestResolve_ErrNoCredentialsListsChecked confirms ErrNoCredentials names
+// the gateway (when resolved) and lists every place Resolve inspected, so
+// the message is actionable rather than a bare "no credentials configured"
+// that gives the user no idea where to look.
+func TestResolve_ErrNoCredentialsListsChecked(t *testing.T) {
+	t.Run("named gateway -> checked list names it", func(t *testing.T) {
+		in := ResolveInput{
+			Gateway:         resolvedGW(gatewayconfig.AuthModeUnset, gatewayconfig.Metadata{}),
+			GatewayEndpoint: "https://gw.example.com",
+		}
+		_, err := Resolve(context.Background(), in, &fakeExchanger{})
+		var noCreds *ErrNoCredentials
+		if !errors.As(err, &noCreds) {
+			t.Fatalf("err = %v, want *ErrNoCredentials", err)
+		}
+		if noCreds.Endpoint != "https://gw.example.com" {
+			t.Errorf("Endpoint = %q, want the gateway endpoint", noCreds.Endpoint)
+		}
+		wantChecked := []string{
+			"--token / OPENSHELL_TOKEN",
+			"OPENSHELL_OIDC_CLIENT_SECRET (or --client-secret-file)",
+			"gateways/rosa/metadata.json",
+			"gateways/rosa/mtls/",
+		}
+		if len(noCreds.Checked) != len(wantChecked) {
+			t.Fatalf("Checked = %v, want %v", noCreds.Checked, wantChecked)
+		}
+		for i, w := range wantChecked {
+			if noCreds.Checked[i] != w {
+				t.Errorf("Checked[%d] = %q, want %q", i, noCreds.Checked[i], w)
+			}
+		}
+		if !strings.Contains(noCreds.Error(), "gateways/rosa/mtls/") {
+			t.Errorf("Error() = %q, want it to mention the checked paths", noCreds.Error())
+		}
+	})
+
+	t.Run("no resolved gateway -> generic checked list, no name to interpolate", func(t *testing.T) {
+		in := ResolveInput{GatewayEndpoint: "https://nowhere.invalid"}
+		_, err := Resolve(context.Background(), in, &fakeExchanger{})
+		var noCreds *ErrNoCredentials
+		if !errors.As(err, &noCreds) {
+			t.Fatalf("err = %v, want *ErrNoCredentials", err)
+		}
+		if !strings.Contains(noCreds.Checked[2], "<name>") {
+			t.Errorf("Checked = %v, want a generic <name> placeholder with no resolved gateway", noCreds.Checked)
+		}
+	})
 }

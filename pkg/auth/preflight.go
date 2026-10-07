@@ -5,6 +5,15 @@ import (
 	"slices"
 )
 
+// gatewayRoles are the realm_access.roles the gateway actually checks
+// (authz.rs:85-101 at the pinned upstream commit): openshell-user is the
+// minimum needed for any sandbox/gateway RPC; openshell-admin satisfies the
+// same check (it is a superset). Any other roles the token carries (e.g.
+// default-roles-<realm>, offline_access — both common on a default Keycloak
+// human token) are irrelevant to this check and must not be mistaken for
+// one of these two.
+var gatewayRoles = []string{"openshell-user", "openshell-admin"}
+
 // PreflightWarnings returns zero or more warnings about tok that a user
 // should see before relying on it for gateway calls — e.g. before a
 // permission-denied surprise. Pure: no I/O, no network.
@@ -15,10 +24,11 @@ import (
 // wantAudience skips the audience check entirely (the caller has no
 // expected audience configured, e.g. no --oidc-audience given).
 //
-// A tok with no realm roles at all (tok.Roles empty) is also warned about,
-// since gateway calls requiring any role will fail with permission denied —
-// there is no "wanted role" parameter; this only asks whether any roles
-// were granted at all, not whether a specific one was.
+// A tok missing both openshell-user and openshell-admin is warned about,
+// since every gateway RPC requires one of the two (see gatewayRoles above).
+// Checking for "any role at all" is not enough: a typical Keycloak human
+// token already carries default-roles-<realm> and offline_access and would
+// pass that weaker check, then still hit permission denied on the gateway.
 func PreflightWarnings(tok *Token, wantAudience string) []string {
 	if tok == nil {
 		return nil
@@ -28,9 +38,10 @@ func PreflightWarnings(tok *Token, wantAudience string) []string {
 		warnings = append(warnings, fmt.Sprintf(
 			"token audience %v does not include the expected audience %q", tok.Audience, wantAudience))
 	}
-	if len(tok.Roles) == 0 {
-		warnings = append(warnings, "token carries no realm roles (realm_access.roles); "+
-			"gateway calls requiring a role will likely fail with permission denied")
+	if !slices.ContainsFunc(gatewayRoles, func(r string) bool { return slices.Contains(tok.Roles, r) }) {
+		warnings = append(warnings, fmt.Sprintf(
+			"token roles %v include neither %q nor %q; gateway calls will likely fail with permission denied",
+			tok.Roles, gatewayRoles[0], gatewayRoles[1]))
 	}
 	return warnings
 }

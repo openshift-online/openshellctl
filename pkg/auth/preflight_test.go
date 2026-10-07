@@ -42,6 +42,35 @@ func TestPreflightWarnings_NoWantAudience_SkipsAudienceCheck(t *testing.T) {
 	}
 }
 
+func TestPreflightWarnings_AdminRoleSatisfies(t *testing.T) {
+	tok := &Token{Audience: []string{"openshell-cli"}, Roles: []string{"openshell-admin"}}
+	warnings := PreflightWarnings(tok, "openshell-cli")
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none (openshell-admin satisfies the gateway's role check)", warnings)
+	}
+}
+
+// TestPreflightWarnings_DefaultKeycloakRolesDoNotSatisfy pins the exact
+// regression this check exists to catch: a typical human token carries
+// default-roles-<realm> and offline_access (neither is a gateway role), and
+// the gateway actually requires openshell-user/openshell-admin
+// (authz.rs:85-101) — a weaker "has any role at all" check would pass this
+// token silently, then the user would still hit permission denied on the
+// gateway with no warning at all from `token show`.
+func TestPreflightWarnings_DefaultKeycloakRolesDoNotSatisfy(t *testing.T) {
+	tok := &Token{
+		Audience: []string{"openshell-cli"},
+		Roles:    []string{"default-roles-rosa", "offline_access", "uma_authorization"},
+	}
+	warnings := PreflightWarnings(tok, "openshell-cli")
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want exactly one (missing openshell-user/openshell-admin)", warnings)
+	}
+	if !contains(warnings[0], "openshell-user") || !contains(warnings[0], "openshell-admin") {
+		t.Errorf("warning should name both gateway roles, got: %q", warnings[0])
+	}
+}
+
 func TestPreflightWarnings_NoRoles(t *testing.T) {
 	tok := &Token{Audience: []string{"openshell-cli"}, Roles: nil}
 	warnings := PreflightWarnings(tok, "openshell-cli")

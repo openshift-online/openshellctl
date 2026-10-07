@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
 	"github.com/openshift-online/openshellctl/pkg/gateway"
@@ -87,10 +88,10 @@ func exitCodeFor(err error) int {
 	var bundleInvalid *auth.ErrBundleInvalid
 	var mtlsMissing *auth.ErrMTLSMaterialMissing
 	var nothingToRefresh *auth.ErrNothingToRefresh
+	var noCreds *auth.ErrNoCredentials
 	if errors.As(err, &expired) || errors.As(err, &exchange) || errors.As(err, &oidcMissing) ||
 		errors.As(err, &gwUnauth) || errors.As(err, &bundleInvalid) || errors.As(err, &mtlsMissing) ||
-		errors.As(err, &nothingToRefresh) ||
-		errors.Is(err, auth.ErrNoExpiry) || errors.Is(err, auth.ErrNoCredentials) {
+		errors.As(err, &nothingToRefresh) || errors.As(err, &noCreds) || errors.Is(err, auth.ErrNoExpiry) {
 		return ExitAuth
 	}
 
@@ -135,9 +136,10 @@ func exitCodeFor(err error) int {
 	var lifecycle *sandbox.ErrLifecycle
 	var lifecycleTimeout *sandbox.ErrLifecycleTimeout
 	var lifecycleEnded *sandbox.ErrLifecycleStreamEnded
+	var deleteTimeout *sandbox.ErrDeleteTimeout
 	if errors.As(err, &provFailed) || errors.As(err, &provTimeout) ||
 		errors.As(err, &lifecycle) || errors.As(err, &lifecycleTimeout) ||
-		errors.As(err, &lifecycleEnded) {
+		errors.As(err, &lifecycleEnded) || errors.As(err, &deleteTimeout) {
 		return ExitProvision
 	}
 
@@ -145,6 +147,13 @@ func exitCodeFor(err error) int {
 	// and the RPCError catch-all — is a generic/connectivity error → 1.
 	return ExitError
 }
+
+// refreshHint is the generic "obtain a new token" hint, used whenever the
+// problem really is a stale/missing bearer token refresh can fix. It is a
+// named value (not just inlined) so root.go's existing message-substring
+// suppression (don't repeat advice the error already gives) can be scoped
+// to this specific hint rather than every hint hintFor returns.
+const refreshHint = "Hint: try `openshellctl token refresh` to obtain a new token."
 
 // hintFor returns an actionable, one-line hint for an error, or "" when none
 // applies. It is keyed on error type, not on the resulting exit code, so
@@ -157,11 +166,30 @@ func hintFor(err error) string {
 	}
 
 	// Permission-denied is authorization, not expiry — re-running `token
-	// refresh` cannot fix it, so it must never get the refresh hint.
+	// refresh` cannot fix it, so it must never get the refresh hint. Name
+	// the two concrete fixes that actually resolve this in practice: a
+	// human account needs the openshell-user realm role (openshell-admin
+	// also satisfies it); a service account must use its own OIDC client
+	// ID, not the shared openshell-cli default.
 	var gwPerm *gateway.PermissionDeniedError
 	if errors.As(err, &gwPerm) {
 		return "Hint: you are authenticated, but the gateway denied this action due to insufficient " +
-			"permissions. Ask an administrator to grant the required role — obtaining a new token will not help."
+			"permissions — obtaining a new token will not help. A human account needs the " +
+			"\"openshell-user\" realm role (\"openshell-admin\" also satisfies it); a service account " +
+			"must use its own OIDC client ID, not the shared \"openshell-cli\" default. Ask an " +
+			"administrator to grant the required role or provision a dedicated client."
+	}
+
+	// ErrNoCredentials means nothing was ever configured — the generic
+	// refresh hint would just send the user in a circle back to this exact
+	// error (`token refresh` resolves auth the same way every other command
+	// does, so it has nothing to refresh either). Point at what actually
+	// fixes it instead: provide the credential.
+	var noCreds *auth.ErrNoCredentials
+	if errors.As(err, &noCreds) {
+		return "Hint: no credentials are configured for this gateway. For a service account, export " +
+			"OPENSHELL_OIDC_CLIENT_SECRET (or pass --client-secret-file); for a human, run " +
+			"`openshellctl login` (add -g <name> for a specific gateway) to authenticate via browser."
 	}
 
 	// ErrNothingToRefresh's own message already explains the problem fully
@@ -173,15 +201,35 @@ func hintFor(err error) string {
 		return ""
 	}
 
-	// Everything else that's "your credentials are stale, missing, or
-	// couldn't be obtained" benefits from the same refresh hint.
+	// gateway.UnauthenticatedError carries the gateway's own rejection
+	// reason verbatim (e.g. "invalid token: InvalidAudience" / "...
+	// InvalidIssuer" / "... ExpiredSignature"). An expired signature is
+	// exactly what `token refresh` fixes; a wrong audience or issuer is a
+	// configuration mismatch that refreshing the same misconfigured token
+	// won't touch, so give each its own hint instead of one generic line.
+	var gwUnauth *gateway.UnauthenticatedError
+	if errors.As(err, &gwUnauth) {
+		switch {
+		case strings.Contains(gwUnauth.Message, "InvalidAudience"):
+			return "Hint: the token's audience does not match what the gateway expects. Check " +
+				"--oidc-audience / metadata.oidc_audience against the gateway's /auth/oidc-config " +
+				"before retrying — `openshellctl token refresh` will reuse the same wrong audience."
+		case strings.Contains(gwUnauth.Message, "InvalidIssuer"):
+			return "Hint: the token's issuer does not match what the gateway expects. Check " +
+				"--oidc-issuer / metadata.oidc_issuer before retrying — `openshellctl token refresh` " +
+				"will reuse the same wrong issuer."
+		default:
+			return refreshHint
+		}
+	}
+
+	// Everything else that's "your credentials are stale or couldn't be
+	// obtained" benefits from the same refresh hint.
 	var expired *auth.ErrTokenExpired
 	var exchange *auth.ExchangeError
 	var oidcMissing *auth.ErrOIDCConfigMissing
-	var gwUnauth *gateway.UnauthenticatedError
-	if errors.As(err, &expired) || errors.As(err, &exchange) || errors.As(err, &oidcMissing) ||
-		errors.As(err, &gwUnauth) || errors.Is(err, auth.ErrNoCredentials) {
-		return "Hint: try `openshellctl token refresh` to obtain a new token."
+	if errors.As(err, &expired) || errors.As(err, &exchange) || errors.As(err, &oidcMissing) {
+		return refreshHint
 	}
 
 	return ""
