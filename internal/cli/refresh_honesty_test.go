@@ -72,6 +72,32 @@ func TestTokenRefresh_WriteWithUnresolvedGateway_UsageError(t *testing.T) {
 	}
 }
 
+// TestTokenRefresh_WriteWithNothingConfigured_UsageError confirms --write's
+// early requireTokenWriter check takes priority even when resolveAuth itself
+// fails with the (unrelated, pre-existing, correct) NoActiveGatewayError —
+// i.e. absolutely nothing is registered and no --gateway*/flag was given at
+// all. "Nowhere to write to" is still the more specific, actionable problem,
+// so this intentionally changes the exit code for this exact invocation from
+// 4 (NoActiveGatewayError) to 2 (UsageError) — a deliberate, not merely
+// incidental, consequence of the ordering in newTokenRefreshCommand.
+func TestTokenRefresh_WriteWithNothingConfigured_UsageError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_, err := runCmd(t, "token", "refresh", "--write")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var usage *UsageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("err = %v, want UsageError", err)
+	}
+	if !strings.Contains(err.Error(), "gateway add") {
+		t.Errorf("error should name `gateway add`, got: %v", err)
+	}
+	if exitCodeFor(err) != ExitUsage {
+		t.Errorf("exit = %d, want ExitUsage", exitCodeFor(err))
+	}
+}
+
 // TestTokenRefresh_SourceNone_NothingToRefresh confirms a resolved gateway
 // with an explicit no-auth mode (auth_mode: none — a legitimate state, not a
 // misconfiguration) also rejects refresh instead of fake-succeeding: there
