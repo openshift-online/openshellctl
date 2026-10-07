@@ -44,27 +44,40 @@ openshellctl resolves authentication in priority order — the first match wins:
 
 ### 1. Personal login (interactive use)
 
-If you already have an `openshell gateway login` session, openshellctl reads the same token file — no separate login required:
+Register a gateway and log in — both natively, no upstream binary required:
 
 ```bash
-openshell gateway login <gateway-name>   # one-time setup (upstream CLI)
+openshellctl gateway add <endpoint>      # registers the gateway and sets it active
+openshellctl gateway login               # opens a browser for OIDC authentication
 openshellctl sandbox list                # uses your login token automatically
 ```
 
-openshellctl reads `oidc_token.json` from `$XDG_CONFIG_HOME/openshell/gateways/<name>/`. If the access token is expired and a refresh token is present, openshellctl exchanges it for a new one automatically. The upstream `openshell` binary is only needed for the initial `gateway login` — after that, openshellctl is fully standalone.
+`gateway add` discovers the OIDC issuer from `<endpoint>/auth/oidc-config` automatically; pass `--oidc-issuer` to override it or to register a gateway that doesn't answer that endpoint but is OIDC-configured some other way. If a client secret is already set (`OPENSHELL_OIDC_CLIENT_SECRET`) when you run `gateway add`, it authenticates immediately via client credentials instead of opening a browser — see "2. Service account" below.
+
+openshellctl reads `oidc_token.json` from `$XDG_CONFIG_HOME/openshell/gateways/<name>/`. If the access token is expired and a refresh token is present, openshellctl exchanges it for a new one automatically.
 
 ### 2. Service account (CI / fire-and-forget)
 
-Set a client secret and openshellctl mints tokens via `client_credentials` — no login required, and tokens are re-minted automatically when they expire (even during long-running sessions):
+Set a client secret, then `gateway add` authenticates via `client_credentials` as part of registration — no browser, no login step:
 
 ```bash
 export OPENSHELL_OIDC_CLIENT_SECRET=<secret>
+openshellctl gateway add <endpoint> --name <name>
+# ✓ Gateway '<name>' added and set as active
+# ✓ Authenticated via client credentials
+
+openshellctl sandbox create -f job.yaml --no-keep
+# Token re-mints transparently — the --no-keep cleanup always has a valid token
+```
+
+Already-registered gateways re-authenticate the same way via `sandbox create`/`sandbox list`/etc. directly — `gateway add` is only needed once, at registration time:
+
+```bash
 # Optional overrides (defaults come from gateway metadata):
 # export OPENSHELL_OIDC_CLIENT_ID=<client-id>
 # export OPENSHELL_OIDC_ISSUER=<issuer-url>
 
 openshellctl sandbox create -f job.yaml --no-keep
-# Token re-mints transparently — the --no-keep cleanup always has a valid token
 ```
 
 This is the recommended method for automation, CI pipelines, and any non-interactive use. Unlike the upstream Rust CLI (which bakes the token once at startup), openshellctl refreshes per-request, so long-running jobs never fail with `ExpiredSignature`.
@@ -489,6 +502,39 @@ openshellctl logs my-sandbox --source gateway  # gateway logs only
 | `--level` | Minimum level: `error`, `warn`, `info`, `debug`, `trace` |
 | `--source` | Filter by source: `gateway`, `sandbox`, or `all` (default) |
 
+### `gateway` (alias `gw`)
+
+Register a gateway without the upstream Rust binary, and manage registrations.
+
+```bash
+# Register a gateway — discovers the OIDC issuer automatically from
+# <endpoint>/auth/oidc-config; authenticates immediately if a client secret
+# is set (OPENSHELL_OIDC_CLIENT_SECRET), otherwise opens a browser.
+openshellctl gateway add https://gw.example.com:443 --name my-gw
+
+# Register against a gateway whose OIDC issuer can't be auto-discovered.
+openshellctl gateway add https://gw.example.com:443 --name my-gw \
+  --oidc-issuer https://issuer.example.com
+
+# List, switch, log out of, and remove registrations.
+openshellctl gateway list
+openshellctl gateway select my-gw
+openshellctl gateway logout       # clears the cached token, keeps the registration
+openshellctl gateway remove my-gw
+
+# Log in via OIDC browser flow (same as the root `login` command).
+openshellctl gateway login
+```
+
+| Flag | Description |
+|------|-------------|
+| `--name` | Gateway name (`gateway add`; default: derived from the endpoint host) |
+| `--oidc-issuer` | OIDC issuer URL override — skips discovery (global flag, also used by `token`/`whoami`) |
+| `--oidc-client-id`, `--oidc-audience`, `--oidc-scopes` | OIDC overrides (global flags) |
+| `-o`, `--output` | `gateway list` format: `table` (default), `json`, `yaml` |
+
+`gateway add` only registers OIDC gateways. A gateway that doesn't answer `/auth/oidc-config` and has no `--oidc-issuer` override fails with a clear error rather than being silently misregistered — see [`docs/gateway.md`](docs/gateway.md) for the metadata schema and the full list of differences from the upstream Rust CLI (no mTLS registration, no default browser login when a secret is absent and `OPENSHELL_NO_BROWSER` is set).
+
 ### `token`
 
 Inspect and manage the gateway authentication token.
@@ -537,10 +583,12 @@ openshellctl completion powershell
 |---------|-------|
 | `sandbox` | `sb` |
 | `logs` | `lg` |
+| `gateway` | `gw` |
 
 ```bash
 openshellctl sb list          # same as: openshellctl sandbox list
 openshellctl lg my-sandbox    # same as: openshellctl logs my-sandbox
+openshellctl gw list          # same as: openshellctl gateway list
 ```
 
 ## Last-used sandbox
@@ -581,6 +629,7 @@ openshellctl logs                                       # reuses my-sandbox
 | `OPENSHELL_OIDC_ISSUER` | OIDC issuer URL override (default from gateway metadata) |
 | `OPENSHELL_SANDBOX_POLICY` | Default sandbox policy file path |
 | `NO_COLOR` | Disable coloured output (any value) |
+| `OPENSHELL_NO_BROWSER` | When set (any non-empty value) and `gateway add` has no client secret available, register the gateway and print a login hint instead of opening a browser (any value) |
 
 ## Differences from the upstream Rust CLI
 
@@ -592,6 +641,7 @@ openshellctl is a compatible reimplementation with these intentional differences
 - **No interactive spinner**: provisioning progress uses plain text output instead of terminal spinners.
 - **`policy lint` is a separate top-level command** (not under `sandbox`).
 - **Gitignore filtering**: uses compiled `.gitignore` rules instead of shelling out to `git ls-files`. Tracked-but-ignored files are excluded (matching untracked behaviour) rather than re-included.
+- **`gateway add` registers OIDC gateways only**: no mTLS or non-OIDC ("edge") gateway registration. When a client secret is absent and `OPENSHELL_NO_BROWSER` is set, `gateway add` registers the gateway and prints a hint instead of opening a browser (upstream always opens one). See [`docs/gateway.md`](docs/gateway.md).
 
 ## License
 
