@@ -1,10 +1,6 @@
 package cli
 
 import (
-	"context"
-	"os"
-	"strings"
-
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
@@ -149,6 +145,16 @@ func newGatewayLogoutCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Resolve's endpoint-only fallback can set target.Name to the raw
+			// endpoint when no registered gateway matches it — reject that
+			// here with a clear not-found error, rather than either failing
+			// with a confusing "invalid gateway name" (when the endpoint
+			// contains characters ValidateGatewayName rejects) or silently
+			// "succeeding" at logging out of a gateway that was never
+			// registered (when it doesn't).
+			if _, err := gatewayconfig.Load(env, target.Name); err != nil {
+				return err
+			}
 			w, err := gatewayconfig.NewOSWriter()
 			if err != nil {
 				return err
@@ -167,6 +173,7 @@ func newGatewayLogoutCommand() *cobra.Command {
 // this epic (ROSAENG-68825) and return typed errors from NewMetadata.
 func newGatewayAddCommand() *cobra.Command {
 	var name string
+	var force bool
 	c := &cobra.Command{
 		Use:   "add <endpoint>",
 		Short: "Register an OIDC gateway",
@@ -177,33 +184,40 @@ func newGatewayAddCommand() *cobra.Command {
 			"actually OIDC-configured).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGatewayAdd(cmd, args[0], name)
+			return runGatewayAdd(cmd, args[0], name, force)
 		},
 	}
 	c.Flags().StringVar(&name, "name", "", "gateway name (default: derived from the endpoint host)")
+	c.Flags().BoolVar(&force, "force", false, "overwrite an existing registration under the same name")
 	return c
 }
 
 // runGatewayAdd normalizes the endpoint, discovers or takes an explicit OIDC
 // issuer, builds and writes metadata.json, sets the new gateway active, and
-// then attempts to authenticate it (see authenticateNewGateway).
-func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string) error {
-	endpoint, err := gatewayconfig.NormalizeEndpoint(rawEndpoint)
+// then attempts to authenticate it (see authenticateNewGateway). If
+// authentication fails, the registration is rolled back (metadata.json
+// removed, the previously-active gateway restored) so a corrected retry
+// doesn't hit GatewayExistsError — see authenticateNewGateway's doc comment.
+func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string, force bool) error {
+	endpoint, err := gatewayconfig.EnsureScheme(rawEndpoint)
 	if err != nil {
 		return err
 	}
 
 	issuerOverride := viper.GetString("oidc-issuer")
 	var discovered *gatewayconfig.DiscoveredOIDC
+	var discoveryErr error
 	if issuerOverride == "" {
-		if iss, aud, derr := oidcConfigFetcher(cmd.Context(), endpoint); derr == nil {
+		iss, aud, derr := oidcConfigFetcher(cmd.Context(), endpoint)
+		if derr == nil {
 			discovered = &gatewayconfig.DiscoveredOIDC{Issuer: iss, Audience: aud}
+		} else {
+			// Threaded into EdgeGatewayUnsupportedError (via NewMetadata) so
+			// a DNS failure, TLS error, or timeout is reported as what it
+			// actually is, not collapsed into the same "doesn't look
+			// OIDC-configured" message a real non-200 response gets.
+			discoveryErr = derr
 		}
-		// A failed probe leaves discovered nil; NewMetadata below surfaces
-		// EdgeGatewayUnsupportedError when neither an override nor a
-		// successful discovery is available — the probe's own error (DNS,
-		// timeout, non-200) isn't itself returned, since "not OIDC" and
-		// "unreachable" get the same remediation: pass --oidc-issuer.
 	}
 
 	m, err := gatewayconfig.NewMetadata(gatewayconfig.AddInput{
@@ -214,9 +228,15 @@ func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string) error {
 		OIDCAudience: viper.GetString("oidc-audience"),
 		OIDCScopes:   viper.GetString("oidc-scopes"),
 		Discovered:   discovered,
+		DiscoveryErr: discoveryErr,
 	})
 	if err != nil {
 		return err
+	}
+
+	if viper.GetString("oidc-client-id") == "" && clientSecretProvider(viper.GetString("client-secret-file")) != nil {
+		cmd.PrintErrln("warning: no --oidc-client-id given; using the default 'openshell-cli' — a " +
+			"service account typically needs its own client id, or authentication will likely fail.")
 	}
 
 	env, err := gatewayconfig.NewOSEnv()
@@ -227,7 +247,8 @@ func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := gatewayconfig.WriteGateway(w, env, m.Name, m); err != nil {
+	previousActive, hadActive := readActiveGateway(env)
+	if err := gatewayconfig.WriteGateway(w, env, m, force); err != nil {
 		return err
 	}
 	if err := gatewayconfig.SetActive(w, m.Name); err != nil {
@@ -235,18 +256,48 @@ func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string) error {
 	}
 	cmd.Printf("✓ Gateway '%s' added and set as active\n", m.Name)
 
-	return authenticateNewGateway(cmd, m.Name)
+	if err := authenticateNewGateway(cmd, m.Name); err != nil {
+		rollbackFailedAdd(w, m.Name, previousActive, hadActive)
+		return err
+	}
+	return nil
+}
+
+// readActiveGateway reads the current active_gateway pointer (user tree
+// only — the tree gateway add ever writes to), for rollbackFailedAdd to
+// restore if authentication fails. hadActive is false when there was none.
+func readActiveGateway(env gatewayconfig.Env) (name string, hadActive bool) {
+	active, err := gatewayconfig.ActiveGateway(env)
+	if err != nil {
+		return "", false
+	}
+	return active, true
+}
+
+// rollbackFailedAdd removes a just-registered gateway and restores the
+// previously-active one (or clears active_gateway entirely if there wasn't
+// one) after authenticateNewGateway fails. Without this, a wrong secret or
+// an unreachable issuer leaves a half-registered, active gateway behind, and
+// a corrected retry hits GatewayExistsError until the user discovers
+// `gateway remove` themselves.
+func rollbackFailedAdd(w gatewayconfig.Writer, failedName, previousActive string, hadActive bool) {
+	_ = gatewayconfig.RemoveGateway(w, failedName)
+	_ = gatewayconfig.ClearActiveIfMatches(w, failedName)
+	if hadActive {
+		_ = gatewayconfig.SetActive(w, previousActive)
+	}
 }
 
 // authenticateNewGateway attempts to authenticate the just-registered
 // gateway:
 //   - a client secret is configured: client-credentials exchange, printing
-//     the upstream-distinct "✓ Authenticated via client credentials" and
-//     writing oidc_token.json with a real expires_at (the rosa-agent
-//     CronJobs' Python token writer omits it; see metadata_marshal_test.go).
-//   - no secret, OPENSHELL_NO_BROWSER set: register-only, print a hint, and
-//     succeed (exit 0) — the interim behavior ROSAENG-68835 (the device-code
-//     login spike) already specifies for this exact case, not a guess.
+//     "✓ Authenticated via client credentials" and writing oidc_token.json
+//     with a real expires_at (the rosa-agent CronJobs' Python token writer
+//     omits it; see metadata_marshal_test.go).
+//   - no secret, --no-browser/OPENSHELL_NO_BROWSER set: register-only, print
+//     a hint, and succeed (exit 0) — the interim behavior ROSAENG-68835 (the
+//     device-code login spike) already specifies for this exact case, not a
+//     guess.
 //   - no secret, browser available: fall back to the existing browser login
 //     flow (loginAndReport), matching upstream's own default for a human
 //     without a client secret.
@@ -267,7 +318,7 @@ func authenticateNewGateway(cmd *cobra.Command, name string) error {
 
 	secretProvider := clientSecretProvider(viper.GetString("client-secret-file"))
 	if secretProvider == nil {
-		if os.Getenv("OPENSHELL_NO_BROWSER") != "" {
+		if viper.GetBool("no-browser") {
 			cmd.PrintErrln("Gateway registered. No client secret found — log in with " +
 				"`openshellctl gateway login`, or export OPENSHELL_OIDC_CLIENT_SECRET.")
 			return nil
@@ -275,7 +326,16 @@ func authenticateNewGateway(cmd *cobra.Command, name string) error {
 		return loginAndReport(cmd, target)
 	}
 
-	src, err := clientCredentialsSource(cmd, target, secretProvider)
+	// Drive the exact same client-credentials resolution whoami/token show
+	// use (resolveAuth -> resolveTokenSource), rather than re-implementing
+	// auth.ResolveInput construction here: PR #33 consolidated cliDeps
+	// injection into resolveAuth/dialOrInjected specifically so there is one
+	// place that decides "is this call test-injected," not several that
+	// could disagree. Pointing viper's "gateway" flag at the freshly-written
+	// name makes resolveTokenSource resolve the same target we already have.
+	viper.Set("gateway", name)
+	viper.Set("gateway-endpoint", "")
+	src, _, err := resolveAuth(cmd)
 	if err != nil {
 		return err
 	}
@@ -293,27 +353,4 @@ func authenticateNewGateway(cmd *cobra.Command, name string) error {
 		return nil
 	}
 	return auth.WriteBundle(w, tok)
-}
-
-// clientCredentialsSource returns the TokenSource for the client-credentials
-// exchange: an injected cliDeps.TokenSource when present (tests), or a real
-// auth.Resolve-built source otherwise. Production code never injects deps.
-func clientCredentialsSource(cmd *cobra.Command, target *gatewayconfig.Target, secretProvider func(context.Context) (string, error)) (auth.TokenSource, error) {
-	if deps, ok := depsFrom(cmd.Context()); ok && deps.TokenSource != nil {
-		return deps.TokenSource, nil
-	}
-
-	in := auth.ResolveInput{
-		ClientSecret:      secretProvider,
-		Issuer:            viper.GetString("oidc-issuer"),
-		ClientID:          viper.GetString("oidc-client-id"),
-		Audience:          viper.GetString("oidc-audience"),
-		Gateway:           target.Resolved,
-		GatewayEndpoint:   target.Endpoint,
-		OIDCConfigFetcher: oidcConfigFetcher,
-	}
-	if scopes := viper.GetString("oidc-scopes"); scopes != "" {
-		in.Scopes = strings.Fields(scopes)
-	}
-	return auth.Resolve(cmd.Context(), in, auth.NewSDKExchanger())
 }

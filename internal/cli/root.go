@@ -43,6 +43,7 @@ type persistentFlags struct {
 	oidcScopes       string
 	tokenLeeway      string
 	writeToken       bool
+	noBrowser        bool
 }
 
 // NewRootCommand builds the full command tree. It is exported so tests (parity,
@@ -99,6 +100,7 @@ func registerPersistentFlags(root *cobra.Command, pf *persistentFlags) {
 	f.StringVar(&pf.oidcScopes, "oidc-scopes", "", "OIDC scopes override (space-separated)")
 	f.StringVar(&pf.tokenLeeway, "token-leeway", "30s", "token expiry leeway")
 	f.BoolVar(&pf.writeToken, "write-token", false, "write refreshed tokens back to disk (Rust CLI schema)")
+	f.BoolVar(&pf.noBrowser, "no-browser", false, "skip browser login when no client secret is available, e.g. for service accounts (env OPENSHELL_NO_BROWSER)")
 }
 
 // bindViper wires the OPENSHELL_* environment prefix and flag binding, per §5.9.
