@@ -41,27 +41,30 @@ func (e *GatewayNotFoundError) Error() string {
 func (e *GatewayNotFoundError) Is(target error) bool { return target == ErrGatewayNotFound }
 
 // NoActiveGatewayError carries the verbatim upstream remediation block
-// (Appendix A.13).
+// (Appendix A.13), adapted to name `openshellctl` — its own `gateway
+// select`/`gateway add` commands are native, not delegated to the upstream
+// `openshell` binary (see ROSAENG-68827).
 type NoActiveGatewayError struct{}
 
 func (e *NoActiveGatewayError) Error() string {
 	return "No active gateway.\n" +
-		"Set one with: openshell gateway select <name>\n" +
-		"Or register one with: openshell gateway add <endpoint>"
+		"Set one with: openshellctl gateway select <name>\n" +
+		"Or register one with: openshellctl gateway add <endpoint>"
 }
 
 // Is matches the ErrNoActiveGateway sentinel.
 func (e *NoActiveGatewayError) Is(target error) bool { return target == ErrNoActiveGateway }
 
 // UnknownGatewayError carries the verbatim upstream remediation block, with the
-// name interpolated in three places (Appendix A.13).
+// name interpolated in three places (Appendix A.13), adapted to name
+// `openshellctl` for the same reason as NoActiveGatewayError above.
 type UnknownGatewayError struct{ Name string }
 
 func (e *UnknownGatewayError) Error() string {
 	return fmt.Sprintf(
 		"Unknown gateway '%s'.\n"+
-			"Register it first: openshell gateway add <endpoint> --name %s\n"+
-			"Or list available gateways: openshell gateway select",
+			"Register it first: openshellctl gateway add <endpoint> --name %s\n"+
+			"Or list available gateways: openshellctl gateway select",
 		e.Name, e.Name)
 }
 
