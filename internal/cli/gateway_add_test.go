@@ -216,21 +216,56 @@ func TestGatewayAdd_Force(t *testing.T) {
 	}
 }
 
-// TestGatewayAdd_NoBrowserFalseValueStillOpensLogin confirms
-// OPENSHELL_NO_BROWSER=0/false is treated as false (browser allowed), not as
-// "set" the way a naive non-empty-string check would.
-func TestGatewayAdd_NoBrowserFalseValueFallsBackToLogin(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("OPENSHELL_NO_BROWSER", "0")
-	// No secret and no-browser=false -> attempts the real browser login flow,
-	// which fails in this headless test environment (no browser, no
-	// resolvable OIDC endpoint) rather than taking the register-only path.
-	out, err := runCmd(t, "gateway", "add", "https://gw.example.com", "--name", "svc-gw", "--oidc-issuer", "https://issuer")
-	if err == nil {
-		t.Fatalf("expected the browser login fallback to fail in this test env, got success:\n%s", out)
+// TestGatewayAdd_ForceRollbackRestoresPrevious confirms that when --force
+// overwrites an existing, working registration and the new authentication
+// attempt then fails, rollback restores the PREVIOUS registration's exact
+// bytes rather than deleting it outright (RemoveGateway's blanket delete
+// would otherwise destroy a still-good registration the failed attempt had
+// no business touching, since it only overwrote it because of --force).
+func TestGatewayAdd_ForceRollbackRestoresPrevious(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("OPENSHELL_NO_BROWSER", "1")
+
+	// A working registration with a real token on disk.
+	if _, err := runCmd(t, "gateway", "add", "https://old.example.com", "--name", "dup", "--oidc-issuer", "https://old-issuer"); err != nil {
+		t.Fatalf("first add: %v", err)
 	}
-	if strings.Contains(out, "No client secret found") {
-		t.Errorf("OPENSHELL_NO_BROWSER=0 should not take the register-only hint path, got: %s", out)
+	tokenPath := filepath.Join(xdg, "openshell", "gateways", "dup", "oidc_token.json")
+	if err := os.WriteFile(tokenPath, []byte(`{"access_token":"old-tok","issuer":"https://old-issuer","client_id":"c"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousMetadata, err := os.ReadFile(filepath.Join(xdg, "openshell", "gateways", "dup", "metadata.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousToken, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Force-overwrite it, then fail authentication.
+	t.Setenv("OPENSHELL_OIDC_CLIENT_SECRET", "wrong-secret")
+	failing := fakeTokenSource{err: errors.New("invalid_client")}
+	_, err = runCmdWithGateway(t, cliDeps{TokenSource: failing},
+		"gateway", "add", "https://new.example.com", "--name", "dup", "--oidc-issuer", "https://new-issuer", "--force")
+	if err == nil {
+		t.Fatal("expected the auth failure to propagate")
+	}
+
+	gotMetadata, rerr := os.ReadFile(filepath.Join(xdg, "openshell", "gateways", "dup", "metadata.json"))
+	if rerr != nil {
+		t.Fatalf("metadata.json should have been restored, not removed: %v", rerr)
+	}
+	if string(gotMetadata) != string(previousMetadata) {
+		t.Errorf("metadata.json = %s, want the previous registration restored: %s", gotMetadata, previousMetadata)
+	}
+	gotToken, rerr := os.ReadFile(tokenPath)
+	if rerr != nil {
+		t.Fatalf("oidc_token.json should have been restored, not removed: %v", rerr)
+	}
+	if string(gotToken) != string(previousToken) {
+		t.Errorf("oidc_token.json = %s, want the previous token restored: %s", gotToken, previousToken)
 	}
 }
 
@@ -304,5 +339,26 @@ func TestGatewayAdd_AuthFailureRollsBack_NoPriorActive(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(xdg, "openshell", "active_gateway")); statErr == nil {
 		t.Error("active_gateway should not exist when there was no prior active gateway")
+	}
+}
+
+func TestShouldRegisterOnly(t *testing.T) {
+	tests := []struct {
+		name      string
+		hasSecret bool
+		noBrowser bool
+		want      bool
+	}{
+		{"no secret, no-browser set -> register only", false, true, true},
+		{"no secret, no-browser unset -> attempt login", false, false, false},
+		{"secret present, no-browser set -> use the secret", true, true, false},
+		{"secret present, no-browser unset -> use the secret", true, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldRegisterOnly(tt.hasSecret, tt.noBrowser); got != tt.want {
+				t.Errorf("shouldRegisterOnly(%v, %v) = %v, want %v", tt.hasSecret, tt.noBrowser, got, tt.want)
+			}
+		})
 	}
 }

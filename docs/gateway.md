@@ -99,3 +99,12 @@ from the upstream Rust CLI" below.
   other `OPENSHELL_*` flag/env pair in this CLI is (via `--no-browser` and
   viper): `0`/`false` (case-insensitive) means "browser allowed," not merely
   "the variable is unset."
+
+## Deferred: `--no-select` / `--no-login`
+
+`gateway add` does not currently accept `--no-select` (register without
+making the new gateway active) or `--no-login` (register without attempting
+any authentication at all, deferring it entirely to a later `gateway login`).
+Only `--force` (overwrite an existing registration) is implemented so far.
+**Later work in this epic must not assume `--no-login` exists** — if a future
+story's design depends on it, it needs to be added first.

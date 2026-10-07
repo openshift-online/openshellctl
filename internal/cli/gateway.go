@@ -248,6 +248,11 @@ func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string, force bool) err
 		return err
 	}
 	previousActive, hadActive := readActiveGateway(env)
+	// Snapshot whatever --force is about to overwrite, so a failed auth
+	// attempt can restore it instead of rollbackFailedAdd deleting a
+	// previously-working registration outright (see rollbackFailedAdd).
+	previousMetadata, _ := w.ReadFile(gatewayconfig.GatewayDir(m.Name) + "/metadata.json")
+	previousToken, _ := w.ReadFile(gatewayconfig.GatewayDir(m.Name) + "/oidc_token.json")
 	if err := gatewayconfig.WriteGateway(w, env, m, force); err != nil {
 		return err
 	}
@@ -257,7 +262,7 @@ func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string, force bool) err
 	cmd.Printf("✓ Gateway '%s' added and set as active\n", m.Name)
 
 	if err := authenticateNewGateway(cmd, m.Name); err != nil {
-		rollbackFailedAdd(w, m.Name, previousActive, hadActive)
+		rollbackFailedAdd(w, m.Name, previousActive, hadActive, previousMetadata, previousToken)
 		return err
 	}
 	return nil
@@ -274,14 +279,33 @@ func readActiveGateway(env gatewayconfig.Env) (name string, hadActive bool) {
 	return active, true
 }
 
-// rollbackFailedAdd removes a just-registered gateway and restores the
-// previously-active one (or clears active_gateway entirely if there wasn't
-// one) after authenticateNewGateway fails. Without this, a wrong secret or
-// an unreachable issuer leaves a half-registered, active gateway behind, and
-// a corrected retry hits GatewayExistsError until the user discovers
-// `gateway remove` themselves.
-func rollbackFailedAdd(w gatewayconfig.Writer, failedName, previousActive string, hadActive bool) {
-	_ = gatewayconfig.RemoveGateway(w, failedName)
+// rollbackFailedAdd undoes a just-written registration after
+// authenticateNewGateway fails, restoring the previously-active gateway (or
+// clearing active_gateway entirely if there wasn't one). Without this, a
+// wrong secret or an unreachable issuer leaves a half-registered, active
+// gateway behind, and a corrected retry hits GatewayExistsError until the
+// user discovers `gateway remove` themselves.
+//
+// previousMetadata/previousToken are the exact bytes a --force overwrite
+// replaced, or nil when there was nothing to overwrite (the normal,
+// non-force path). When non-nil, rollback restores those bytes instead of
+// deleting the files outright — otherwise force-overwriting a working
+// registration and then failing to authenticate the new one would destroy
+// the previous, still-good registration too, which is strictly worse than
+// the pre-rollback behavior for that case.
+func rollbackFailedAdd(w gatewayconfig.Writer, failedName, previousActive string, hadActive bool, previousMetadata, previousToken []byte) {
+	metadataRel := gatewayconfig.GatewayDir(failedName) + "/metadata.json"
+	tokenRel := gatewayconfig.GatewayDir(failedName) + "/oidc_token.json"
+	if previousMetadata != nil {
+		_ = w.WriteFile(metadataRel, previousMetadata, 0o600)
+	} else {
+		_ = w.Remove(metadataRel)
+	}
+	if previousToken != nil {
+		_ = w.WriteFile(tokenRel, previousToken, 0o600)
+	} else {
+		_ = w.Remove(tokenRel)
+	}
 	_ = gatewayconfig.ClearActiveIfMatches(w, failedName)
 	if hadActive {
 		_ = gatewayconfig.SetActive(w, previousActive)
@@ -306,6 +330,16 @@ func rollbackFailedAdd(w gatewayconfig.Writer, failedName, previousActive string
 // dir) — NewOSEnv snapshots whether the user config dir exists at call time,
 // so reusing an Env obtained before the directory existed would see a nil
 // UserFS even after the write.
+// shouldRegisterOnly is the pure decision authenticateNewGateway's "no
+// client secret" branch makes: register the gateway and print a hint rather
+// than attempting the interactive browser login flow. Extracted as its own
+// function so it has a hermetic unit test (TestShouldRegisterOnly) — the
+// alternative, --no-browser=false, drives a real oidc.Login call (network +
+// a real browser launch), which must never run inside a test.
+func shouldRegisterOnly(hasSecret, noBrowser bool) bool {
+	return !hasSecret && noBrowser
+}
+
 func authenticateNewGateway(cmd *cobra.Command, name string) error {
 	env, err := gatewayconfig.NewOSEnv()
 	if err != nil {
@@ -317,8 +351,9 @@ func authenticateNewGateway(cmd *cobra.Command, name string) error {
 	}
 
 	secretProvider := clientSecretProvider(viper.GetString("client-secret-file"))
-	if secretProvider == nil {
-		if viper.GetBool("no-browser") {
+	hasSecret := secretProvider != nil
+	if !hasSecret {
+		if shouldRegisterOnly(hasSecret, viper.GetBool("no-browser")) {
 			cmd.PrintErrln("Gateway registered. No client secret found — log in with " +
 				"`openshellctl gateway login`, or export OPENSHELL_OIDC_CLIENT_SECRET.")
 			return nil
