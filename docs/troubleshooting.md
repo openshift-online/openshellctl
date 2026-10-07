@@ -46,7 +46,11 @@ bearer token for either mode.
 > refresh` with *zero* flags and no gateway registered at all does not hit
 > this path — `gatewayconfig.Resolve` already, correctly, fails earlier with
 > its own "no active gateway" error (exit 4) before auth resolution is ever
-> attempted. That earlier check is unrelated to this fix and was left as-is.
+> attempted. That check's logic is unrelated to this fix and was left as-is;
+> its message text did need a small fix of its own, though — it was still
+> telling you to run `openshell gateway select`/`openshell gateway add`
+> (the upstream Rust binary) instead of `openshellctl` now that those
+> commands are native (see [`gateway.md`](gateway.md)).
 
 ## `token refresh --write` silently did nothing when there was nowhere to write to
 
@@ -67,6 +71,12 @@ Error: --write requires a named, registered gateway; register one first: openshe
 ```
 
 exits with code 2. Register the gateway first (see [`gateway.md`](gateway.md)), then retry with `--write`.
+
+This check runs before any other auth-resolution error too — `openshellctl
+token refresh --write` with nothing registered and no flags at all also now
+exits 2 with this same message, rather than the "no active gateway" error
+(exit 4) it would get without `--write`. "Nowhere to write to" is reported
+first because it's the more specific, actionable problem.
 
 ## A permission-denied response got the same hint as an expired token
 
