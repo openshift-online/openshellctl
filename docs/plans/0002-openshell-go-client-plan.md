@@ -69,7 +69,7 @@ github.com/openshift-online/openshellctl
 │   ├── table.go  json.go  yaml.go  sandbox.go  provider.go  logs.go
 ├── hack/openshell-pin                    # "v0.0.116 d1155aa70042d3e2ee49dbfa15346b108b7c1d92"
 ├── hack/parity/sandbox_flags_v0.0.116.json   # checked-in flag table for parity_test
-├── build/Dockerfile                      # UBI9 multi-stage
+├── build/Containerfile                   # UBI9 multi-stage
 ├── Makefile  .golangci.yml  go.mod  go.sum
 └── docs/plans/0002-openshell-go-client-plan.md
 ```
