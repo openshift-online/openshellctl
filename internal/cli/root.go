@@ -75,6 +75,7 @@ func NewRootCommand() *cobra.Command {
 		newVersionCommand(),
 		newWhoamiCommand(),
 		newLoginCommand(),
+		newGatewayCommand(),
 	)
 
 	return root
