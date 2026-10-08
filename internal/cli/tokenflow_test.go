@@ -23,13 +23,22 @@ import (
 // points XDG_CONFIG_HOME at it. Returns the config root.
 func setupGatewayTree(t *testing.T) string {
 	t.Helper()
+	return setupGatewayTreeWithEndpoint(t, "https://gw.example.com")
+}
+
+// setupGatewayTreeWithEndpoint is setupGatewayTree, but with the registered
+// gateway's endpoint as given — used by endpoint-matching tests that need a
+// specific form (e.g. an explicit default port) rather than the bare host
+// setupGatewayTree always uses.
+func setupGatewayTreeWithEndpoint(t *testing.T, endpoint string) string {
+	t.Helper()
 	root := t.TempDir()
 	xdg := filepath.Join(root, "config")
 	gwDir := filepath.Join(xdg, "openshell", "gateways", "rosa")
 	if err := os.MkdirAll(gwDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	md := `{"name":"rosa","gateway_endpoint":"https://gw.example.com","is_remote":false,"gateway_port":443,"auth_mode":"oidc","oidc_issuer":"https://issuer"}`
+	md := `{"name":"rosa","gateway_endpoint":"` + endpoint + `","is_remote":false,"gateway_port":443,"auth_mode":"oidc","oidc_issuer":"https://issuer"}`
 	if err := os.WriteFile(filepath.Join(gwDir, "metadata.json"), []byte(md), 0o600); err != nil {
 		t.Fatal(err)
 	}

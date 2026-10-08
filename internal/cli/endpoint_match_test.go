@@ -18,27 +18,18 @@ import (
 // silently ignored; `token show` would fall through to an endpoint-only,
 // unauthenticated resolution instead of using the registered oidc disk
 // bundle.
+//
+// Built on setupGatewayTreeWithEndpoint (tokenflow_test.go), the same
+// fixture family TestTokenShow_StaticToken/TestWhoami_* already use, per
+// this story's acceptance criterion ("CLI test using the setupGatewayTree
+// fixture") — parameterized with the explicit :443 this scenario needs,
+// since setupGatewayTree's own default (a bare host, no port) wouldn't
+// exercise the bug.
 func TestTokenShow_GatewayEndpointWithTrailingSlashMatchesRegisteredDefaultPort(t *testing.T) {
-	root := t.TempDir()
-	xdg := filepath.Join(root, "config")
-	gwDir := filepath.Join(xdg, "openshell", "gateways", "rosa")
-	if err := os.MkdirAll(gwDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	// Registered the way `gateway add`/the CronJobs do: an explicit default
 	// port.
-	md := `{"name":"rosa","gateway_endpoint":"https://gw.example.com:443","is_remote":true,"gateway_port":0,"auth_mode":"oidc","oidc_issuer":"https://issuer"}`
-	if err := os.WriteFile(filepath.Join(gwDir, "metadata.json"), []byte(md), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	bundle := `{"access_token":"tok","expires_at":9999999999,"issuer":"https://issuer","client_id":"openshell-cli"}`
-	if err := os.WriteFile(filepath.Join(gwDir, "oidc_token.json"), []byte(bundle), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Deliberately no active_gateway file: this must be found purely by
-	// FindByEndpoint's endpoint match, not an active-gateway shortcut.
-	t.Setenv("HOME", root)
-	t.Setenv("XDG_CONFIG_HOME", xdg)
+	xdg := setupGatewayTreeWithEndpoint(t, "https://gw.example.com:443")
+	writeOIDCBundle(t, xdg, "rosa")
 
 	// Exported the way a service account would: trailing slash, no port.
 	out, err := runCmd(t, "token", "show", "--gateway-endpoint", "https://gw.example.com/")
@@ -56,22 +47,8 @@ func TestTokenShow_GatewayEndpointWithTrailingSlashMatchesRegisteredDefaultPort(
 // that's literally how the onboarding thread's service account configured
 // it.
 func TestTokenShow_GatewayEndpointEnvVar_TrailingSlashMatchesDefaultPort(t *testing.T) {
-	root := t.TempDir()
-	xdg := filepath.Join(root, "config")
-	gwDir := filepath.Join(xdg, "openshell", "gateways", "rosa")
-	if err := os.MkdirAll(gwDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	md := `{"name":"rosa","gateway_endpoint":"https://gw.example.com:443","is_remote":true,"gateway_port":0,"auth_mode":"oidc","oidc_issuer":"https://issuer"}`
-	if err := os.WriteFile(filepath.Join(gwDir, "metadata.json"), []byte(md), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	bundle := `{"access_token":"tok","expires_at":9999999999,"issuer":"https://issuer","client_id":"openshell-cli"}`
-	if err := os.WriteFile(filepath.Join(gwDir, "oidc_token.json"), []byte(bundle), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", root)
-	t.Setenv("XDG_CONFIG_HOME", xdg)
+	xdg := setupGatewayTreeWithEndpoint(t, "https://gw.example.com:443")
+	writeOIDCBundle(t, xdg, "rosa")
 	t.Setenv("OPENSHELL_GATEWAY_ENDPOINT", "https://gw.example.com/")
 
 	out, err := runCmd(t, "token", "show")
@@ -80,5 +57,18 @@ func TestTokenShow_GatewayEndpointEnvVar_TrailingSlashMatchesDefaultPort(t *test
 	}
 	if !strings.Contains(out, "gateway=rosa") {
 		t.Errorf("expected a gateway-backed source, got:\n%s", out)
+	}
+}
+
+// writeOIDCBundle writes a valid, non-expired oidc_token.json for gwName
+// into xdg (as returned by setupGatewayTree/setupGatewayTreeWithEndpoint),
+// so a `token show` against it resolves a real gateway-backed
+// DiskBundleSource instead of failing on a missing bundle file.
+func writeOIDCBundle(t *testing.T, xdg, gwName string) {
+	t.Helper()
+	bundle := `{"access_token":"tok","expires_at":9999999999,"issuer":"https://issuer","client_id":"openshell-cli"}`
+	path := filepath.Join(xdg, "openshell", "gateways", gwName, "oidc_token.json")
+	if err := os.WriteFile(path, []byte(bundle), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
