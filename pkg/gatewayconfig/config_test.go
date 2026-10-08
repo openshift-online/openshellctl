@@ -170,6 +170,47 @@ func TestFindByEndpoint_TrailingSlash(t *testing.T) {
 	}
 }
 
+// TestFindByEndpoint_TrailingSlashMatchesExplicitDefaultPort is the exact
+// onboarding-thread bug: a gateway registered with an explicit default port
+// (:443) must be found by an endpoint that instead has a trailing slash and
+// no port — the two are the same gateway, just spelled differently (one by
+// `gateway add`/the CronJobs, one by a service account's exported
+// OPENSHELL_GATEWAY_ENDPOINT).
+func TestFindByEndpoint_TrailingSlashMatchesExplicitDefaultPort(t *testing.T) {
+	env := Env{
+		UserFS: fstest.MapFS{
+			"gateways/rosa/metadata.json": {Data: []byte(md("rosa", "https://gw.example.com:443"))},
+			"active_gateway":              {Data: []byte("rosa")},
+		},
+	}
+	name, ok, err := FindByEndpoint(env, "https://gw.example.com/")
+	if err != nil || !ok {
+		t.Fatalf("FindByEndpoint ok=%v err=%v, want a match", ok, err)
+	}
+	if name != "rosa" {
+		t.Errorf("name = %q, want rosa", name)
+	}
+}
+
+// TestFindByEndpoint_DifferentPortDoesNotMatch confirms normalization isn't
+// so loose that it matches a genuinely different gateway on the same host —
+// a different, non-default port is a real distinguishing detail.
+func TestFindByEndpoint_DifferentPortDoesNotMatch(t *testing.T) {
+	env := Env{
+		UserFS: fstest.MapFS{
+			"gateways/rosa/metadata.json": {Data: []byte(md("rosa", "https://gw.example.com:8443"))},
+			"active_gateway":              {Data: []byte("rosa")},
+		},
+	}
+	_, ok, err := FindByEndpoint(env, "https://gw.example.com:9443/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("expected no match for a different, non-default port")
+	}
+}
+
 func TestResolve_EndpointOnly(t *testing.T) {
 	env := Env{UserFS: fstest.MapFS{}, SysFS: fstest.MapFS{}}
 	tgt, err := Resolve(env, ResolveInput{Endpoint: "https://direct:8080"})

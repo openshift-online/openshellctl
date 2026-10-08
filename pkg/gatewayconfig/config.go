@@ -154,20 +154,27 @@ func List(env Env) ([]Info, error) {
 	return out, nil
 }
 
-// normalizeEndpoint strips all trailing slashes (upstream
-// normalize_gateway_endpoint = trim_end_matches('/'), main.rs:58-60).
-func normalizeEndpoint(endpoint string) string {
-	return strings.TrimRight(endpoint, "/")
-}
-
-// FindByEndpoint matches a (slash-normalised) endpoint against the active
-// gateway first, then all gateways (main.rs:62-76).
+// FindByEndpoint matches an endpoint against the active gateway first, then
+// all gateways, comparing NormalizeEndpoint's canonical form on both sides
+// (main.rs:62-76 did a bare trailing-slash trim; this additionally matches
+// across default-vs-explicit port, scheme/host case, and multiple trailing
+// slashes — see NormalizeEndpoint's doc comment for why).
+//
+// A target endpoint that fails to normalize (e.g. malformed) simply matches
+// nothing, same as upstream's behavior for an endpoint with no match — it is
+// not propagated as an error, since an endpoint-only invocation is allowed
+// to fall through to "no match" and use the raw endpoint directly. A single
+// already-registered gateway with a malformed GatewayEndpoint is skipped
+// rather than aborting the scan of every other gateway.
 func FindByEndpoint(env Env, endpoint string) (string, bool, error) {
-	target := normalizeEndpoint(endpoint)
+	target, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return "", false, nil
+	}
 
-	if active, err := ActiveGateway(env); err == nil {
+	if active, aerr := ActiveGateway(env); aerr == nil {
 		if r, lerr := Load(env, active); lerr == nil {
-			if normalizeEndpoint(r.Metadata.GatewayEndpoint) == target {
+			if norm, nerr := NormalizeEndpoint(r.Metadata.GatewayEndpoint); nerr == nil && norm == target {
 				return r.Metadata.Name, true, nil
 			}
 		}
@@ -175,11 +182,15 @@ func FindByEndpoint(env Env, endpoint string) (string, bool, error) {
 
 	infos, _ := List(env)
 	for _, info := range infos {
-		r, err := Load(env, info.Name)
-		if err != nil {
+		r, lerr := Load(env, info.Name)
+		if lerr != nil {
 			continue
 		}
-		if normalizeEndpoint(r.Metadata.GatewayEndpoint) == target {
+		norm, nerr := NormalizeEndpoint(r.Metadata.GatewayEndpoint)
+		if nerr != nil {
+			continue
+		}
+		if norm == target {
 			return r.Metadata.Name, true, nil
 		}
 	}
@@ -192,7 +203,7 @@ type ResolveInput struct{ Endpoint, Name string }
 // Target is a resolved gateway context.
 type Target struct {
 	Name     string    // "" when endpoint given and no metadata matched (falls back to endpoint)
-	Endpoint string    //
+	Endpoint string    // the user's original string, verbatim — never NormalizeEndpoint's canonical form
 	Resolved *Resolved // nil when endpoint-only
 }
 
