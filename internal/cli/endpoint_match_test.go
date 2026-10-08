@@ -25,14 +25,30 @@ import (
 // fixture") — parameterized with the explicit :443 this scenario needs,
 // since setupGatewayTree's own default (a bare host, no port) wouldn't
 // exercise the bug.
+//
+// Uses a loopback endpoint (127.0.0.1), not a DNS name: `token show`'s
+// reportCurrentUser does a best-effort whoami dial that cliDeps injection
+// cannot stand in for here (injecting a mock Gateway would also bypass
+// resolveAuth's real gatewayconfig.Resolve/FindByEndpoint path, which is
+// exactly what this test needs to exercise for real). A loopback address
+// with nothing listening fails the dial immediately with a local connection
+// refusal — no DNS lookup, no real network egress — keeping the test
+// hermetic without the dial itself touching the network.
 func TestTokenShow_GatewayEndpointWithTrailingSlashMatchesRegisteredDefaultPort(t *testing.T) {
 	// Registered the way `gateway add`/the CronJobs do: an explicit default
 	// port.
-	xdg := setupGatewayTreeWithEndpoint(t, "https://gw.example.com:443")
+	xdg := setupGatewayTreeWithEndpoint(t, "https://127.0.0.1:443")
 	writeOIDCBundle(t, xdg, "rosa")
+	// No active_gateway shortcut: this must be found purely by
+	// FindByEndpoint's full scan, not the active-gateway fast path
+	// FindByEndpoint also checks first (setupGatewayTreeWithEndpoint sets
+	// one by default; remove it so this test exercises the scan loop).
+	if err := os.Remove(filepath.Join(xdg, "openshell", "active_gateway")); err != nil {
+		t.Fatal(err)
+	}
 
 	// Exported the way a service account would: trailing slash, no port.
-	out, err := runCmd(t, "token", "show", "--gateway-endpoint", "https://gw.example.com/")
+	out, err := runCmd(t, "token", "show", "--gateway-endpoint", "https://127.0.0.1/")
 	if err != nil {
 		t.Fatalf("token show: %v", err)
 	}
@@ -45,11 +61,14 @@ func TestTokenShow_GatewayEndpointWithTrailingSlashMatchesRegisteredDefaultPort(
 // same scenario driven through the actual environment variable
 // (OPENSHELL_GATEWAY_ENDPOINT) rather than the --gateway-endpoint flag, since
 // that's literally how the onboarding thread's service account configured
-// it.
+// it. Keeps the default active_gateway from setupGatewayTreeWithEndpoint
+// (a realistic state: a service account may well have a previously-selected
+// active gateway too), exercising FindByEndpoint's active-gateway fast path
+// instead of the full-scan path the test above covers.
 func TestTokenShow_GatewayEndpointEnvVar_TrailingSlashMatchesDefaultPort(t *testing.T) {
-	xdg := setupGatewayTreeWithEndpoint(t, "https://gw.example.com:443")
+	xdg := setupGatewayTreeWithEndpoint(t, "https://127.0.0.1:443")
 	writeOIDCBundle(t, xdg, "rosa")
-	t.Setenv("OPENSHELL_GATEWAY_ENDPOINT", "https://gw.example.com/")
+	t.Setenv("OPENSHELL_GATEWAY_ENDPOINT", "https://127.0.0.1/")
 
 	out, err := runCmd(t, "token", "show")
 	if err != nil {

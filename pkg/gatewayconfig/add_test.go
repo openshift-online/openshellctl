@@ -158,15 +158,21 @@ func TestNewMetadata_EmptyEndpoint(t *testing.T) {
 	}
 }
 
-// TestNewMetadata_InvalidPortRejectedByNormalizeEndpoint confirms NewMetadata
-// now also validates with NormalizeEndpoint — the exact function
-// FindByEndpoint will later use to match this gateway. EnsureScheme already
-// rejects this particular input too (both call url.Parse, which errors on
-// an unparseable port), so this pins the explicit coupling rather than a new
-// class of error: a registration must never succeed while producing an
-// endpoint NormalizeEndpoint can't later match against, which would make the
-// freshly-registered gateway permanently unfindable by endpoint.
-func TestNewMetadata_InvalidPortRejectedByNormalizeEndpoint(t *testing.T) {
+// TestNewMetadata_ValidatesWithNormalizeEndpoint confirms NewMetadata calls
+// NormalizeEndpoint — the exact function FindByEndpoint will later use to
+// match this gateway — as part of its own validation, coupling write-time
+// validation to match-time validation so a registration can never succeed
+// while producing an endpoint that's later unfindable by FindByEndpoint.
+//
+// Honesty note (raised in review): for every input known today,
+// EnsureScheme's own url.Parse call already rejects anything
+// NormalizeEndpoint would also reject (both parse the same way and require a
+// non-empty host), so this specific input doesn't exercise a class of error
+// EnsureScheme would otherwise miss — it pins the coupling as an invariant,
+// not a presently-reachable new failure mode. If the two functions' parsing
+// ever diverges, this is the test that would catch a registration slipping
+// through with an endpoint NormalizeEndpoint can't later match.
+func TestNewMetadata_ValidatesWithNormalizeEndpoint(t *testing.T) {
 	_, err := NewMetadata(AddInput{
 		Endpoint:   "https://gw.example.com:notaport",
 		OIDCIssuer: "https://issuer",

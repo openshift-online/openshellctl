@@ -99,6 +99,22 @@ from the upstream Rust CLI" below.
   other `OPENSHELL_*` flag/env pair in this CLI is (via `--no-browser` and
   viper): `0`/`false` (case-insensitive) means "browser allowed," not merely
   "the variable is unset."
+- **Endpoint matching tolerates formatting differences.** Upstream's
+  `normalize_gateway_endpoint` only trims a trailing slash before comparing
+  `OPENSHELL_GATEWAY_ENDPOINT`/`--gateway-endpoint` against a registered
+  gateway's endpoint (`main.rs:58-76`). `FindByEndpoint` additionally
+  compares via `NormalizeEndpoint` (`pkg/gatewayconfig/endpoint.go`), which
+  lower-cases the scheme/host and strips an explicit default port (`:443`
+  for https, `:80` for http) — so a gateway registered as `https://host:443`
+  (as `gateway add`/the CronJobs write it) is still found when the endpoint
+  is given as `https://host/` (as an exported env var commonly is). A
+  different, non-default port, or a different path/query/fragment, is still
+  treated as a genuinely different gateway. `gateway add` validates a new
+  endpoint with the same function, so a registration can never succeed while
+  producing an endpoint `FindByEndpoint` could not later match — but the
+  endpoint actually stored in `metadata.json` is never rewritten into this
+  normalized form, only `EnsureScheme`'s scheme-defaulted, otherwise verbatim
+  result (see the schema table above).
 - **`--gateway-insecure` also covers the OIDC-discovery probe**, not just the
   gRPC dial. A staging/internal gateway whose certificate isn't in the public
   trust store would otherwise make discovery fail even though the gateway is

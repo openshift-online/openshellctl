@@ -32,7 +32,7 @@ func TestNormalizeEndpoint(t *testing.T) {
 		{"fragment preserved", "https://host#frag", "https://host#frag", false},
 		{"IPv6 literal, brackets preserved, default port stripped", "https://[::1]:443/", "https://[::1]", false},
 		{"IPv6 literal, non-default port kept", "https://[::1]:8443/", "https://[::1]:8443", false},
-		{"IPv6 literal, case folded", "https://[::1]:443/", "https://[::1]", false},
+		{"IPv6 literal, case folded", "https://[2001:DB8::1]:443/", "https://[2001:db8::1]", false},
 		{"empty endpoint is an error", "", "", true},
 		{"unparseable port is an error (EnsureScheme would not catch this)", "https://host:notaport", "", true},
 	}
