@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,18 +27,19 @@ import (
 // since setupGatewayTree's own default (a bare host, no port) wouldn't
 // exercise the bug.
 //
-// Uses a loopback endpoint (127.0.0.1), not a DNS name: `token show`'s
+// Runs with -o json, not the default text output: text mode's
 // reportCurrentUser does a best-effort whoami dial that cliDeps injection
 // cannot stand in for here (injecting a mock Gateway would also bypass
 // resolveAuth's real gatewayconfig.Resolve/FindByEndpoint path, which is
-// exactly what this test needs to exercise for real). A loopback address
-// with nothing listening fails the dial immediately with a local connection
-// refusal — no DNS lookup, no real network egress — keeping the test
-// hermetic without the dial itself touching the network.
+// exactly what this test needs to exercise for real). reportCurrentUser
+// returns immediately for any non-text output (see token.go), and the JSON
+// payload already includes the resolved source's describe string — so -o
+// json gives the exact same assertion with no dial at all, not merely a
+// fast-failing loopback one.
 func TestTokenShow_GatewayEndpointWithTrailingSlashMatchesRegisteredDefaultPort(t *testing.T) {
 	// Registered the way `gateway add`/the CronJobs do: an explicit default
 	// port.
-	xdg := setupGatewayTreeWithEndpoint(t, "https://127.0.0.1:443")
+	xdg := setupGatewayTreeWithEndpoint(t, "https://gw.example.com:443")
 	writeOIDCBundle(t, xdg, "rosa")
 	// No active_gateway shortcut: this must be found purely by
 	// FindByEndpoint's full scan, not the active-gateway fast path
@@ -48,13 +50,11 @@ func TestTokenShow_GatewayEndpointWithTrailingSlashMatchesRegisteredDefaultPort(
 	}
 
 	// Exported the way a service account would: trailing slash, no port.
-	out, err := runCmd(t, "token", "show", "--gateway-endpoint", "https://127.0.0.1/")
+	out, err := runCmd(t, "token", "show", "-o", "json", "--gateway-endpoint", "https://gw.example.com/")
 	if err != nil {
 		t.Fatalf("token show: %v", err)
 	}
-	if !strings.Contains(out, "gateway=rosa") {
-		t.Errorf("expected a gateway-backed source (oidc_token.json (gateway=rosa)), got:\n%s", out)
-	}
+	assertGatewayBackedJSON(t, out, "rosa")
 }
 
 // TestTokenShow_GatewayEndpointEnvVar_TrailingSlashMatchesDefaultPort is the
@@ -66,16 +66,30 @@ func TestTokenShow_GatewayEndpointWithTrailingSlashMatchesRegisteredDefaultPort(
 // active gateway too), exercising FindByEndpoint's active-gateway fast path
 // instead of the full-scan path the test above covers.
 func TestTokenShow_GatewayEndpointEnvVar_TrailingSlashMatchesDefaultPort(t *testing.T) {
-	xdg := setupGatewayTreeWithEndpoint(t, "https://127.0.0.1:443")
+	xdg := setupGatewayTreeWithEndpoint(t, "https://gw.example.com:443")
 	writeOIDCBundle(t, xdg, "rosa")
-	t.Setenv("OPENSHELL_GATEWAY_ENDPOINT", "https://127.0.0.1/")
+	t.Setenv("OPENSHELL_GATEWAY_ENDPOINT", "https://gw.example.com/")
 
-	out, err := runCmd(t, "token", "show")
+	out, err := runCmd(t, "token", "show", "-o", "json")
 	if err != nil {
 		t.Fatalf("token show: %v", err)
 	}
-	if !strings.Contains(out, "gateway=rosa") {
-		t.Errorf("expected a gateway-backed source, got:\n%s", out)
+	assertGatewayBackedJSON(t, out, "rosa")
+}
+
+// assertGatewayBackedJSON parses token show's -o json output and confirms
+// its "describe" field names gwName as the source gateway (the
+// DiskBundleSource.Describe() format is "oidc_token.json (gateway=<name>)").
+func assertGatewayBackedJSON(t *testing.T, out, gwName string) {
+	t.Helper()
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	describe, _ := parsed["describe"].(string)
+	want := "gateway=" + gwName
+	if !strings.Contains(describe, want) {
+		t.Errorf("describe = %q, want it to contain %q (a gateway-backed oidc_token.json source)", describe, want)
 	}
 }
 

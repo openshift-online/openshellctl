@@ -34,7 +34,7 @@ func TestNormalizeEndpoint(t *testing.T) {
 		{"IPv6 literal, non-default port kept", "https://[::1]:8443/", "https://[::1]:8443", false},
 		{"IPv6 literal, case folded", "https://[2001:DB8::1]:443/", "https://[2001:db8::1]", false},
 		{"empty endpoint is an error", "", "", true},
-		{"unparseable port is an error (EnsureScheme would not catch this)", "https://host:notaport", "", true},
+		{"unparseable port is an error (EnsureScheme rejects this identically — both call url.Parse)", "https://host:notaport", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
