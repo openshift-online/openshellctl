@@ -158,6 +158,45 @@ func TestNewMetadata_EmptyEndpoint(t *testing.T) {
 	}
 }
 
+// TestNewMetadata_InvalidPortRejectedByNormalizeEndpoint confirms NewMetadata
+// now also validates with NormalizeEndpoint — the exact function
+// FindByEndpoint will later use to match this gateway. EnsureScheme already
+// rejects this particular input too (both call url.Parse, which errors on
+// an unparseable port), so this pins the explicit coupling rather than a new
+// class of error: a registration must never succeed while producing an
+// endpoint NormalizeEndpoint can't later match against, which would make the
+// freshly-registered gateway permanently unfindable by endpoint.
+func TestNewMetadata_InvalidPortRejectedByNormalizeEndpoint(t *testing.T) {
+	_, err := NewMetadata(AddInput{
+		Endpoint:   "https://gw.example.com:notaport",
+		OIDCIssuer: "https://issuer",
+	})
+	var invalid *InvalidEndpointError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("err = %v, want InvalidEndpointError", err)
+	}
+}
+
+// TestNewMetadata_StoresEndpointAsGiven_NotNormalized confirms the
+// NormalizeEndpoint validation pass is purely a check — Metadata.
+// GatewayEndpoint still stores EnsureScheme's result (scheme defaulted, but
+// otherwise verbatim), never NormalizeEndpoint's canonical form (lower-cased,
+// default port stripped). Storing the normalized form would make the
+// metadata.json diverge from what the user/script actually typed for no
+// functional benefit, since FindByEndpoint normalizes at compare time anyway.
+func TestNewMetadata_StoresEndpointAsGiven_NotNormalized(t *testing.T) {
+	m, err := NewMetadata(AddInput{
+		Endpoint:   "HTTPS://GW.example.com:443/",
+		OIDCIssuer: "https://issuer",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.GatewayEndpoint != "HTTPS://GW.example.com:443/" {
+		t.Errorf("GatewayEndpoint = %q, want the endpoint stored verbatim (as EnsureScheme returns it)", m.GatewayEndpoint)
+	}
+}
+
 func TestNewMetadata_ScopesSet(t *testing.T) {
 	m, err := NewMetadata(AddInput{
 		Endpoint:   "https://gw.example.com",
