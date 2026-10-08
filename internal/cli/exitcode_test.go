@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
+	"github.com/openshift-online/openshellctl/pkg/doctor"
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
@@ -41,6 +42,16 @@ func TestExitCodeFor(t *testing.T) {
 		{"lifecycle error → provision", &sandbox.ErrLifecycle{Target: "Stopped"}, ExitProvision},
 		{"lifecycle timeout → provision", &sandbox.ErrLifecycleTimeout{Target: "Ready"}, ExitProvision},
 		{"delete timeout → provision", &sandbox.ErrDeleteTimeout{Name: "sb"}, ExitProvision},
+
+		// doctor's ErrChecksFailed delegates to its own ExitCode() priority
+		// table; these four confirm exitCodeFor actually calls it (the
+		// table itself, including every check name, is exhaustively tested
+		// in pkg/doctor/errors_test.go — see TestDoctorExitCodesMatchConstants
+		// below for the cross-package value pinning).
+		{"doctor roles check failed → forbidden", &doctor.ErrChecksFailed{Results: []doctor.CheckResult{{Name: "Roles", Status: doctor.StatusFail}}}, ExitForbidden},
+		{"doctor credentials check failed → auth", &doctor.ErrChecksFailed{Results: []doctor.CheckResult{{Name: "Credentials", Status: doctor.StatusFail}}}, ExitAuth},
+		{"doctor endpoint url check failed → usage", &doctor.ErrChecksFailed{Results: []doctor.CheckResult{{Name: "Endpoint URL", Status: doctor.StatusFail}}}, ExitUsage},
+		{"doctor dns check failed → error", &doctor.ErrChecksFailed{Results: []doctor.CheckResult{{Name: "DNS", Status: doctor.StatusFail}}}, ExitError},
 
 		// gatewayconfig typed errors (gateway add/list/select/remove/logout).
 		{"gateway exists → conflict", &gatewayconfig.GatewayExistsError{Name: "x"}, ExitConflict},
@@ -84,5 +95,37 @@ func TestNotImplementedError_Message(t *testing.T) {
 	e := &NotImplementedError{Command: "exec"}
 	if e.Error() != "exec: not implemented yet" {
 		t.Errorf("unexpected message: %q", e.Error())
+	}
+}
+
+// TestDoctorExitCodesMatchConstants pins doctor.ErrChecksFailed.ExitCode()'s
+// locally-mirrored exit-code values (pkg/doctor/errors.go — duplicated
+// there, not imported, since this package imports pkg/doctor and the
+// reverse would cycle) against this package's real constants, for every
+// check name doctor's priority table branches on. If the two ever drift
+// apart, this test — not a confusing exit-code mismatch at runtime — is
+// where it surfaces.
+func TestDoctorExitCodesMatchConstants(t *testing.T) {
+	tests := []struct {
+		checkName string
+		want      int
+	}{
+		{"Roles", ExitForbidden},
+		{"Credentials", ExitAuth},
+		{"Audience", ExitAuth},
+		{"Expiry", ExitAuth},
+		{"Endpoint URL", ExitUsage},
+		{"Providers", ExitUsage},
+		{"DNS", ExitError},
+		{"HTTP reachability", ExitError},
+		{"OIDC config match", ExitError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.checkName, func(t *testing.T) {
+			err := &doctor.ErrChecksFailed{Results: []doctor.CheckResult{{Name: tt.checkName, Status: doctor.StatusFail}}}
+			if got := err.ExitCode(); got != tt.want {
+				t.Errorf("ErrChecksFailed{%s failed}.ExitCode() = %d, want %d (this package's constant)", tt.checkName, got, tt.want)
+			}
+		})
 	}
 }

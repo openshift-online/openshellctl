@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
+	"github.com/openshift-online/openshellctl/pkg/doctor"
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
@@ -70,6 +71,14 @@ func exitCodeFor(err error) int {
 	var usage *UsageError
 	if errors.As(err, &usage) {
 		return ExitUsage
+	}
+
+	// doctor's own priority table among its failing checks (pkg/doctor/
+	// errors.go) — checked early since it's a self-contained decision, not
+	// competing with the buckets below.
+	var checksFailed *doctor.ErrChecksFailed
+	if errors.As(err, &checksFailed) {
+		return checksFailed.ExitCode()
 	}
 
 	// Permission denied → 7 (authenticated, but not authorized). Checked
