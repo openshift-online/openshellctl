@@ -211,6 +211,42 @@ func TestFindByEndpoint_DifferentPortDoesNotMatch(t *testing.T) {
 	}
 }
 
+// TestFindByEndpoint_MalformedTargetDoesNotMatch confirms a target endpoint
+// that NormalizeEndpoint can't parse (e.g. an invalid port) is treated as
+// "no match" rather than propagated as an error — an endpoint-only
+// invocation is allowed to fall through to "no match" and use the raw
+// endpoint directly (see Resolve).
+func TestFindByEndpoint_MalformedTargetDoesNotMatch(t *testing.T) {
+	env := Env{UserFS: fstest.MapFS{
+		"gateways/rosa/metadata.json": {Data: []byte(md("rosa", "https://gw.example.com"))},
+	}}
+	_, ok, err := FindByEndpoint(env, "https://gw.example.com:notaport")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("expected no match for an unparseable target endpoint")
+	}
+}
+
+// TestFindByEndpoint_SkipsMalformedRegisteredEndpoint confirms a single
+// already-registered gateway with a malformed GatewayEndpoint (NormalizeEndpoint
+// can't parse it) is skipped, not an abort of the whole scan — a later,
+// well-formed gateway must still be found.
+func TestFindByEndpoint_SkipsMalformedRegisteredEndpoint(t *testing.T) {
+	env := Env{UserFS: fstest.MapFS{
+		"gateways/bad/metadata.json":  {Data: []byte(md("bad", "https://gw:notaport"))},
+		"gateways/good/metadata.json": {Data: []byte(md("good", "https://target"))},
+	}}
+	name, ok, err := FindByEndpoint(env, "https://target/")
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v, want a match on the well-formed gateway", ok, err)
+	}
+	if name != "good" {
+		t.Errorf("name = %q, want good", name)
+	}
+}
+
 func TestResolve_EndpointOnly(t *testing.T) {
 	env := Env{UserFS: fstest.MapFS{}, SysFS: fstest.MapFS{}}
 	tgt, err := Resolve(env, ResolveInput{Endpoint: "https://direct:8080"})
@@ -305,6 +341,23 @@ func TestMetadata_OIDCClientIDDefault(t *testing.T) {
 	m.OIDCClientID = &cid
 	if got := m.OIDCClientIDOrDefault(); got != "custom" {
 		t.Errorf("client id = %q, want custom", got)
+	}
+}
+
+func TestMetadata_OIDCAudienceDefault(t *testing.T) {
+	m := Metadata{}
+	if got := m.OIDCAudienceOrDefault(); got != "openshell-cli" {
+		t.Errorf("default audience = %q, want openshell-cli", got)
+	}
+	aud := "custom-audience"
+	m.OIDCAudience = &aud
+	if got := m.OIDCAudienceOrDefault(); got != "custom-audience" {
+		t.Errorf("audience = %q, want custom-audience", got)
+	}
+	empty := ""
+	m.OIDCAudience = &empty
+	if got := m.OIDCAudienceOrDefault(); got != "openshell-cli" {
+		t.Errorf("empty-string audience = %q, want the default", got)
 	}
 }
 
