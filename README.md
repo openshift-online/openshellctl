@@ -38,6 +38,46 @@ openshellctl sandbox exec --name my-sandbox -- python3 /workspace/main.py
 openshellctl sandbox delete my-sandbox
 ```
 
+## First run: `openshellctl doctor`
+
+Before creating a sandbox on a new machine, run `doctor` — it checks endpoint reachability, DNS, credentials, token audience/roles/expiry, and OIDC config drift in one pass, with the exact next command for anything missing.
+
+All-green (three service-account env vars exported, nothing else):
+
+```
+$ openshellctl doctor
+✓ Endpoint URL       http://gw.example.com
+✓ DNS                gw.example.com -> [10.0.0.1]
+✓ HTTP reachability  http://gw.example.com/auth/oidc-config reachable (issuer=https://issuer.example.com)
+✓ Credentials        minted token for subject "svc-account"
+✓ Audience           token audience [openshell-cli] includes "openshell-cli"
+✓ Roles              token roles [openshell-user]
+✓ Expiry             token expires at 2026-10-09T12:00:00Z (in 23h59m59s)
+✓ OIDC config match  registered metadata matches /auth/oidc-config
+- Providers          no --provider/-f given
+```
+
+Missing the secret (a real run, `OPENSHELL_OIDC_CLIENT_SECRET` unset):
+
+```
+$ openshellctl doctor --gateway-endpoint https://gw.example.com
+✓ Endpoint URL       https://gw.example.com (normalized: https://gw.example.com)
+✓ DNS                gw.example.com -> [10.0.0.1]
+✗ HTTP reachability  GET https://gw.example.com/auth/oidc-config: dial tcp: connect: connection refused
+  Hint: check the gateway is reachable (try: curl -v https://gw.example.com/auth/oidc-config), or pass --gateway-insecure for an internal CA
+✗ Credentials        no credentials configured for gateway "https://gw.example.com" (checked: --token / OPENSHELL_TOKEN, OPENSHELL_OIDC_CLIENT_SECRET (or --client-secret-file), gateways/<name>/metadata.json, gateways/<name>/mtls/)
+  Hint: for a service account, export OPENSHELL_OIDC_CLIENT_SECRET (or pass --client-secret-file); for a human, run `openshellctl login`
+- Audience           skipped: Credentials check failed
+- Roles              skipped: Credentials check failed
+- Expiry             skipped: Credentials check failed
+- OIDC config match  no discovered OIDC config to compare
+- Providers          no --provider/-f given
+$ echo $?
+3
+```
+
+Every failing line gets a `Hint:` with the exact next command — see [`docs/doctor.md`](docs/doctor.md) for the full list of checks, their skip rules, and what each hint means.
+
 ## Authentication
 
 openshellctl resolves authentication in priority order — the first match wins:
@@ -536,6 +576,22 @@ openshellctl gateway login
 | `-o`, `--output` | `gateway list` format: `table` (default), `json`, `yaml` |
 
 `gateway add` only registers OIDC gateways. A gateway that doesn't answer `/auth/oidc-config` and has no `--oidc-issuer` override fails with a clear error rather than being silently misregistered. If authentication fails after registration (wrong secret, unreachable issuer), the registration is automatically rolled back — a corrected retry doesn't need a manual `gateway remove` first. See [`docs/gateway.md`](docs/gateway.md) for the metadata schema and the full list of differences from the upstream Rust CLI.
+
+### `doctor`
+
+Connectivity/auth preflight — one line per check, with the exact next command for any failure. See [First run: `openshellctl doctor`](#first-run-openshellctl-doctor) above and [`docs/doctor.md`](docs/doctor.md) for every check, its skip rule, and its hint.
+
+```bash
+openshellctl doctor                              # the 8 baseline checks
+openshellctl doctor --provider my-openai         # also check a provider exists
+openshellctl doctor -f sandbox.yaml -o json      # providerRefs from a manifest; machine-readable output
+```
+
+| Flag | Description |
+|------|-------------|
+| `-o`, `--output` | Format: `table` (default), `json`, `yaml` |
+| `--provider` | Provider name/type to check exists on the gateway (repeatable); wins over `-f` when both are given |
+| `-f`, `--file` | Manifest file to read `providerRefs` from, when `--provider` is not given (`-` for stdin) |
 
 ### `token`
 
