@@ -53,11 +53,23 @@ func NewMetadata(in AddInput) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
-	if !strings.HasPrefix(endpoint, "https://") {
+	// Scheme comparison is case-insensitive (URI schemes are, and
+	// NormalizeEndpoint below already treats "HTTPS://" and "https://" as
+	// the same gateway) — rejecting an uppercase scheme here while
+	// FindByEndpoint later matches it anyway would be an inconsistent gap.
+	if !strings.HasPrefix(strings.ToLower(endpoint), "https://") {
 		return Metadata{}, &InvalidEndpointError{
 			Endpoint: endpoint,
 			Cause:    fmt.Errorf("OIDC gateway registration requires https (got %q)", endpoint),
 		}
+	}
+	// Validate against the exact same function FindByEndpoint will use to
+	// match this gateway later, so a registration can never succeed while
+	// being permanently unfindable by endpoint. The endpoint actually
+	// stored (below) is still EnsureScheme's result, not this normalized
+	// form — NormalizeEndpoint is used here purely as a validation gate.
+	if _, err := NormalizeEndpoint(endpoint); err != nil {
+		return Metadata{}, err
 	}
 
 	name := in.Name

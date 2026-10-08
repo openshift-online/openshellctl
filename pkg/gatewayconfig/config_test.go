@@ -170,6 +170,83 @@ func TestFindByEndpoint_TrailingSlash(t *testing.T) {
 	}
 }
 
+// TestFindByEndpoint_TrailingSlashMatchesExplicitDefaultPort is the exact
+// onboarding-thread bug: a gateway registered with an explicit default port
+// (:443) must be found by an endpoint that instead has a trailing slash and
+// no port — the two are the same gateway, just spelled differently (one by
+// `gateway add`/the CronJobs, one by a service account's exported
+// OPENSHELL_GATEWAY_ENDPOINT).
+func TestFindByEndpoint_TrailingSlashMatchesExplicitDefaultPort(t *testing.T) {
+	env := Env{
+		UserFS: fstest.MapFS{
+			"gateways/rosa/metadata.json": {Data: []byte(md("rosa", "https://gw.example.com:443"))},
+			"active_gateway":              {Data: []byte("rosa")},
+		},
+	}
+	name, ok, err := FindByEndpoint(env, "https://gw.example.com/")
+	if err != nil || !ok {
+		t.Fatalf("FindByEndpoint ok=%v err=%v, want a match", ok, err)
+	}
+	if name != "rosa" {
+		t.Errorf("name = %q, want rosa", name)
+	}
+}
+
+// TestFindByEndpoint_DifferentPortDoesNotMatch confirms normalization isn't
+// so loose that it matches a genuinely different gateway on the same host —
+// a different, non-default port is a real distinguishing detail.
+func TestFindByEndpoint_DifferentPortDoesNotMatch(t *testing.T) {
+	env := Env{
+		UserFS: fstest.MapFS{
+			"gateways/rosa/metadata.json": {Data: []byte(md("rosa", "https://gw.example.com:8443"))},
+			"active_gateway":              {Data: []byte("rosa")},
+		},
+	}
+	_, ok, err := FindByEndpoint(env, "https://gw.example.com:9443/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("expected no match for a different, non-default port")
+	}
+}
+
+// TestFindByEndpoint_MalformedTargetDoesNotMatch confirms a target endpoint
+// that NormalizeEndpoint can't parse (e.g. an invalid port) is treated as
+// "no match" rather than propagated as an error — an endpoint-only
+// invocation is allowed to fall through to "no match" and use the raw
+// endpoint directly (see Resolve).
+func TestFindByEndpoint_MalformedTargetDoesNotMatch(t *testing.T) {
+	env := Env{UserFS: fstest.MapFS{
+		"gateways/rosa/metadata.json": {Data: []byte(md("rosa", "https://gw.example.com"))},
+	}}
+	_, ok, err := FindByEndpoint(env, "https://gw.example.com:notaport")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("expected no match for an unparseable target endpoint")
+	}
+}
+
+// TestFindByEndpoint_SkipsMalformedRegisteredEndpoint confirms a single
+// already-registered gateway with a malformed GatewayEndpoint (NormalizeEndpoint
+// can't parse it) is skipped, not an abort of the whole scan — a later,
+// well-formed gateway must still be found.
+func TestFindByEndpoint_SkipsMalformedRegisteredEndpoint(t *testing.T) {
+	env := Env{UserFS: fstest.MapFS{
+		"gateways/bad/metadata.json":  {Data: []byte(md("bad", "https://gw:notaport"))},
+		"gateways/good/metadata.json": {Data: []byte(md("good", "https://target"))},
+	}}
+	name, ok, err := FindByEndpoint(env, "https://target/")
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v, want a match on the well-formed gateway", ok, err)
+	}
+	if name != "good" {
+		t.Errorf("name = %q, want good", name)
+	}
+}
+
 func TestResolve_EndpointOnly(t *testing.T) {
 	env := Env{UserFS: fstest.MapFS{}, SysFS: fstest.MapFS{}}
 	tgt, err := Resolve(env, ResolveInput{Endpoint: "https://direct:8080"})
@@ -264,6 +341,23 @@ func TestMetadata_OIDCClientIDDefault(t *testing.T) {
 	m.OIDCClientID = &cid
 	if got := m.OIDCClientIDOrDefault(); got != "custom" {
 		t.Errorf("client id = %q, want custom", got)
+	}
+}
+
+func TestMetadata_OIDCAudienceDefault(t *testing.T) {
+	m := Metadata{}
+	if got := m.OIDCAudienceOrDefault(); got != "openshell-cli" {
+		t.Errorf("default audience = %q, want openshell-cli", got)
+	}
+	aud := "custom-audience"
+	m.OIDCAudience = &aud
+	if got := m.OIDCAudienceOrDefault(); got != "custom-audience" {
+		t.Errorf("audience = %q, want custom-audience", got)
+	}
+	empty := ""
+	m.OIDCAudience = &empty
+	if got := m.OIDCAudienceOrDefault(); got != "openshell-cli" {
+		t.Errorf("empty-string audience = %q, want the default", got)
 	}
 }
 

@@ -158,6 +158,51 @@ func TestNewMetadata_EmptyEndpoint(t *testing.T) {
 	}
 }
 
+// TestNewMetadata_ValidatesWithNormalizeEndpoint confirms NewMetadata calls
+// NormalizeEndpoint — the exact function FindByEndpoint will later use to
+// match this gateway — as part of its own validation, coupling write-time
+// validation to match-time validation so a registration can never succeed
+// while producing an endpoint that's later unfindable by FindByEndpoint.
+//
+// Honesty note (raised in review): for every input known today,
+// EnsureScheme's own url.Parse call already rejects anything
+// NormalizeEndpoint would also reject (both parse the same way and require a
+// non-empty host), so this specific input doesn't exercise a class of error
+// EnsureScheme would otherwise miss — it pins the coupling as an invariant,
+// not a presently-reachable new failure mode. If the two functions' parsing
+// ever diverges, this is the test that would catch a registration slipping
+// through with an endpoint NormalizeEndpoint can't later match.
+func TestNewMetadata_ValidatesWithNormalizeEndpoint(t *testing.T) {
+	_, err := NewMetadata(AddInput{
+		Endpoint:   "https://gw.example.com:notaport",
+		OIDCIssuer: "https://issuer",
+	})
+	var invalid *InvalidEndpointError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("err = %v, want InvalidEndpointError", err)
+	}
+}
+
+// TestNewMetadata_StoresEndpointAsGiven_NotNormalized confirms the
+// NormalizeEndpoint validation pass is purely a check — Metadata.
+// GatewayEndpoint still stores EnsureScheme's result (scheme defaulted, but
+// otherwise verbatim), never NormalizeEndpoint's canonical form (lower-cased,
+// default port stripped). Storing the normalized form would make the
+// metadata.json diverge from what the user/script actually typed for no
+// functional benefit, since FindByEndpoint normalizes at compare time anyway.
+func TestNewMetadata_StoresEndpointAsGiven_NotNormalized(t *testing.T) {
+	m, err := NewMetadata(AddInput{
+		Endpoint:   "HTTPS://GW.example.com:443/",
+		OIDCIssuer: "https://issuer",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.GatewayEndpoint != "HTTPS://GW.example.com:443/" {
+		t.Errorf("GatewayEndpoint = %q, want the endpoint stored verbatim (as EnsureScheme returns it)", m.GatewayEndpoint)
+	}
+}
+
 func TestNewMetadata_ScopesSet(t *testing.T) {
 	m, err := NewMetadata(AddInput{
 		Endpoint:   "https://gw.example.com",
