@@ -611,11 +611,14 @@ openshellctl logs                                       # reuses my-sandbox
 | 0 | Success |
 | 1 | Generic / RPC error |
 | 2 | Usage error (bad flags, validation failure, invalid argument rejected by gateway) |
-| 3 | Authentication failure (expired/invalid token, missing credentials) |
+| 3 | Authentication failure (expired/invalid/missing credentials — nothing that re-authenticating can't fix) |
 | 4 | Not found (sandbox, gateway) |
 | 5 | Conflict (already exists, concurrent modification) |
 | 6 | Provisioning failure or timeout |
+| 7 | Permission denied (authenticated, but not authorized — `token refresh` will not help) |
 | N | Remote process exit code (from `exec`/`connect`/`create` with attached command) |
+
+See [`docs/troubleshooting.md`](docs/troubleshooting.md) for the common onboarding errors behind codes 2/3/7 and exactly what changed to make them honest.
 
 ## Environment variables
 

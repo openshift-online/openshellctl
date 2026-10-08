@@ -86,6 +86,14 @@ func newTokenShowCommand() *cobra.Command {
 			if err := writeToken(cmd.OutOrStdout(), tok, src.Describe(), output); err != nil {
 				return err
 			}
+			// Preflight warnings (audience mismatch, no gateway role) — text
+			// only, to keep -o json output machine-parseable (same reasoning
+			// as reportCurrentUser just below).
+			if output == "text" {
+				for _, w := range auth.PreflightWarnings(tok, expectedAudience(target)) {
+					cmd.PrintErrf("warning: %s\n", w)
+				}
+			}
 			// whoami parity: report the gateway's view of the caller (§8.3).
 			// Best-effort — a dial/RPC failure is a warning, not an error, so
 			// `token show` still succeeds offline.
@@ -95,6 +103,24 @@ func newTokenShowCommand() *cobra.Command {
 	}
 	c.Flags().StringVarP(&output, "output", "o", "text", "output format: text|json")
 	return c
+}
+
+// expectedAudience resolves the audience `token show` should warn against,
+// in priority order: --oidc-audience (explicit override), then the resolved
+// gateway's metadata.oidc_audience, then the same upstream default
+// ("openshell-cli") OIDCClientIDOrDefault already uses. Live /auth/oidc-config
+// discovery is deliberately not repeated here — resolveTokenSource already
+// goes through it for a client-credentials resolve when needed, and this is
+// a text-mode-only, best-effort preflight warning, not worth a second,
+// unconditional network round trip on every `token show`.
+func expectedAudience(target *gatewayconfig.Target) string {
+	if v := viper.GetString("oidc-audience"); v != "" {
+		return v
+	}
+	if target != nil && target.Resolved != nil {
+		return target.Resolved.Metadata.OIDCAudienceOrDefault()
+	}
+	return "openshell-cli"
 }
 
 // reportCurrentUser dials the gateway and prints its CurrentUser view. Failures
@@ -181,7 +207,28 @@ func newTokenRefreshCommand() *cobra.Command {
 				viper.Set("write-token", true)
 			}
 			src, target, err := resolveAuth(cmd)
+
+			// --write requires somewhere to persist to. Check this early,
+			// ahead of the more generic resolve-error handling below, only
+			// when doing so reports the more specific, actionable problem:
+			// resolution succeeded (err == nil, so a write will genuinely be
+			// attempted), or failed with ErrNoCredentials (itself a "nothing
+			// is configured" case, same shape as "nowhere to write to"). Any
+			// other resolve error (e.g. UnknownGatewayError from a typo'd
+			// --gateway name, or NoActiveGatewayError) is a more fundamental
+			// problem than write-ability and must not be masked by it — see
+			// TestTokenRefresh_WriteWithUnknownGateway_SurfacesResolveError.
+			var noCreds *auth.ErrNoCredentials
+			if write && (err == nil || errors.As(err, &noCreds)) {
+				if _, werr := requireTokenWriter(target); werr != nil {
+					return werr
+				}
+			}
+
 			if err != nil {
+				if errors.As(err, &noCreds) {
+					return &auth.ErrNothingToRefresh{Cause: err}
+				}
 				return err
 			}
 			src.Invalidate()
@@ -197,20 +244,25 @@ func newTokenRefreshCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// A resolved source with no openshellctl-managed bearer token at
+			// all (an explicit no-auth gateway, or a real mTLS gateway) has
+			// nothing to refresh, by definition — not a fake success.
+			if tok.Source == auth.SourceNone {
+				return &auth.ErrNothingToRefresh{}
+			}
+
 			cmd.Printf("refreshed token for subject %q (expires %s)\n", tok.Subject, tokExpiryStr(tok))
 
 			if write && tok.Source == auth.SourceClientCredentials {
-				w, err := tokenWriterFor(target)
+				w, err := requireTokenWriter(target)
 				if err != nil {
 					return err
 				}
-				if w == nil {
-					cmd.PrintErrln("warning: --write ignored: no named gateway resolved to write to")
-				} else if err := auth.WriteBundle(w, tok); err != nil {
+				if err := auth.WriteBundle(w, tok); err != nil {
 					return fmt.Errorf("write oidc_token.json: %w", err)
-				} else {
-					cmd.Printf("wrote oidc_token.json for gateway %q (Rust CLI schema)\n", target.Name)
 				}
+				cmd.Printf("wrote oidc_token.json for gateway %q (Rust CLI schema)\n", target.Name)
 			}
 			return nil
 		},

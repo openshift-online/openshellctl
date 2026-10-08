@@ -184,10 +184,20 @@ func Execute() int {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
 		}
 		code := exitCodeFor(err)
-		if code == ExitAuth {
-			msg := err.Error()
-			if !strings.Contains(msg, "openshellctl token refresh") && !strings.Contains(msg, "openshellctl login") {
-				fmt.Fprintf(os.Stderr, "Hint: try `openshellctl token refresh` to obtain a new token.\n")
+		if hint := hintFor(err); hint != "" {
+			// The "don't repeat yourself" suppression only makes sense for the
+			// generic refresh hint — e.g. ErrTokenExpired's own message
+			// sometimes already names `openshellctl login` as its remediation.
+			// Other hints (permission-denied, no-credentials, audience/issuer
+			// mismatches) are never redundant with the error text itself, so
+			// they must not be silently dropped by the same check.
+			suppress := hint == refreshHint
+			if suppress {
+				msg := err.Error()
+				suppress = strings.Contains(msg, "openshellctl token refresh") || strings.Contains(msg, "openshellctl login")
+			}
+			if !suppress {
+				fmt.Fprintf(os.Stderr, "%s\n", hint)
 			}
 		}
 		return code

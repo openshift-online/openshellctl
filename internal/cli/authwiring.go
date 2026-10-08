@@ -65,6 +65,25 @@ func tokenWriterFor(target *gatewayconfig.Target) (auth.Writer, error) {
 	return authWriterAdapter{w: w, gatewayName: target.Name}, nil
 }
 
+// requireTokenWriter is tokenWriterFor, but returns a typed usage error
+// instead of a silent (nil, nil) when there's no named, registered gateway
+// to write to. Callers where --write (or similar) is an explicit request to
+// persist something must use this, not tokenWriterFor directly — silently
+// no-op'ing an explicit --write and still exiting 0 is exactly the
+// swallowed-warning bug this exists to close.
+func requireTokenWriter(target *gatewayconfig.Target) (auth.Writer, error) {
+	w, err := tokenWriterFor(target)
+	if err != nil {
+		return nil, err
+	}
+	if w == nil {
+		return nil, &UsageError{Err: fmt.Errorf(
+			"--write requires a named, registered gateway; register one first: " +
+				"openshellctl gateway add <endpoint> --name <name>")}
+	}
+	return w, nil
+}
+
 // oidcConfigFetcher fetches {issuer, audience} from GET <endpoint>/auth/oidc-config.
 // Uses http.DefaultTransport (no Transport override of its own), so it
 // automatically honors --gateway-insecure once applyGatewayInsecureTransport
@@ -123,17 +142,25 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 		Audience:          viper.GetString("oidc-audience"),
 		Gateway:           target.Resolved,
 		GatewayEndpoint:   target.Endpoint,
+		TLSPresent:        target.Resolved != nil && gatewayconfig.TLSMaterialFor(target.Resolved).Present,
 		OIDCConfigFetcher: oidcConfigFetcher,
 	}
 	if scopes := viper.GetString("oidc-scopes"); scopes != "" {
 		in.Scopes = strings.Fields(scopes)
 	}
 
-	// Wire write-back when requested and a named gateway is resolved.
+	// Wire write-back when requested and a named gateway is resolved. Uses
+	// requireTokenWriter, not tokenWriterFor, so an explicit --write-token
+	// against an endpoint-only target (no named, registered gateway) fails
+	// loudly instead of silently no-oping — the same swallowed-warning shape
+	// `token refresh --write` used to have, on every other command that
+	// resolves auth (sandbox list, exec, ...), not just `token refresh`.
 	if viper.GetBool("write-token") {
-		if w, werr := tokenWriterFor(target); werr == nil && w != nil {
-			in.TokenWriter = w
+		w, werr := requireTokenWriter(target)
+		if werr != nil {
+			return nil, target, werr
 		}
+		in.TokenWriter = w
 	}
 
 	src, err := auth.Resolve(cmd.Context(), in, auth.NewSDKExchanger())

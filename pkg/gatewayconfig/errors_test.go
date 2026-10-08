@@ -21,14 +21,14 @@ func TestErrorMessages(t *testing.T) {
 	}
 
 	na := (&NoActiveGatewayError{}).Error()
-	if !strings.HasPrefix(na, "No active gateway.\n") || !strings.Contains(na, "openshell gateway select <name>") {
+	if !strings.HasPrefix(na, "No active gateway.\n") || !strings.Contains(na, "openshellctl gateway select <name>") {
 		t.Errorf("NoActiveGatewayError verbatim mismatch:\n%s", na)
 	}
 
 	unk := (&UnknownGatewayError{Name: "ghost"}).Error()
 	if !strings.HasPrefix(unk, "Unknown gateway 'ghost'.\n") ||
 		!strings.Contains(unk, "--name ghost") ||
-		!strings.Contains(unk, "openshell gateway select") {
+		!strings.Contains(unk, "openshellctl gateway select") {
 		t.Errorf("UnknownGatewayError verbatim mismatch:\n%s", unk)
 	}
 

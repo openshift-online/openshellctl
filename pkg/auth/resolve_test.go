@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -114,20 +115,24 @@ func TestResolve_MissingIssuerErrors(t *testing.T) {
 
 func TestResolve_AuthModeMatrix(t *testing.T) {
 	tests := []struct {
-		mode    gatewayconfig.AuthMode
-		wantErr bool
-		check   func(TokenSource) bool
+		mode       gatewayconfig.AuthMode
+		tlsPresent bool
+		wantErr    bool
+		check      func(TokenSource) bool
 	}{
-		{gatewayconfig.AuthModeOIDC, false, func(s TokenSource) bool { _, ok := s.(*DiskBundleSource); return ok }},
-		{gatewayconfig.AuthModeNone, false, func(s TokenSource) bool { _, ok := s.(*NoAuthSource); return ok }},
-		{gatewayconfig.AuthModePlaintext, false, func(s TokenSource) bool { _, ok := s.(*NoAuthSource); return ok }},
-		{gatewayconfig.AuthModeMTLS, false, func(s TokenSource) bool { _, ok := s.(*NoAuthSource); return ok }},
-		{gatewayconfig.AuthModeUnset, false, func(s TokenSource) bool { _, ok := s.(*NoAuthSource); return ok }},
-		{gatewayconfig.AuthModeCloudflareJWT, true, nil},
+		{gatewayconfig.AuthModeOIDC, false, false, func(s TokenSource) bool { _, ok := s.(*DiskBundleSource); return ok }},
+		{gatewayconfig.AuthModeNone, false, false, func(s TokenSource) bool { _, ok := s.(*NoAuthSource); return ok }},
+		{gatewayconfig.AuthModePlaintext, false, false, func(s TokenSource) bool { _, ok := s.(*NoAuthSource); return ok }},
+		// MTLS/Unset with TLS material present are legitimate, resolved mTLS
+		// gateways — the dial layer enforces the cert triple, so pkg/auth
+		// correctly reports "no bearer token needed" via NoAuthSource.
+		{gatewayconfig.AuthModeMTLS, true, false, func(s TokenSource) bool { _, ok := s.(*NoAuthSource); return ok }},
+		{gatewayconfig.AuthModeUnset, true, false, func(s TokenSource) bool { _, ok := s.(*NoAuthSource); return ok }},
+		{gatewayconfig.AuthModeCloudflareJWT, false, true, nil},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.mode), func(t *testing.T) {
-			in := ResolveInput{Gateway: resolvedGW(tt.mode, gatewayconfig.Metadata{})}
+			in := ResolveInput{Gateway: resolvedGW(tt.mode, gatewayconfig.Metadata{}), TLSPresent: tt.tlsPresent}
 			src, err := Resolve(context.Background(), in, &fakeExchanger{})
 			if tt.wantErr {
 				var unsupported *ErrUnsupportedAuthMode
@@ -141,6 +146,78 @@ func TestResolve_AuthModeMatrix(t *testing.T) {
 			}
 			if !tt.check(src) {
 				t.Errorf("unexpected source type %T for mode %q", src, tt.mode)
+			}
+		})
+	}
+}
+
+// TestResolve_NoCredentialsMatrix is the table test over the full
+// no-credentials input matrix: StaticToken x ClientSecret x Gateway x
+// TLSPresent. ErrNoCredentials fires only when every one of static token,
+// client secret, a resolved OIDC disk bundle, and TLS material is absent —
+// i.e. genuinely nothing was configured, not merely "no auth needed".
+func TestResolve_NoCredentialsMatrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		in         ResolveInput
+		wantNoCred bool
+	}{
+		{
+			name:       "nothing configured at all (Gateway nil)",
+			in:         ResolveInput{},
+			wantNoCred: true,
+		},
+		{
+			name:       "TLSPresent is trusted as given, independent of Gateway (the caller, resolveTokenSource, only ever sets it true when Gateway is also resolved — Resolve itself just trusts the signal)",
+			in:         ResolveInput{TLSPresent: true},
+			wantNoCred: false,
+		},
+		{
+			name:       "Gateway resolved, AuthModeUnset, no TLS material -> no credentials",
+			in:         ResolveInput{Gateway: resolvedGW(gatewayconfig.AuthModeUnset, gatewayconfig.Metadata{})},
+			wantNoCred: true,
+		},
+		{
+			name:       "Gateway resolved, AuthModeMTLS, no TLS material -> no credentials",
+			in:         ResolveInput{Gateway: resolvedGW(gatewayconfig.AuthModeMTLS, gatewayconfig.Metadata{})},
+			wantNoCred: true,
+		},
+		{
+			name:       "Gateway resolved, AuthModeUnset, TLS material present -> legitimate mTLS, not an error",
+			in:         ResolveInput{Gateway: resolvedGW(gatewayconfig.AuthModeUnset, gatewayconfig.Metadata{}), TLSPresent: true},
+			wantNoCred: false,
+		},
+		{
+			name:       "static token present -> not an error even with nothing else",
+			in:         ResolveInput{StaticToken: "tok"},
+			wantNoCred: false,
+		},
+		{
+			name:       "client secret present -> not an error even with nothing else",
+			in:         ResolveInput{ClientSecret: func(context.Context) (string, error) { return "s", nil }, Gateway: resolvedGW(gatewayconfig.AuthModeOIDC, gatewayconfig.Metadata{OIDCIssuer: ptr("https://i")})},
+			wantNoCred: false,
+		},
+		{
+			name:       "Gateway resolved with AuthModeNone (explicit no-auth) -> legitimate, not an error, regardless of TLSPresent",
+			in:         ResolveInput{Gateway: resolvedGW(gatewayconfig.AuthModeNone, gatewayconfig.Metadata{})},
+			wantNoCred: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Resolve(context.Background(), tt.in, &fakeExchanger{})
+			var noCreds *ErrNoCredentials
+			if tt.wantNoCred {
+				if !errors.As(err, &noCreds) {
+					t.Fatalf("err = %v, want *ErrNoCredentials", err)
+				}
+				if len(noCreds.Checked) == 0 {
+					t.Error("ErrNoCredentials.Checked should list what was inspected, got none")
+				}
+				return
+			}
+			if errors.As(err, &noCreds) {
+				t.Fatalf("unexpected ErrNoCredentials for input %+v", tt.in)
 			}
 		})
 	}
@@ -167,4 +244,54 @@ func TestResolve_DefaultClockUsed(t *testing.T) {
 	if _, err := Resolve(context.Background(), in, &fakeExchanger{}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestResolve_ErrNoCredentialsListsChecked confirms ErrNoCredentials names
+// the gateway (when resolved) and lists every place Resolve inspected, so
+// the message is actionable rather than a bare "no credentials configured"
+// that gives the user no idea where to look.
+func TestResolve_ErrNoCredentialsListsChecked(t *testing.T) {
+	t.Run("named gateway -> checked list names it", func(t *testing.T) {
+		in := ResolveInput{
+			Gateway:         resolvedGW(gatewayconfig.AuthModeUnset, gatewayconfig.Metadata{}),
+			GatewayEndpoint: "https://gw.example.com",
+		}
+		_, err := Resolve(context.Background(), in, &fakeExchanger{})
+		var noCreds *ErrNoCredentials
+		if !errors.As(err, &noCreds) {
+			t.Fatalf("err = %v, want *ErrNoCredentials", err)
+		}
+		if noCreds.Endpoint != "https://gw.example.com" {
+			t.Errorf("Endpoint = %q, want the gateway endpoint", noCreds.Endpoint)
+		}
+		wantChecked := []string{
+			"--token / OPENSHELL_TOKEN",
+			"OPENSHELL_OIDC_CLIENT_SECRET (or --client-secret-file)",
+			"gateways/rosa/metadata.json",
+			"gateways/rosa/mtls/",
+		}
+		if len(noCreds.Checked) != len(wantChecked) {
+			t.Fatalf("Checked = %v, want %v", noCreds.Checked, wantChecked)
+		}
+		for i, w := range wantChecked {
+			if noCreds.Checked[i] != w {
+				t.Errorf("Checked[%d] = %q, want %q", i, noCreds.Checked[i], w)
+			}
+		}
+		if !strings.Contains(noCreds.Error(), "gateways/rosa/mtls/") {
+			t.Errorf("Error() = %q, want it to mention the checked paths", noCreds.Error())
+		}
+	})
+
+	t.Run("no resolved gateway -> generic checked list, no name to interpolate", func(t *testing.T) {
+		in := ResolveInput{GatewayEndpoint: "https://nowhere.invalid"}
+		_, err := Resolve(context.Background(), in, &fakeExchanger{})
+		var noCreds *ErrNoCredentials
+		if !errors.As(err, &noCreds) {
+			t.Fatalf("err = %v, want *ErrNoCredentials", err)
+		}
+		if !strings.Contains(noCreds.Checked[2], "<name>") {
+			t.Errorf("Checked = %v, want a generic <name> placeholder with no resolved gateway", noCreds.Checked)
+		}
+	})
 }
