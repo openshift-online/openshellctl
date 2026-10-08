@@ -225,7 +225,7 @@ func resolveRequestProviders(ctx context.Context, gw gateway.Gateway, r *CreateR
 	if len(r.Providers) == 0 && len(inferred) == 0 {
 		return nil
 	}
-	known, err := listAllProviders(ctx, gw, r.Workspace)
+	known, err := ListAllProviders(ctx, gw, r.Workspace)
 	if err != nil {
 		return err
 	}
@@ -244,8 +244,11 @@ func resolveRequestProviders(ctx context.Context, gw gateway.Gateway, r *CreateR
 	return nil
 }
 
-// listAllProviders pages ListProviders by 100 until a short page.
-func listAllProviders(ctx context.Context, gw gateway.Gateway, workspace string) ([]*types.Provider, error) {
+// ListAllProviders pages ListProviders by 100 until a short page. Exported
+// for reuse by `doctor`'s provider check (internal/cli/doctor.go), which
+// needs the exact same gateway's-full-provider-list this package's own
+// create flow already builds — not a separate implementation.
+func ListAllProviders(ctx context.Context, gw gateway.Gateway, workspace string) ([]*types.Provider, error) {
 	var all []*types.Provider
 	offset := 0
 	for {

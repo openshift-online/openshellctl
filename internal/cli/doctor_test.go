@@ -10,6 +10,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	"go.uber.org/mock/gomock"
+
+	"github.com/openshift-online/openshellctl/pkg/auth"
+	"github.com/openshift-online/openshellctl/pkg/gateway/mock"
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 )
 
 // setupDoctorGatewayTree registers a gateway named "rosa" at the given
@@ -147,5 +154,68 @@ func TestDoctorCommand_RolesFail_Exit7(t *testing.T) {
 	}
 	if !strings.Contains(out, "openshell-user") {
 		t.Errorf("Roles failure should name the required role; got:\n%s", out)
+	}
+}
+
+// TestDoctorCommand_ProviderFlag_DialsMockGateway confirms --provider wires
+// through to the Providers check end to end via the Feature 0 cliDeps seam
+// (mock.MockGateway) — this is only reachable with both Gateway and
+// TokenSource injected together (resolveAuth couples the two; injecting
+// only Gateway would mean a no-auth TokenSource whose empty token fails the
+// Audience/Roles checks this test isn't trying to exercise), using a real
+// JWT (staticJWT, tokenflow_test.go) so Credentials/Audience/Roles/Expiry
+// all pass and only the Providers check is actually under test.
+func TestDoctorCommand_ProviderFlag_DialsMockGateway(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"issuer":"https://issuer","audience":"openshell-cli"}`))
+	}))
+	defer srv.Close()
+
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gw.EXPECT().
+		ListProviders(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]*types.Provider{{Name: "my-openai", Type: "openai"}}, nil)
+
+	deps := cliDeps{
+		Gateway:     gw,
+		Target:      &gatewayconfig.Target{Name: "test", Endpoint: srv.URL},
+		TokenSource: auth.NewStaticSource(staticJWT(t), nil),
+	}
+	out, err := runCmdWithGateway(t, deps, "doctor", "--provider", "my-openai")
+	if err != nil {
+		t.Fatalf("doctor --provider: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Providers") || strings.Contains(out, "✗") {
+		t.Errorf("expected the Providers check to pass; got:\n%s", out)
+	}
+}
+
+// TestDoctorCommand_ProviderFlag_NotFound confirms a requested provider that
+// doesn't exist on the gateway fails the Providers check with exit 2
+// (ErrProviderNotFound-shaped, a usage/configuration problem).
+func TestDoctorCommand_ProviderFlag_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"issuer":"https://issuer","audience":"openshell-cli"}`))
+	}))
+	defer srv.Close()
+
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gw.EXPECT().
+		ListProviders(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, nil)
+
+	deps := cliDeps{
+		Gateway:     gw,
+		Target:      &gatewayconfig.Target{Name: "test", Endpoint: srv.URL},
+		TokenSource: auth.NewStaticSource(staticJWT(t), nil),
+	}
+	out, err := runCmdWithGateway(t, deps, "doctor", "--provider", "not-a-real-provider")
+	if err == nil {
+		t.Fatalf("expected an error, got success:\n%s", out)
+	}
+	if exitCodeFor(err) != ExitUsage {
+		t.Errorf("exit = %d, want ExitUsage (2)", exitCodeFor(err))
 	}
 }

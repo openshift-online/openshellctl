@@ -8,12 +8,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
 	"github.com/openshift-online/openshellctl/pkg/doctor"
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/output"
+	"github.com/openshift-online/openshellctl/pkg/sandbox"
 )
 
 // newDoctorCommand wires pkg/doctor.Run to the real world: resolveAuth/
@@ -23,11 +25,14 @@ import (
 // client for the two network checks.
 func newDoctorCommand() *cobra.Command {
 	var outputFormat string
+	var providerFlag []string
+	var manifestFile string
 	c := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run connectivity/auth preflight checks",
 		Long: "Checks endpoint reachability, DNS, credentials, token audience/roles/expiry, and OIDC config drift — " +
-			"one line per check, with the exact next command to run for any failure.",
+			"one line per check, with the exact next command to run for any failure. --provider/-f additionally " +
+			"checks that requested providers exist on the gateway.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Resolved once; Deps.ResolveAuth below returns these same
@@ -36,6 +41,11 @@ func newDoctorCommand() *cobra.Command {
 			// twice).
 			src, target, resolveErr := resolveAuth(cmd)
 
+			requested, err := requestedProviders(cmd, providerFlag, manifestFile)
+			if err != nil {
+				return err
+			}
+
 			d := doctor.Deps{
 				ResolveAuth: func(context.Context) (auth.TokenSource, *gatewayconfig.Target, error) {
 					return src, target, resolveErr
@@ -43,9 +53,12 @@ func newDoctorCommand() *cobra.Command {
 				Dial: func(_ context.Context, target *gatewayconfig.Target, src auth.TokenSource) (gateway.Gateway, io.Closer, error) {
 					return dialOrInjected(cmd, target, src)
 				},
-				LookupIP:     realLookupIP,
-				HTTPGet:      realHTTPGet,
-				WantAudience: expectedAudience(target),
+				ListProviders:      sandbox.ListAllProviders,
+				LookupIP:           realLookupIP,
+				HTTPGet:            realHTTPGet,
+				WantAudience:       expectedAudience(target),
+				RequestedProviders: requested,
+				Workspace:          viper.GetString("workspace"),
 			}
 
 			results := doctor.Run(cmd.Context(), d)
@@ -69,7 +82,33 @@ func newDoctorCommand() *cobra.Command {
 		},
 	}
 	c.Flags().StringVarP(&outputFormat, "output", "o", "table", "output format: table|json|yaml")
+	c.Flags().StringSliceVar(&providerFlag, "provider", nil, "provider name/type to check exists on the gateway (repeatable)")
+	c.Flags().StringVarP(&manifestFile, "file", "f", "", "manifest file to read providerRefs from, when --provider is not given (- for stdin)")
 	return c
+}
+
+// requestedProviders resolves the Providers check's input: --provider wins
+// outright when given (matching sandbox create's own flag-overrides-manifest
+// precedence, pkg/sandbox/merge.go); otherwise, with -f given, every
+// manifest providerRef's name. Reuses loadManifest (internal/cli/
+// sandbox_create.go) — the same decode+validate path `sandbox create -f`
+// uses — rather than a second manifest reader.
+func requestedProviders(cmd *cobra.Command, providerFlag []string, manifestFile string) ([]string, error) {
+	if len(providerFlag) > 0 {
+		return providerFlag, nil
+	}
+	if manifestFile == "" {
+		return nil, nil
+	}
+	m, err := loadManifest(cmd, manifestFile)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(m.Spec.ProviderRefs))
+	for i, p := range m.Spec.ProviderRefs {
+		names[i] = p.Name
+	}
+	return names, nil
 }
 
 // realLookupIP adapts net.DefaultResolver.LookupIPAddr to LookupIPFunc's
