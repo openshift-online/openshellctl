@@ -13,7 +13,7 @@ mode, and where this intentionally differs from upstream.
 | Field | JSON key | Written by `gateway add`? |
 |---|---|---|
 | `Name` | `name` | always |
-| `GatewayEndpoint` | `gateway_endpoint` | always (the normalized endpoint) |
+| `GatewayEndpoint` | `gateway_endpoint` | always (scheme-defaulted via `EnsureScheme`, but otherwise stored verbatim — matching, not storage, is what tolerates a trailing slash or default port; see README "Differences from the upstream Rust CLI" → Endpoint matching) |
 | `IsRemote` | `is_remote` | always `true` |
 | `GatewayPort` | `gateway_port` | always `0` |
 | `AuthMode` | `auth_mode` | always `"oidc"` |

@@ -647,6 +647,7 @@ openshellctl is a compatible reimplementation with these intentional differences
 - **`policy lint` is a separate top-level command** (not under `sandbox`).
 - **Gitignore filtering**: uses compiled `.gitignore` rules instead of shelling out to `git ls-files`. Tracked-but-ignored files are excluded (matching untracked behaviour) rather than re-included.
 - **`gateway add` registers OIDC gateways only**: no mTLS or non-OIDC ("edge") gateway registration. When a client secret is absent and `OPENSHELL_NO_BROWSER` is set, `gateway add` registers the gateway and prints a hint instead of opening a browser (upstream always opens one). See [`docs/gateway.md`](docs/gateway.md).
+- **Endpoint matching is tolerant of formatting**: upstream only trims a trailing slash before comparing `OPENSHELL_GATEWAY_ENDPOINT`/`--gateway-endpoint` against a registered gateway's endpoint. openshellctl additionally ignores the scheme/host case and an explicit default port (`:443` for https, `:80` for http) — so a gateway registered as `https://host:443` (as `gateway add`/the CronJobs write it) is still found when the endpoint is given as `https://host/` (as an exported env var commonly is). A different, non-default port, or a different path/query/fragment, is still treated as a genuinely different gateway. See `pkg/gatewayconfig.NormalizeEndpoint`.
 
 ## License
 
