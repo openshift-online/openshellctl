@@ -252,6 +252,56 @@ func TestErrChecksFailed_ExitCode_AllPassIsZero(t *testing.T) {
 	}
 }
 
+// TestErrChecksFailed_ExitCode_PriorityAmongMultipleFailures locks in the
+// priority ordering among *simultaneous* failures — TestErrChecksFailed_ExitCode
+// above only ever constructs a single failing check at a time, which could
+// not catch a bug in the switch's branch ordering (e.g. a later case
+// shadowing an earlier, higher-priority one). Each case here fails two
+// checks from different priority tiers at once and asserts the
+// higher-priority tier's code wins, regardless of slice order.
+func TestErrChecksFailed_ExitCode_PriorityAmongMultipleFailures(t *testing.T) {
+	fail := func(name string) CheckResult { return CheckResult{Name: name, Status: StatusFail} }
+	tests := []struct {
+		name    string
+		results []CheckResult
+		want    int
+	}{
+		{
+			name:    "Roles beats Credentials regardless of order",
+			results: []CheckResult{fail("Credentials"), fail("Roles")},
+			want:    exitForbidden,
+		},
+		{
+			name:    "Roles beats Credentials, reverse order",
+			results: []CheckResult{fail("Roles"), fail("Credentials")},
+			want:    exitForbidden,
+		},
+		{
+			name:    "Credentials beats Endpoint URL",
+			results: []CheckResult{fail("Endpoint URL"), fail("Credentials")},
+			want:    exitAuth,
+		},
+		{
+			name:    "Endpoint URL beats DNS",
+			results: []CheckResult{fail("DNS"), fail("Endpoint URL")},
+			want:    exitUsage,
+		},
+		{
+			name:    "all four tiers at once -> Roles still wins",
+			results: []CheckResult{fail("DNS"), fail("Endpoint URL"), fail("Credentials"), fail("Roles")},
+			want:    exitForbidden,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &ErrChecksFailed{Results: tt.results}
+			if got := err.ExitCode(); got != tt.want {
+				t.Errorf("ExitCode() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestHostOf covers hostOf's branches directly (Run only calls it once
 // CheckEndpointURL has already confirmed the endpoint normalizes, so the
 // malformed-input branch isn't reachable through Run itself).

@@ -42,7 +42,7 @@ openshellctl sandbox delete my-sandbox
 
 Before creating a sandbox on a new machine, run `doctor` — it checks endpoint reachability, DNS, credentials, token audience/roles/expiry, and OIDC config drift in one pass, with the exact next command for anything missing.
 
-All-green (three service-account env vars exported, nothing else):
+All-green (gateway already registered via `gateway add`, three service-account env vars exported — `OIDC config match` needs a registered gateway's metadata to compare against; an endpoint-only invocation with nothing registered would skip that one line instead):
 
 ```
 $ openshellctl doctor
@@ -582,7 +582,7 @@ openshellctl gateway login
 Connectivity/auth preflight — one line per check, with the exact next command for any failure. See [First run: `openshellctl doctor`](#first-run-openshellctl-doctor) above and [`docs/doctor.md`](docs/doctor.md) for every check, its skip rule, and its hint.
 
 ```bash
-openshellctl doctor                              # the 8 baseline checks
+openshellctl doctor                              # all 9 checks (Providers shown as skipped)
 openshellctl doctor --provider my-openai         # also check a provider exists
 openshellctl doctor -f sandbox.yaml -o json      # providerRefs from a manifest; machine-readable output
 ```
