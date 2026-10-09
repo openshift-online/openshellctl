@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"maps"
 	"testing"
 	"time"
 
@@ -47,11 +48,11 @@ func TestMergeSpec_OverlayAddsAndOverwrites(t *testing.T) {
 	got := MergeSpec(existing, overlay)
 
 	want := map[string]string{"TOKEN": "new", "OTHER": "keep-me"}
-	if !mapsEqual(got.Credentials, want) {
+	if !maps.Equal(got.Credentials, want) {
 		t.Errorf("Credentials = %+v, want %+v", got.Credentials, want)
 	}
 	wantCfg := map[string]string{"org": "new-org", "region": "us"}
-	if !mapsEqual(got.Config, wantCfg) {
+	if !maps.Equal(got.Config, wantCfg) {
 		t.Errorf("Config = %+v, want %+v", got.Config, wantCfg)
 	}
 }
@@ -80,10 +81,10 @@ func TestMergeSpec_EmptyOverlayKeepsExisting(t *testing.T) {
 		Config:      map[string]string{"org": "old-org"},
 	}
 	got := MergeSpec(existing, types.ProviderSpec{})
-	if !mapsEqual(got.Credentials, existing.Credentials) {
+	if !maps.Equal(got.Credentials, existing.Credentials) {
 		t.Errorf("Credentials changed: %+v", got.Credentials)
 	}
-	if !mapsEqual(got.Config, existing.Config) {
+	if !maps.Equal(got.Config, existing.Config) {
 		t.Errorf("Config changed: %+v", got.Config)
 	}
 }

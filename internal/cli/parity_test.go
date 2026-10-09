@@ -53,21 +53,61 @@ func TestParity_AllThirteenSubcommandsExist(t *testing.T) {
 	}
 }
 
-func TestParity_ProviderHasListAttachDetach(t *testing.T) {
+// directChild finds a direct child of parent by name — unlike
+// collectCommandNames' flat, whole-tree map, this disambiguates commands that
+// share a leaf name at different depths (e.g. the top-level `provider` CRUD
+// command and `sandbox`'s own `provider` child).
+func directChild(parent *cobra.Command, name string) (*cobra.Command, bool) {
+	for _, c := range parent.Commands() {
+		if c.Name() == name {
+			return c, true
+		}
+	}
+	return nil, false
+}
+
+func TestParity_SandboxProviderHasListAttachDetach(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 	root := NewRootCommand()
-	names := collectCommandNames(root)
 
-	prov, ok := names["provider"]
+	sb, ok := directChild(root, "sandbox")
 	if !ok {
-		t.Fatal("provider command missing")
+		t.Fatal("sandbox command missing")
+	}
+	prov, ok := directChild(sb, "provider")
+	if !ok {
+		t.Fatal("sandbox provider command missing")
 	}
 	children := map[string]bool{}
 	for _, c := range prov.Commands() {
 		children[c.Name()] = true
 	}
 	for _, want := range []string{"list", "attach", "detach"} {
+		if !children[want] {
+			t.Errorf("sandbox provider is missing child %q", want)
+		}
+	}
+}
+
+// TestParity_TopLevelProviderHasCRUD guards the new top-level `provider`
+// command's own subtree — collectCommandNames' flat map can't distinguish it
+// from sandbox's same-named `provider` child (see directChild), so this
+// resolves it unambiguously via root's direct children instead.
+func TestParity_TopLevelProviderHasCRUD(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	root := NewRootCommand()
+
+	prov, ok := directChild(root, "provider")
+	if !ok {
+		t.Fatal("top-level provider command missing")
+	}
+	children := map[string]bool{}
+	for _, c := range prov.Commands() {
+		children[c.Name()] = true
+	}
+	for _, want := range []string{"create", "get", "list", "update", "delete"} {
 		if !children[want] {
 			t.Errorf("provider is missing child %q", want)
 		}

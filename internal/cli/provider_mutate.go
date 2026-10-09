@@ -11,21 +11,14 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/provider"
 )
 
-// unsupportedCredentialSourceFlags checks the three provider credential
-// sources openshellctl doesn't implement yet (reading local state, gcloud
-// ADC, or gateway-resolved runtime credentials), returning a usage error
-// naming whichever was passed. nil when none were.
-func unsupportedCredentialSourceFlags(fromExisting, fromGcloudADC, runtimeCredentials bool) error {
-	switch {
-	case fromExisting:
-		return &UsageError{Err: fmt.Errorf("--from-existing is not yet supported in openshellctl; run `openshell provider create --from-existing ...` directly")}
-	case fromGcloudADC:
-		return &UsageError{Err: fmt.Errorf("--from-gcloud-adc is not yet supported in openshellctl; run `openshell provider create --from-gcloud-adc ...` directly")}
-	case runtimeCredentials:
-		return &UsageError{Err: fmt.Errorf("--runtime-credentials is not yet supported in openshellctl; run `openshell provider create --runtime-credentials ...` directly")}
-	default:
-		return nil
+// profileWorkspace resolves --global-profile into the ProviderSpec.ProfileWorkspace
+// value: a platform-scoped (global) profile is the empty string; otherwise
+// it's the current workspace.
+func profileWorkspace(globalProfile bool, workspace string) string {
+	if globalProfile {
+		return ""
 	}
+	return workspace
 }
 
 func newProviderCreateCommand() *cobra.Command {
@@ -40,17 +33,8 @@ func newProviderCreateCommand() *cobra.Command {
 		Short: "Create a provider config",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if name == "" {
-				return &UsageError{Err: fmt.Errorf("--name is required")}
-			}
-			if providerType == "" {
-				return &UsageError{Err: fmt.Errorf("--type is required")}
-			}
-			if err := unsupportedCredentialSourceFlags(fromExisting, fromGcloudADC, runtimeCredentials); err != nil {
-				return err
-			}
-			if len(credentials) == 0 {
-				return &UsageError{Err: fmt.Errorf("at least one --credential is required (or use --from-existing/--from-gcloud-adc/--runtime-credentials, not yet supported in openshellctl)")}
+			if err := provider.ValidateCreateFlags(name, providerType, credentials, fromExisting, fromGcloudADC, runtimeCredentials); err != nil {
+				return &UsageError{Err: err}
 			}
 
 			creds, err := provider.ParseCredentialPairs(credentials, os.Getenv)
@@ -67,12 +51,8 @@ func newProviderCreateCommand() *cobra.Command {
 			}
 
 			ws := workspace()
-			profileWorkspace := ws
-			if globalProfile {
-				profileWorkspace = ""
-			}
 			spec := provider.BuildSpec(creds, config, expiry)
-			spec.ProfileWorkspace = profileWorkspace
+			spec.ProfileWorkspace = profileWorkspace(globalProfile, ws)
 
 			return withGateway(cmd, func(gw gateway.Gateway) error {
 				p := &types.Provider{Name: name, Type: providerType, Workspace: ws, Spec: spec}
@@ -102,14 +82,17 @@ func newProviderUpdateCommand() *cobra.Command {
 	var (
 		credentials, configPairs, expiresAt             []string
 		fromExisting, fromGcloudADC, runtimeCredentials bool
+		globalProfile                                   bool
+		globalProfileSet                                bool
 	)
 	c := &cobra.Command{
 		Use:   "update NAME",
 		Short: "Update an existing provider's credentials or config",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := unsupportedCredentialSourceFlags(fromExisting, fromGcloudADC, runtimeCredentials); err != nil {
-				return err
+			globalProfileSet = cmd.Flags().Changed("global-profile")
+			if err := provider.ValidateUpdateFlags(fromExisting, fromGcloudADC, runtimeCredentials); err != nil {
+				return &UsageError{Err: err}
 			}
 
 			creds, err := provider.ParseCredentialPairs(credentials, os.Getenv)
@@ -134,6 +117,9 @@ func newProviderUpdateCommand() *cobra.Command {
 				overlay := types.ProviderSpec{Credentials: creds, Config: config, CredentialExpiresAt: expiry}
 				updated := *existing
 				updated.Spec = provider.MergeSpec(existing.Spec, overlay)
+				if globalProfileSet {
+					updated.Spec.ProfileWorkspace = profileWorkspace(globalProfile, ws)
+				}
 				result, err := gw.UpdateProvider(cmd.Context(), ws, &updated)
 				if err != nil {
 					return err
@@ -149,6 +135,7 @@ func newProviderUpdateCommand() *cobra.Command {
 	f.BoolVar(&fromGcloudADC, "from-gcloud-adc", false, "configure credentials from gcloud Application Default Credentials")
 	f.BoolVar(&runtimeCredentials, "runtime-credentials", false, "resolve credentials at runtime")
 	f.StringArrayVar(&configPairs, "config", nil, "provider config key/value pair")
+	f.BoolVar(&globalProfile, "global-profile", false, "use a platform-scoped (global) provider profile")
 	f.StringArrayVar(&expiresAt, "credential-expires-at", nil, "credential expiry (KEY=TIMESTAMP); epoch ms or RFC3339, 0 clears")
 	return c
 }

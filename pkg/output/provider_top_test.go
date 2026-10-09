@@ -104,6 +104,20 @@ func TestRenderProvider_Table(t *testing.T) {
 	}
 }
 
+func TestRenderProvider_YAML(t *testing.T) {
+	var b bytes.Buffer
+	if err := RenderProvider(&b, prov("gh", "github"), FormatYAML); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "name: gh") {
+		t.Errorf("yaml = %s", out)
+	}
+	if strings.Contains(out, "secret") {
+		t.Errorf("yaml must never print credential values: %s", out)
+	}
+}
+
 func TestRenderProvider_JSON(t *testing.T) {
 	var b bytes.Buffer
 	if err := RenderProvider(&b, prov("gh", "github"), FormatJSON); err != nil {

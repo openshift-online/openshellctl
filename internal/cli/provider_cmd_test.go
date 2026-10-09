@@ -176,6 +176,58 @@ func TestProviderUpdate_WithMockGateway(t *testing.T) {
 	}
 }
 
+func TestProviderUpdate_GlobalProfileFlag(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+
+	existing := &types.Provider{
+		Name: "p1",
+		Type: "github",
+		Spec: types.ProviderSpec{ProfileWorkspace: "default"},
+	}
+	gw.EXPECT().GetProvider(gomock.Any(), "default", "p1").Return(existing, nil)
+	gw.EXPECT().
+		UpdateProvider(gomock.Any(), "default", gomock.Any()).
+		DoAndReturn(func(_ any, _ string, p *types.Provider) (*types.Provider, error) {
+			if p.Spec.ProfileWorkspace != "" {
+				t.Errorf("ProfileWorkspace = %q, want empty (platform-scoped) after --global-profile", p.Spec.ProfileWorkspace)
+			}
+			return p, nil
+		})
+
+	_, err := runCmdWithGateway(t, cliDeps{Gateway: gw}, "provider", "update", "p1", "--global-profile")
+	if err != nil {
+		t.Fatalf("provider update --global-profile: %v", err)
+	}
+}
+
+func TestProviderUpdate_WithoutGlobalProfileFlagPreservesExisting(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+
+	existing := &types.Provider{
+		Name: "p1",
+		Type: "github",
+		Spec: types.ProviderSpec{ProfileWorkspace: ""}, // previously set global
+	}
+	gw.EXPECT().GetProvider(gomock.Any(), "default", "p1").Return(existing, nil)
+	gw.EXPECT().
+		UpdateProvider(gomock.Any(), "default", gomock.Any()).
+		DoAndReturn(func(_ any, _ string, p *types.Provider) (*types.Provider, error) {
+			if p.Spec.ProfileWorkspace != "" {
+				t.Errorf("ProfileWorkspace = %q, want untouched empty value since --global-profile was not passed", p.Spec.ProfileWorkspace)
+			}
+			return p, nil
+		})
+
+	// No --global-profile flag at all — an unrelated --credential update must
+	// not silently flip ProfileWorkspace back to the current workspace.
+	_, err := runCmdWithGateway(t, cliDeps{Gateway: gw}, "provider", "update", "p1", "--credential", "TOKEN=new")
+	if err != nil {
+		t.Fatalf("provider update: %v", err)
+	}
+}
+
 func TestProviderUpdate_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	gw := mock.NewMockGateway(ctrl)

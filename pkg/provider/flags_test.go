@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"maps"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,6 +28,11 @@ func TestParseCredentialPairs(t *testing.T) {
 			name:  "value may itself contain '='",
 			items: []string{"FOO=bar=baz"},
 			want:  map[string]string{"FOO": "bar=baz"},
+		},
+		{
+			name:  "trailing '=' is an explicit empty value, not an error",
+			items: []string{"FOO="},
+			want:  map[string]string{"FOO": ""},
 		},
 		{
 			name:  "bare KEY looks up env",
@@ -63,7 +70,7 @@ func TestParseCredentialPairs(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tc.wantErr)
 				}
-				if !contains(err.Error(), tc.wantErr) {
+				if !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %q, want substring %q", err.Error(), tc.wantErr)
 				}
 				return
@@ -71,7 +78,7 @@ func TestParseCredentialPairs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if !mapsEqual(got, tc.want) {
+			if !maps.Equal(got, tc.want) {
 				t.Errorf("got %+v, want %+v", got, tc.want)
 			}
 		})
@@ -86,6 +93,7 @@ func TestParseConfigPairs(t *testing.T) {
 		wantErr string
 	}{
 		{name: "inline KEY=VALUE", items: []string{"org=acme"}, want: map[string]string{"org": "acme"}},
+		{name: "trailing '=' is an explicit empty value, not an error", items: []string{"org="}, want: map[string]string{"org": ""}},
 		{name: "no items returns empty map", items: nil, want: map[string]string{}},
 		{name: "missing '=' errors", items: []string{"org"}, wantErr: "KEY=VALUE"},
 		{name: "empty key errors", items: []string{"=acme"}, wantErr: "empty"},
@@ -94,7 +102,7 @@ func TestParseConfigPairs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ParseConfigPairs(tc.items)
 			if tc.wantErr != "" {
-				if err == nil || !contains(err.Error(), tc.wantErr) {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want substring %q", err, tc.wantErr)
 				}
 				return
@@ -102,7 +110,7 @@ func TestParseConfigPairs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if !mapsEqual(got, tc.want) {
+			if !maps.Equal(got, tc.want) {
 				t.Errorf("got %+v, want %+v", got, tc.want)
 			}
 		})
@@ -160,7 +168,7 @@ func TestParseCredentialExpiresAt(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tc.wantErr)
 				}
-				if !contains(err.Error(), tc.wantErr) {
+				if !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %q, want substring %q", err.Error(), tc.wantErr)
 				}
 				return
@@ -182,29 +190,4 @@ func TestParseCredentialExpiresAt(t *testing.T) {
 			}
 		})
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (substr == "" || indexOf(s, substr) >= 0)
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
-
-func mapsEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
 }
