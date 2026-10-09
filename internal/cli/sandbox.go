@@ -33,22 +33,25 @@ func newSandboxCommand() *cobra.Command {
 		newSandboxUploadCommand(),
 		newSandboxDownloadCommand(),
 		newSandboxSSHConfigCommand(),
-		newProviderCommand(),
+		newSandboxProviderCommand(),
 	)
 
 	return sb
 }
 
-// newProviderCommand builds `sandbox provider` and its list/attach/detach leaves.
-func newProviderCommand() *cobra.Command {
+// newSandboxProviderCommand builds `sandbox provider` and its
+// list/attach/detach leaves — providers attached to one sandbox. This is
+// distinct from the top-level `provider` command (provider.go), which
+// manages provider configs across a workspace.
+func newSandboxProviderCommand() *cobra.Command {
 	p := &cobra.Command{
 		Use:   "provider",
 		Short: "Manage sandbox providers",
 	}
 	p.AddCommand(
-		newProviderListCommand(),
-		newProviderAttachCommand(),
-		newProviderDetachCommand(),
+		newSandboxProviderListCommand(),
+		newSandboxProviderAttachCommand(),
+		newSandboxProviderDetachCommand(),
 	)
 	return p
 }

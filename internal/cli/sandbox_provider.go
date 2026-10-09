@@ -11,7 +11,7 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/output"
 )
 
-func newProviderListCommand() *cobra.Command {
+func newSandboxProviderListCommand() *cobra.Command {
 	var file string
 	c := &cobra.Command{
 		Use:   "list [NAME]",
@@ -36,7 +36,7 @@ func newProviderListCommand() *cobra.Command {
 	return c
 }
 
-func newProviderAttachCommand() *cobra.Command {
+func newSandboxProviderAttachCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "attach NAME PROVIDER",
 		Short: "Attach a provider to a sandbox",
@@ -69,7 +69,7 @@ func newProviderAttachCommand() *cobra.Command {
 	}
 }
 
-func newProviderDetachCommand() *cobra.Command {
+func newSandboxProviderDetachCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "detach NAME PROVIDER",
 		Short: "Detach a provider from a sandbox",

@@ -178,6 +178,8 @@ openshellctl token refresh --write     # refresh and persist to oidc_token.json
 openshellctl token inspect <JWT>       # decode a JWT's claims (no sig verify)
 ```
 
+`--write` is for interop, not for openshellctl itself: every openshellctl command (including `provider`/`sandbox`/etc.) resolves and re-mints auth transparently per call, with no disk read or write involved. `token refresh --write` exists solely to persist a Rust-CLI-schema `oidc_token.json` so a *separate* process — like the upstream `openshell` binary — can pick up the same credentials. You never need to run it before another openshellctl command.
+
 If a command fails with an expired or invalid token, openshellctl prints:
 
 ```
@@ -553,6 +555,29 @@ Attach and detach use optimistic concurrency — if another operation modifies t
 Failed to attach provider: sandbox was modified by another operation.
 Please retry the command.
 ```
+
+### `provider`
+
+Manage provider configs (credentials/config shared across sandboxes), as opposed to `sandbox provider` above, which only attaches/detaches an existing provider to one sandbox. This is a top-level command.
+
+```bash
+# Create a provider
+openshellctl provider create --name my-github --type github --credential GITHUB_TOKEN
+openshellctl provider create --name my-github --type github --credential TOKEN=ghp_xxx --config org=acme
+
+# Fetch, list, update, delete
+openshellctl provider get my-github
+openshellctl provider list
+openshellctl provider list --names
+openshellctl provider update my-github --credential TOKEN=ghp_yyy
+openshellctl provider delete my-github
+```
+
+`--credential KEY[=VALUE]` either sets the credential inline (`KEY=VALUE`) or, given a bare `KEY`, reads the value from that environment variable — so `--credential GITHUB_TOKEN` reads `$GITHUB_TOKEN` rather than putting the secret on the command line. `--config KEY=VALUE` sets non-secret config. `--credential-expires-at KEY=TIMESTAMP` accepts epoch milliseconds or RFC3339; a timestamp of `0` clears a previously-set expiry. `--global-profile` uses a platform-scoped provider profile instead of a workspace-scoped one. `provider update` only touches the credentials/config you pass — anything not named stays as-is.
+
+`--from-existing`, `--from-gcloud-adc`, and `--runtime-credentials` are not yet implemented in openshellctl and return a usage error naming the equivalent `openshell` invocation.
+
+`provider list-profiles`, `provider profile`, and `provider refresh` are not yet implemented in openshellctl either — each prints a message pointing you at the upstream `openshell` binary rather than silently no-opping.
 
 ### `logs`
 
