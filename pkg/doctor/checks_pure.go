@@ -186,18 +186,28 @@ func CheckProviders(known []*types.Provider, requested []string) CheckResult {
 	res, err := sandbox.ResolveProviders(known, requested, nil)
 	if err != nil {
 		return CheckResult{
-			Name:     "Providers",
-			Status:   StatusFail,
-			Detail:   err.Error(),
-			NextStep: "openshellctl sandbox provider create --type <type> --name <name>",
+			Name:   "Providers",
+			Status: StatusFail,
+			Detail: err.Error(),
+			NextStep: "check `openshellctl sandbox provider list` for existing provider names, or request a " +
+				"recognized provider type (openai, anthropic, nvidia, ...)",
 		}
 	}
 	if len(res.MissingTypes) > 0 {
+		// openshellctl has no "create a provider" command at all — reuse
+		// ErrAutoProviderUnsupported's own message (the same one `sandbox
+		// create` gives for this exact "recognized type, not yet created"
+		// case) rather than naming a command that doesn't exist. Caught in
+		// review: an earlier version fabricated `sandbox provider create`,
+		// which `newProviderCommand` (internal/cli/sandbox.go) never
+		// registers — exactly the "copy-paste the hint, get unknown
+		// command" failure mode this whole command exists to prevent.
+		hint := (&sandbox.ErrAutoProviderUnsupported{Type: res.MissingTypes[0]}).Error()
 		return CheckResult{
 			Name:     "Providers",
 			Status:   StatusFail,
 			Detail:   fmt.Sprintf("provider type(s) %v recognized but not yet created on this gateway", res.MissingTypes),
-			NextStep: fmt.Sprintf("openshellctl sandbox provider create --type %s --name <name>", res.MissingTypes[0]),
+			NextStep: hint,
 		}
 	}
 	return CheckResult{

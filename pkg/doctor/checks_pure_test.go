@@ -8,6 +8,7 @@ import (
 	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
+	"github.com/openshift-online/openshellctl/pkg/sandbox"
 )
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
@@ -166,6 +167,28 @@ func TestCheckProviders(t *testing.T) {
 			if tt.wantStatus == StatusFail && got.NextStep == "" {
 				t.Error("expected a NextStep for a failed check")
 			}
+			if tt.wantStatus == StatusFail && contains(got.NextStep, "sandbox provider create") {
+				t.Errorf("NextStep must not name a command openshellctl does not implement: %q", got.NextStep)
+			}
 		})
+	}
+}
+
+// TestCheckProviders_MissingType_ReusesErrAutoProviderUnsupported pins the
+// exact review finding this fixes: a recognized-but-not-yet-created provider
+// type's NextStep used to fabricate `openshellctl sandbox provider create`,
+// a command `newProviderCommand` (internal/cli/sandbox.go) never registers
+// (only list/attach/detach) — and one openshellctl could never honor anyway,
+// since it has no local credential access to actually create a provider.
+// The hint must instead be sandbox.ErrAutoProviderUnsupported's own message,
+// the same one `sandbox create` already gives for this exact case.
+func TestCheckProviders_MissingType_ReusesErrAutoProviderUnsupported(t *testing.T) {
+	got := CheckProviders(nil, []string{"anthropic"})
+	if got.Status != StatusFail {
+		t.Fatalf("Status = %v, want fail", got.Status)
+	}
+	want := (&sandbox.ErrAutoProviderUnsupported{Type: "anthropic"}).Error()
+	if got.NextStep != want {
+		t.Errorf("NextStep = %q, want %q", got.NextStep, want)
 	}
 }
