@@ -125,6 +125,21 @@ from the upstream Rust CLI" below.
   every later command (`whoami`, `sandbox list`, ...) against that same
   gateway, since it isn't persisted into `metadata.json`.
 
+## Vault-sourced config and `gateway add`
+
+`gateway add` reads `--oidc-issuer`/`--oidc-client-id`/`--oidc-audience`/
+`--oidc-scopes` from viper the same way every other command does — so when
+`--vault-kv-mount`/`--vault-kv-path` are set (README "4. Vault-sourced
+config"), a Vault-sourced value for any of these fields is written into the
+new gateway's `metadata.json` exactly as if it had come from an
+`OPENSHELL_*` env var. This is a deliberate choice, not an oversight: Vault is
+treated as just another config source, so `gateway add`'s behavior doesn't
+silently depend on whether a given value happened to arrive via env var or
+Vault. If this ever needs to change (e.g. a team wants Vault involved only in
+authenticating the already-registered gateway, never in what gets persisted
+to disk), that's a new, explicit decision — not a side effect of adding a
+field to the Vault secret.
+
 ## Deferred: `--no-select` / `--no-login`
 
 `gateway add` does not currently accept `--no-select` (register without

@@ -9,6 +9,7 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
+	"github.com/openshift-online/openshellctl/pkg/vaultconfig"
 )
 
 // Exit codes, per the implementation spec §5.9.
@@ -75,7 +76,8 @@ func exitCodeFor(err error) int {
 	// Permission denied → 7 (authenticated, but not authorized). Checked
 	// before the generic auth bucket below since it is NOT an auth failure.
 	var gwPerm *gateway.PermissionDeniedError
-	if errors.As(err, &gwPerm) {
+	var vaultForbidden *vaultconfig.ErrForbidden
+	if errors.As(err, &gwPerm) || errors.As(err, &vaultForbidden) {
 		return ExitForbidden
 	}
 
@@ -89,18 +91,23 @@ func exitCodeFor(err error) int {
 	var mtlsMissing *auth.ErrMTLSMaterialMissing
 	var nothingToRefresh *auth.ErrNothingToRefresh
 	var noCreds *auth.ErrNoCredentials
+	var vaultNoToken *vaultconfig.ErrNoToken
+	var vaultAddrNotSet *vaultconfig.ErrVaultAddrNotSet
 	if errors.As(err, &expired) || errors.As(err, &exchange) || errors.As(err, &oidcMissing) ||
 		errors.As(err, &gwUnauth) || errors.As(err, &bundleInvalid) || errors.As(err, &mtlsMissing) ||
-		errors.As(err, &nothingToRefresh) || errors.As(err, &noCreds) || errors.Is(err, auth.ErrNoExpiry) {
+		errors.As(err, &nothingToRefresh) || errors.As(err, &noCreds) || errors.Is(err, auth.ErrNoExpiry) ||
+		errors.As(err, &vaultNoToken) || errors.As(err, &vaultAddrNotSet) {
 		return ExitAuth
 	}
 
-	// Not found → 4 (gateway-config resolution and gateway RPC NotFound).
+	// Not found → 4 (gateway-config resolution, gateway RPC NotFound, and a
+	// missing Vault secret).
 	var gwNotFound *gateway.NotFoundError
+	var vaultNotFound *vaultconfig.ErrSecretNotFound
 	if errors.Is(err, gatewayconfig.ErrGatewayNotFound) ||
 		errors.Is(err, gatewayconfig.ErrUnknownGateway) ||
 		errors.Is(err, gatewayconfig.ErrNoActiveGateway) ||
-		errors.As(err, &gwNotFound) {
+		errors.As(err, &gwNotFound) || errors.As(err, &vaultNotFound) {
 		return ExitNotFound
 	}
 
@@ -114,12 +121,14 @@ func exitCodeFor(err error) int {
 	// or corrupt local config/an auth mode this client doesn't support).
 	var metadataParse *gatewayconfig.MetadataParseError
 	var unsupportedAuthMode *auth.ErrUnsupportedAuthMode
+	var vaultFieldNotString *vaultconfig.ErrFieldNotString
 	if errors.Is(err, gatewayconfig.ErrInvalidGatewayName) ||
 		errors.Is(err, gatewayconfig.ErrEdgeGatewayUnsupported) ||
 		errors.Is(err, gatewayconfig.ErrMTLSUnsupported) ||
 		errors.Is(err, gatewayconfig.ErrInvalidEndpoint) ||
 		errors.Is(err, auth.ErrNotJWT) ||
-		errors.As(err, &metadataParse) || errors.As(err, &unsupportedAuthMode) {
+		errors.As(err, &metadataParse) || errors.As(err, &unsupportedAuthMode) ||
+		errors.As(err, &vaultFieldNotString) {
 		return ExitUsage
 	}
 
@@ -189,7 +198,39 @@ func hintFor(err error) string {
 	if errors.As(err, &noCreds) {
 		return "Hint: no credentials are configured for this gateway. For a service account, export " +
 			"OPENSHELL_OIDC_CLIENT_SECRET (or pass --client-secret-file); for a human, run " +
-			"`openshellctl login` (add -g <name> for a specific gateway) to authenticate via browser."
+			"`openshellctl login` (add -g <name> for a specific gateway) to authenticate via browser. " +
+			"Alternatively, point --vault-kv-mount/--vault-kv-path at a Vault secret holding these values."
+	}
+
+	// vaultconfig.ErrNoToken and ErrFieldNotString already explain the full
+	// problem in their own Error() message (which path to fix, which field is
+	// bad) — a separate hint would just repeat it.
+	var vaultNoToken *vaultconfig.ErrNoToken
+	var vaultFieldNotString *vaultconfig.ErrFieldNotString
+	if errors.As(err, &vaultNoToken) || errors.As(err, &vaultFieldNotString) {
+		return ""
+	}
+
+	var vaultAddrNotSet *vaultconfig.ErrVaultAddrNotSet
+	if errors.As(err, &vaultAddrNotSet) {
+		return "Hint: set VAULT_ADDR to your Vault server's address before using " +
+			"--vault-kv-mount/--vault-kv-path."
+	}
+
+	// A 403 reading the Vault secret is an authorization problem, not an
+	// expired token — re-running `token refresh` (or `vault login`) cannot
+	// fix a missing policy grant.
+	var vaultForbidden *vaultconfig.ErrForbidden
+	if errors.As(err, &vaultForbidden) {
+		return fmt.Sprintf("Hint: you are authenticated to Vault, but not authorized to read this secret — "+
+			"grant a policy with read access to %s/data/%s.", vaultForbidden.Mount, vaultForbidden.Path)
+	}
+
+	var vaultNotFound *vaultconfig.ErrSecretNotFound
+	if errors.As(err, &vaultNotFound) {
+		return fmt.Sprintf("Hint: no secret exists at %s/%s. Double-check --vault-kv-mount/--vault-kv-path, "+
+			"and confirm the mount is actually a KV v2 engine (a KV v1 mount also 404s here).",
+			vaultNotFound.Mount, vaultNotFound.Path)
 	}
 
 	// ErrNothingToRefresh's own message already explains the problem fully

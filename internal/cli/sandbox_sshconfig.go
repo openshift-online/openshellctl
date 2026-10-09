@@ -23,6 +23,9 @@ func newSandboxSSHConfigCommand() *cobra.Command {
 			if err := checkFileArgConflict(file, args); err != nil {
 				return err
 			}
+			if err := applyVaultAuthSource(cmd.Context()); err != nil {
+				return err
+			}
 
 			env, err := gatewayconfig.NewOSEnv()
 			if err != nil {
