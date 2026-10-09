@@ -72,6 +72,18 @@ type SessionOpts struct {
 	Forward      string `json:"forward,omitempty"`      // [bind:]port to forward
 	ApprovalMode string `json:"approvalMode,omitempty"` // manual|auto
 	Output       string `json:"output,omitempty"`       // table|json|yaml
+
+	// Replace deletes and waits for an existing sandbox with the same name
+	// before creating (extension: replaces the error-swallowing
+	// `openshell sandbox delete "$NAME" || true` CronJob pattern). Requires
+	// metadata.name — there is nothing to replace against a server-generated
+	// name.
+	Replace bool `json:"replace,omitempty"`
+	// ReplaceTimeout is a duration string (time.ParseDuration syntax, e.g.
+	// "5m") bounding how long Replace waits for the deletion to complete.
+	// Empty defaults to 5m (pkg/sandbox.MergeManifestAndFlags), matching
+	// `sandbox delete --wait-timeout`'s own default.
+	ReplaceTimeout string `json:"replaceTimeout,omitempty"`
 }
 
 // SandboxSpec is the create input.

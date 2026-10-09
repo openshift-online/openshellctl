@@ -98,6 +98,13 @@ func TestValidate_Rules(t *testing.T) {
 		{"dup providerRef", func(s *Sandbox) {
 			s.Spec.ProviderRefs = []ProviderRef{{Name: "p"}, {Name: "p"}}
 		}, "duplicate"},
+		{"replace without name", func(s *Sandbox) {
+			s.Metadata.Name = ""
+			s.Spec.SessionOpts = &SessionOpts{Replace: true}
+		}, "spec.sessionOpts.replace"},
+		{"malformed replaceTimeout", func(s *Sandbox) {
+			s.Spec.SessionOpts = &SessionOpts{ReplaceTimeout: "not-a-duration"}
+		}, "spec.sessionOpts.replaceTimeout"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -329,6 +336,17 @@ func TestValidate_SessionOptsValid(t *testing.T) {
 func TestValidate_SessionOptsEmptyIsValid(t *testing.T) {
 	s := validSandbox()
 	s.Spec.SessionOpts = &SessionOpts{}
+	if errs := s.Validate(); len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+// TestValidate_ReplaceWithName confirms Replace is valid when metadata.name
+// is set (validSandbox() already sets Name: "sb") — the companion case to
+// the "replace without name" row in TestValidate_Rules above.
+func TestValidate_ReplaceWithName(t *testing.T) {
+	s := validSandbox()
+	s.Spec.SessionOpts = &SessionOpts{Replace: true, ReplaceTimeout: "90s"}
 	if errs := s.Validate(); len(errs) != 0 {
 		t.Errorf("expected no errors, got %v", errs)
 	}
