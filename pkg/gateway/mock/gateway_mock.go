@@ -61,6 +61,21 @@ func (mr *MockGatewayMockRecorder) AttachProvider(ctx, workspace, sandbox, provi
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AttachProvider", reflect.TypeOf((*MockGateway)(nil).AttachProvider), ctx, workspace, sandbox, provider, expectedRV)
 }
 
+// CreateProvider mocks base method.
+func (m *MockGateway) CreateProvider(ctx context.Context, workspace string, provider *types.Provider) (*types.Provider, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateProvider", ctx, workspace, provider)
+	ret0, _ := ret[0].(*types.Provider)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateProvider indicates an expected call of CreateProvider.
+func (mr *MockGatewayMockRecorder) CreateProvider(ctx, workspace, provider any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateProvider", reflect.TypeOf((*MockGateway)(nil).CreateProvider), ctx, workspace, provider)
+}
+
 // CreateSandbox mocks base method.
 func (m *MockGateway) CreateSandbox(ctx context.Context, workspace, name string, spec *types.SandboxSpec, labels map[string]string) (*types.Sandbox, error) {
 	m.ctrl.T.Helper()
@@ -104,6 +119,20 @@ func (m *MockGateway) CurrentUser(ctx context.Context) (*types.CurrentUser, erro
 func (mr *MockGatewayMockRecorder) CurrentUser(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CurrentUser", reflect.TypeOf((*MockGateway)(nil).CurrentUser), ctx)
+}
+
+// DeleteProvider mocks base method.
+func (m *MockGateway) DeleteProvider(ctx context.Context, workspace, name string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteProvider", ctx, workspace, name)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteProvider indicates an expected call of DeleteProvider.
+func (mr *MockGatewayMockRecorder) DeleteProvider(ctx, workspace, name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteProvider", reflect.TypeOf((*MockGateway)(nil).DeleteProvider), ctx, workspace, name)
 }
 
 // DeleteSandbox mocks base method.
@@ -200,6 +229,21 @@ func (mr *MockGatewayMockRecorder) GetLogs(ctx, workspace, sandbox any, opts ...
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{ctx, workspace, sandbox}, opts...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLogs", reflect.TypeOf((*MockGateway)(nil).GetLogs), varargs...)
+}
+
+// GetProvider mocks base method.
+func (m *MockGateway) GetProvider(ctx context.Context, workspace, name string) (*types.Provider, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetProvider", ctx, workspace, name)
+	ret0, _ := ret[0].(*types.Provider)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetProvider indicates an expected call of GetProvider.
+func (mr *MockGatewayMockRecorder) GetProvider(ctx, workspace, name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetProvider", reflect.TypeOf((*MockGateway)(nil).GetProvider), ctx, workspace, name)
 }
 
 // GetSandbox mocks base method.
@@ -350,6 +394,21 @@ func (m *MockGateway) UpdateConfig(ctx context.Context, workspace string, u *typ
 func (mr *MockGatewayMockRecorder) UpdateConfig(ctx, workspace, u any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateConfig", reflect.TypeOf((*MockGateway)(nil).UpdateConfig), ctx, workspace, u)
+}
+
+// UpdateProvider mocks base method.
+func (m *MockGateway) UpdateProvider(ctx context.Context, workspace string, provider *types.Provider) (*types.Provider, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateProvider", ctx, workspace, provider)
+	ret0, _ := ret[0].(*types.Provider)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateProvider indicates an expected call of UpdateProvider.
+func (mr *MockGatewayMockRecorder) UpdateProvider(ctx, workspace, provider any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateProvider", reflect.TypeOf((*MockGateway)(nil).UpdateProvider), ctx, workspace, provider)
 }
 
 // WatchSandbox mocks base method.

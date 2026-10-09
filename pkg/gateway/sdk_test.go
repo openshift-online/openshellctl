@@ -110,6 +110,56 @@ func TestSDK_ListProviders(t *testing.T) {
 	}
 }
 
+func TestSDK_ProviderCreateGetUpdateDelete(t *testing.T) {
+	c := newFakeGateway()
+	ctx := context.Background()
+
+	created, err := c.CreateProvider(ctx, "default", &types.Provider{
+		Name: "p1",
+		Type: "github",
+		Spec: types.ProviderSpec{Credentials: map[string]string{"TOKEN": "abc"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateProvider: %v", err)
+	}
+	if created.Name != "p1" || created.Type != "github" {
+		t.Errorf("created = %+v", created)
+	}
+
+	got, err := c.GetProvider(ctx, "default", "p1")
+	if err != nil {
+		t.Fatalf("GetProvider: %v", err)
+	}
+	if got.Spec.Credentials["TOKEN"] != "abc" {
+		t.Errorf("got.Spec.Credentials = %+v", got.Spec.Credentials)
+	}
+
+	got.Spec.Credentials["TOKEN"] = "def"
+	updated, err := c.UpdateProvider(ctx, "default", got)
+	if err != nil {
+		t.Fatalf("UpdateProvider: %v", err)
+	}
+	if updated.Spec.Credentials["TOKEN"] != "def" {
+		t.Errorf("updated.Spec.Credentials = %+v", updated.Spec.Credentials)
+	}
+
+	if err := c.DeleteProvider(ctx, "default", "p1"); err != nil {
+		t.Fatalf("DeleteProvider: %v", err)
+	}
+	if _, err := c.GetProvider(ctx, "default", "p1"); err == nil {
+		t.Fatal("GetProvider after delete: expected error")
+	}
+}
+
+func TestSDK_GetProviderNotFoundClassified(t *testing.T) {
+	c := newFakeGateway()
+	_, err := c.GetProvider(context.Background(), "default", "ghost")
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("err = %v, want NotFoundError", err)
+	}
+}
+
 // New wires a Gateway from a Conn; assert it returns a usable value.
 func TestNew_ReturnsGateway(t *testing.T) {
 	fc := fake.NewClient()

@@ -47,6 +47,10 @@ type Gateway interface {
 	AttachProvider(ctx context.Context, workspace, sandbox, provider string, expectedRV uint64) (*types.Sandbox, bool, error)
 	DetachProvider(ctx context.Context, workspace, sandbox, provider string, expectedRV uint64) (*types.Sandbox, bool, error)
 	ListProviders(ctx context.Context, workspace string, opts types.ListOptions) ([]*types.Provider, error)
+	CreateProvider(ctx context.Context, workspace string, provider *types.Provider) (*types.Provider, error)
+	GetProvider(ctx context.Context, workspace, name string) (*types.Provider, error)
+	UpdateProvider(ctx context.Context, workspace string, provider *types.Provider) (*types.Provider, error)
+	DeleteProvider(ctx context.Context, workspace, name string) error
 	GetSandboxConfig(ctx context.Context, workspace, sandbox string) (*types.SandboxConfig, error)
 	GetGatewayConfig(ctx context.Context) (*types.GatewayConfig, error)
 	UpdateConfig(ctx context.Context, workspace string, u *types.ConfigUpdate) (*types.ConfigUpdateResult, error)

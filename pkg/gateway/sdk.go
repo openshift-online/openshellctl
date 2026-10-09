@@ -165,6 +165,62 @@ func (c *client) ListProviders(ctx context.Context, workspace string, opts types
 	return out, err
 }
 
+func (c *client) CreateProvider(ctx context.Context, workspace string, provider *types.Provider) (*types.Provider, error) {
+	var out *types.Provider
+	err := withAuthRetry(ctx, c.auth, func(ctx context.Context) error {
+		p, err := c.sdk().Providers().Create(ctx, workspace, provider)
+		if err != nil {
+			name := ""
+			if provider != nil {
+				name = provider.Name
+			}
+			return Classify(err, "provider", name)
+		}
+		out = p
+		return nil
+	})
+	return out, err
+}
+
+func (c *client) GetProvider(ctx context.Context, workspace, name string) (*types.Provider, error) {
+	var out *types.Provider
+	err := withAuthRetry(ctx, c.auth, func(ctx context.Context) error {
+		p, err := c.sdk().Providers().Get(ctx, workspace, name)
+		if err != nil {
+			return Classify(err, "provider", name)
+		}
+		out = p
+		return nil
+	})
+	return out, err
+}
+
+func (c *client) UpdateProvider(ctx context.Context, workspace string, provider *types.Provider) (*types.Provider, error) {
+	var out *types.Provider
+	err := withAuthRetry(ctx, c.auth, func(ctx context.Context) error {
+		p, err := c.sdk().Providers().Update(ctx, workspace, provider)
+		if err != nil {
+			name := ""
+			if provider != nil {
+				name = provider.Name
+			}
+			return Classify(err, "provider", name)
+		}
+		out = p
+		return nil
+	})
+	return out, err
+}
+
+func (c *client) DeleteProvider(ctx context.Context, workspace, name string) error {
+	return withAuthRetry(ctx, c.auth, func(ctx context.Context) error {
+		if err := c.sdk().Providers().Delete(ctx, workspace, name); err != nil {
+			return Classify(err, "provider", name)
+		}
+		return nil
+	})
+}
+
 func (c *client) GetSandboxConfig(ctx context.Context, workspace, sandbox string) (*types.SandboxConfig, error) {
 	var out *types.SandboxConfig
 	err := withAuthRetry(ctx, c.auth, func(ctx context.Context) error {
