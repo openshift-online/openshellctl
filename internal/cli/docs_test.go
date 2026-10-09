@@ -17,12 +17,16 @@ import (
 var fencedBlockRe = regexp.MustCompile("(?s)```[^\n]*\n(.*?)```")
 
 // extractOpenshellctlLines scans every fenced code block in markdown and
-// returns each logical line whose first token is "openshellctl" — a
-// transcript's output lines (e.g. a `doctor` table's "✓ Endpoint URL ..."
-// rows, or "$ echo $?" / "3") never start with that token and are never
-// selected. Backslash line continuations are joined into one logical line
-// first; a leading "$ " shell-prompt marker and a trailing "# comment" are
-// stripped.
+// returns each logical line that contains an "openshellctl ..." invocation —
+// a transcript's output lines (e.g. a `doctor` table's "✓ Endpoint URL ..."
+// rows, or "$ echo $?" / "3") never match. Backslash line continuations are
+// joined into one logical line first; a leading "$ " shell-prompt marker and
+// a trailing "# comment" are stripped. A line is recognized as an invocation
+// when "openshellctl" is the first token of: the whole line, the remainder
+// after a YAML "run:" step-key prefix (GitHub Actions' single-line `run:
+// <cmd>` form), or any segment following a shell pipe "|" (e.g. `cat
+// manifest.yaml | openshellctl sandbox create -f -`) — not a full shell
+// grammar, just the shapes these docs actually use.
 func extractOpenshellctlLines(markdown string) []string {
 	var out []string
 	for _, block := range fencedBlockRe.FindAllStringSubmatch(markdown, -1) {
@@ -32,7 +36,7 @@ func extractOpenshellctlLines(markdown string) []string {
 }
 
 // linesFromBlock joins backslash-continued lines within one fenced block,
-// then returns the cleaned "openshellctl ..." lines from it.
+// then returns the cleaned "openshellctl ..." invocation found in each line.
 func linesFromBlock(block string) []string {
 	var out []string
 	var pending string
@@ -50,14 +54,37 @@ func linesFromBlock(block string) []string {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) > 0 && fields[0] == "openshellctl" {
-			out = append(out, line)
+		if cmd, ok := openshellctlInvocation(line); ok {
+			out = append(out, cmd)
 		}
 	}
 	// A trailing unterminated continuation (malformed example) is dropped,
 	// not silently merged with whatever follows the fence.
 	return out
+}
+
+// openshellctlInvocation finds the "openshellctl ..." command within line,
+// trying (in order) the whole line, the remainder after a "run:" YAML
+// step-key prefix, and each segment following a "|" pipe. Returns the
+// matched candidate and true, or ("", false) if none of them start with
+// "openshellctl".
+func openshellctlInvocation(line string) (string, bool) {
+	candidates := []string{line}
+	if rest, ok := strings.CutPrefix(line, "run:"); ok {
+		candidates = append(candidates, strings.TrimSpace(rest))
+	}
+	if strings.Contains(line, "|") {
+		for _, seg := range strings.Split(line, "|") {
+			candidates = append(candidates, strings.TrimSpace(seg))
+		}
+	}
+	for _, c := range candidates {
+		fields := strings.Fields(c)
+		if len(fields) > 0 && fields[0] == "openshellctl" {
+			return c, true
+		}
+	}
+	return "", false
 }
 
 // cleanExampleLine strips a leading "$ " shell-prompt marker and a trailing
@@ -140,18 +167,28 @@ func shellSplit(line string) []string {
 // accepts the remainder — RunE is never called, so this is fully hermetic
 // (no network, no gateway dial) even for examples that would otherwise
 // require a live gateway.
+//
+// Scope, explicitly: this validates flags only. It does not call
+// cmd.Args(...), so it cannot catch a missing/extra positional argument
+// (e.g. `gateway remove` with no name, when the real command requires
+// exactly one) — ParseFlags alone never performs that check; Cobra only
+// runs it from Execute, which this test deliberately never calls. A
+// cardinality bug in a doc example would still need to be caught by eye or
+// by the manual quick-start walkthrough, not by this test.
 func TestDocsExamplesParse(t *testing.T) {
 	paths := docSourcePaths(t)
 	if len(paths) == 0 {
 		t.Fatal("no doc sources found — README.md/docs/*.md glob is broken")
 	}
 
+	total := 0
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("reading %s: %v", path, err)
 		}
 		lines := extractOpenshellctlLines(string(data))
+		total += len(lines)
 		for i, line := range lines {
 			name := fmt.Sprintf("%s#%d", filepath.Base(path), i+1)
 			t.Run(name, func(t *testing.T) {
@@ -174,6 +211,14 @@ func TestDocsExamplesParse(t *testing.T) {
 				}
 			})
 		}
+	}
+	// A regression in the fence regex or extraction heuristic could silently
+	// extract zero lines from every file and report a trivial, vacuous PASS
+	// (0 subtests run). README alone has well over a hundred examples today,
+	// so anything near zero means the extractor itself is broken, not that
+	// the docs ran out of examples.
+	if total == 0 {
+		t.Fatal("extracted zero openshellctl examples from any doc source — the extractor is almost certainly broken, not the docs")
 	}
 }
 
@@ -248,6 +293,21 @@ func TestExtractOpenshellctlLines(t *testing.T) {
 			name:     "env var export line is ignored even with an openshellctl-looking value",
 			markdown: "```bash\nVAR=openshellctl-is-not-exported\n```",
 			want:     nil,
+		},
+		{
+			name:     "a YAML run: step one-liner is recognized",
+			markdown: "```yaml\nrun: openshellctl doctor --provider my-provider\n```",
+			want:     []string{"openshellctl doctor --provider my-provider"},
+		},
+		{
+			name:     "an openshellctl invocation following a shell pipe is recognized",
+			markdown: "```bash\ncat sandbox.yaml | openshellctl sandbox create -f -\n```",
+			want:     []string{"openshellctl sandbox create -f -"},
+		},
+		{
+			name:     "an openshellctl invocation preceding a pipe is still recognized as the whole line",
+			markdown: "```bash\nopenshellctl sandbox list | grep foo\n```",
+			want:     []string{"openshellctl sandbox list | grep foo"},
 		},
 	}
 	for _, tt := range tests {
