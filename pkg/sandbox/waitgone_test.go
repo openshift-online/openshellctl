@@ -13,9 +13,12 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/gateway/mock"
 )
 
-// errStillThere is returned by a fake GetSandbox call to mean "exists, not
-// yet deleted" — any non-NotFound error works for waitGone's purposes.
-func errStillThere() error { return &gateway.UnavailableError{Message: "still provisioning"} }
+// stillThere is returned by a fake GetSandbox call to mean "exists, not yet
+// deleted" — a successful Get (sandbox, nil error), not an error. A non-nil,
+// non-NotFound error is a different, real failure (see
+// TestWaitGone_RPCErrorPropagatesImmediately) and must never be confused
+// with "still there" — that was exactly the bug a review caught here.
+func stillThere() (*types.Sandbox, error) { return &types.Sandbox{Name: "sb"}, nil }
 
 // TestWaitGone_GoneOnThirdPoll drives the poll loop with a manually-filled
 // Tick channel — no real sleep — to deterministically exercise "still there,
@@ -24,9 +27,10 @@ func TestWaitGone_GoneOnThirdPoll(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	gw := mock.NewMockGateway(ctrl)
 	gomock.InOrder(
-		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return((*types.Sandbox)(nil), errStillThere()),
-		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return((*types.Sandbox)(nil), errStillThere()),
-		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return((*types.Sandbox)(nil), &gateway.NotFoundError{Resource: "sandbox", Name: "sb"}),
+		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").DoAndReturn(func(context.Context, string, string) (*types.Sandbox, error) { return stillThere() }),
+		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").DoAndReturn(func(context.Context, string, string) (*types.Sandbox, error) { return stillThere() }),
+		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").
+			Return((*types.Sandbox)(nil), &gateway.NotFoundError{Resource: "sandbox", Name: "sb"}),
 	)
 
 	tick := make(chan time.Time, 2)
@@ -45,7 +49,8 @@ func TestWaitGone_GoneOnThirdPoll(t *testing.T) {
 func TestWaitGone_Timeout(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	gw := mock.NewMockGateway(ctrl)
-	gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return((*types.Sandbox)(nil), errStillThere()).AnyTimes()
+	gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").
+		DoAndReturn(func(context.Context, string, string) (*types.Sandbox, error) { return stillThere() }).AnyTimes()
 
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	calls := 0
@@ -69,7 +74,8 @@ func TestWaitGone_Timeout(t *testing.T) {
 func TestWaitGone_ContextCancel(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	gw := mock.NewMockGateway(ctrl)
-	gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return((*types.Sandbox)(nil), errStillThere()).AnyTimes()
+	gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").
+		DoAndReturn(func(context.Context, string, string) (*types.Sandbox, error) { return stillThere() }).AnyTimes()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -77,6 +83,30 @@ func TestWaitGone_ContextCancel(t *testing.T) {
 	err := waitGone(ctx, gw, "default", "sb", time.Minute, waitGoneDeps{Tick: make(chan time.Time)})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// TestWaitGone_RPCErrorPropagatesImmediately is the review-caught
+// regression: a real RPC error from GetSandbox (Unauthenticated,
+// Unavailable, ...) is not "still there" and must not be silently retried
+// for the whole timeout window — it must propagate immediately, with no
+// further Get attempted and no *ErrDeleteTimeout masking it. Reproduces the
+// exact scenario the review described: a token that expires mid-wait.
+func TestWaitGone_RPCErrorPropagatesImmediately(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	wantErr := &gateway.UnauthenticatedError{Message: "token expired"}
+	gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return((*types.Sandbox)(nil), wantErr)
+	// No further GetSandbox expectation — gomock fails the test if waitGone
+	// keeps polling instead of propagating immediately.
+
+	err := waitGone(context.Background(), gw, "default", "sb", time.Minute, waitGoneDeps{Tick: make(chan time.Time)})
+	if err != wantErr { //nolint:errorlint // direct identity: waitGone must return the GetSandbox error unwrapped
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	var timeoutErr *ErrDeleteTimeout
+	if errors.As(err, &timeoutErr) {
+		t.Fatal("waitGone returned *ErrDeleteTimeout, want the real RPC error — the timeout must never mask it")
 	}
 }
 

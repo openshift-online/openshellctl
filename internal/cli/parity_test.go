@@ -37,6 +37,31 @@ func collectCommandNames(root *cobra.Command) map[string]*cobra.Command {
 	return names
 }
 
+// directChild walks a specific path of direct children from root (e.g.
+// directChild(root, "sandbox", "create")), unlike collectCommandNames'
+// flat map keyed by leaf name alone. Use this whenever two subcommands at
+// different places in the tree can share a leaf name (e.g. a future
+// top-level `provider create` alongside `sandbox create`) — a flat lookup
+// by leaf name silently picks whichever one cobra happens to walk last.
+// Returns nil if any segment of path is missing.
+func directChild(root *cobra.Command, path ...string) *cobra.Command {
+	cur := root
+	for _, name := range path {
+		var next *cobra.Command
+		for _, c := range cur.Commands() {
+			if c.Name() == name {
+				next = c
+				break
+			}
+		}
+		if next == nil {
+			return nil
+		}
+		cur = next
+	}
+	return cur
+}
+
 func TestParity_AllThirteenSubcommandsExist(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)

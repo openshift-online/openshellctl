@@ -128,6 +128,15 @@ func waitGone(ctx context.Context, gw gateway.Gateway, workspace, name string, t
 		if errors.As(err, &nf) {
 			return nil
 		}
+		if err != nil {
+			// A real RPC error (Unauthenticated, Unavailable, ...) is not
+			// "still there" — propagate it immediately instead of silently
+			// retrying it for the full timeout window and surfacing a
+			// misleading *ErrDeleteTimeout once the deadline passes. This is
+			// exactly the "swallow the real error, confuse the caller"
+			// failure mode --replace exists to eliminate.
+			return err
+		}
 		if clock().After(deadline) {
 			return &ErrDeleteTimeout{Name: name, After: timeout}
 		}

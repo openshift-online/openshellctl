@@ -78,6 +78,28 @@ func TestReplaceExisting_DeleteRPCErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestReplaceExisting_DeleteNotFound_RaceWithConcurrentDelete is the
+// review-caught regression: if the sandbox vanishes between the initial Get
+// and the Delete (another CronJob run, a manual delete), DeleteSandbox
+// surfaces a NotFoundError — that is not a failure, there's simply nothing
+// left to wait for, so replaceExisting must succeed instead of failing hard
+// on a sandbox that's already gone.
+func TestReplaceExisting_DeleteNotFound_RaceWithConcurrentDelete(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gomock.InOrder(
+		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return(&types.Sandbox{Name: "sb"}, nil),
+		gw.EXPECT().DeleteSandbox(gomock.Any(), "default", "sb").
+			Return(false, &gateway.NotFoundError{Resource: "sandbox", Name: "sb"}),
+	)
+	// No further GetSandbox (waitGone) expectation — gomock fails the test
+	// if replaceExisting tries to wait for something already confirmed gone.
+
+	if err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil, nil); err != nil {
+		t.Fatalf("replaceExisting: %v", err)
+	}
+}
+
 // TestReplaceExisting_NeverGoneTimeout confirms a delete that never actually
 // completes (GetSandbox keeps finding it) surfaces waitGone's
 // *ErrDeleteTimeout, not a fake success.
