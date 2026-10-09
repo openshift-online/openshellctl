@@ -37,15 +37,17 @@ func collectCommandNames(root *cobra.Command) map[string]*cobra.Command {
 	return names
 }
 
-// directChild walks a specific path of direct children from root (e.g.
-// directChild(root, "sandbox", "create")), unlike collectCommandNames'
-// flat map keyed by leaf name alone. Use this whenever two subcommands at
-// different places in the tree can share a leaf name (e.g. a future
-// top-level `provider create` alongside `sandbox create`) — a flat lookup
-// by leaf name silently picks whichever one cobra happens to walk last.
-// Returns nil if any segment of path is missing.
-func directChild(root *cobra.Command, path ...string) *cobra.Command {
-	cur := root
+// directChild walks a specific path of direct children from parent (e.g.
+// directChild(root, "sandbox", "create"), or a single-segment
+// directChild(root, "provider")), unlike collectCommandNames' flat
+// whole-tree map keyed by leaf name alone. Use this whenever two
+// subcommands can share a leaf name at different depths — the top-level
+// `provider` CRUD command vs. `sandbox`'s own `provider` child, or
+// `sandbox create` vs. a hypothetical future `provider create` — where a
+// flat lookup by leaf name alone would silently pick whichever one cobra
+// happens to walk last.
+func directChild(parent *cobra.Command, path ...string) (*cobra.Command, bool) {
+	cur := parent
 	for _, name := range path {
 		var next *cobra.Command
 		for _, c := range cur.Commands() {
@@ -55,11 +57,11 @@ func directChild(root *cobra.Command, path ...string) *cobra.Command {
 			}
 		}
 		if next == nil {
-			return nil
+			return nil, false
 		}
 		cur = next
 	}
-	return cur
+	return cur, true
 }
 
 func TestParity_AllThirteenSubcommandsExist(t *testing.T) {
@@ -77,19 +79,6 @@ func TestParity_AllThirteenSubcommandsExist(t *testing.T) {
 	if len(the13Subcommands) != 13 {
 		t.Fatalf("expected exactly 13 parity subcommands, listed %d", len(the13Subcommands))
 	}
-}
-
-// directChild finds a direct child of parent by name — unlike
-// collectCommandNames' flat, whole-tree map, this disambiguates commands that
-// share a leaf name at different depths (e.g. the top-level `provider` CRUD
-// command and `sandbox`'s own `provider` child).
-func directChild(parent *cobra.Command, name string) (*cobra.Command, bool) {
-	for _, c := range parent.Commands() {
-		if c.Name() == name {
-			return c, true
-		}
-	}
-	return nil, false
 }
 
 func TestParity_SandboxProviderHasListAttachDetach(t *testing.T) {
