@@ -77,8 +77,8 @@ func TestParity_CreateFlagsFullyDocumented(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 	root := NewRootCommand()
-	create := directChild(root, "sandbox", "create")
-	if create == nil {
+	create, ok := directChild(root, "sandbox", "create")
+	if !ok {
 		t.Fatal("sandbox create command missing")
 	}
 
