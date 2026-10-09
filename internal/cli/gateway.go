@@ -85,7 +85,7 @@ func newGatewaySelectCommand() *cobra.Command {
 			if err := gatewayconfig.SetActive(w, name); err != nil {
 				return err
 			}
-			cmd.Printf("✓ Gateway '%s' is now active\n", name)
+			cmd.Printf("✓ Active gateway set to '%s'\n", name)
 			return nil
 		},
 	}
@@ -120,7 +120,7 @@ func newGatewayRemoveCommand() *cobra.Command {
 			if err := gatewayconfig.ClearActiveIfMatches(w, name); err != nil {
 				return err
 			}
-			cmd.Printf("✓ Gateway '%s' removed\n", name)
+			cmd.Printf("✓ Gateway registration '%s' removed.\n", name)
 			return nil
 		},
 	}

@@ -105,8 +105,8 @@ func TestGatewaySelect_SetsActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gateway select: %v", err)
 	}
-	if !strings.Contains(out, "a") {
-		t.Errorf("confirmation output missing gateway name: %s", out)
+	if !strings.Contains(out, "✓ Active gateway set to 'a'") {
+		t.Errorf("confirmation message mismatch (upstream gateway.rs:485): %q", out)
 	}
 	listOut, err := runCmd(t, "gateway", "list")
 	if err != nil {
@@ -138,8 +138,12 @@ func TestGatewayRemove_RemovesRegistration(t *testing.T) {
 	if _, err := runCmd(t, "gateway", "add", "https://gw.example.com", "--name", "test-gw", "--oidc-issuer", "https://issuer"); err != nil {
 		t.Fatalf("setup add: %v", err)
 	}
-	if _, err := runCmd(t, "gateway", "remove", "test-gw"); err != nil {
+	removeOut, err := runCmd(t, "gateway", "remove", "test-gw")
+	if err != nil {
 		t.Fatalf("gateway remove: %v", err)
+	}
+	if !strings.Contains(removeOut, "✓ Gateway registration 'test-gw' removed.") {
+		t.Errorf("confirmation message mismatch (upstream gateway.rs:1498-1501): %q", removeOut)
 	}
 	out, err := runCmd(t, "gateway", "list")
 	if err != nil {
