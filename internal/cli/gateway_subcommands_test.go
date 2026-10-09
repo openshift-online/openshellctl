@@ -121,6 +121,27 @@ func TestGatewaySelect_SetsActive(t *testing.T) {
 	}
 }
 
+// TestGatewaySelect_EnvOverrideWarning pins ROSAENG-74241 item 2 end to end:
+// selecting a gateway while OPENSHELL_GATEWAY names a different one prints
+// the upstream warning (gateway.rs:490-499) after the success line.
+func TestGatewaySelect_EnvOverrideWarning(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENSHELL_NO_BROWSER", "1")
+	if _, err := runCmd(t, "gateway", "add", "https://a.example.com", "--name", "a", "--oidc-issuer", "https://issuer"); err != nil {
+		t.Fatalf("setup add: %v", err)
+	}
+	t.Setenv("OPENSHELL_GATEWAY", "b")
+
+	out, err := runCmd(t, "gateway", "select", "a")
+	if err != nil {
+		t.Fatalf("gateway select: %v", err)
+	}
+	want := "OPENSHELL_GATEWAY=b is set and will override this selection.\n  Unset it or run: export OPENSHELL_GATEWAY=a"
+	if !strings.Contains(out, want) {
+		t.Errorf("env-override warning missing or wrong, got: %q", out)
+	}
+}
+
 func TestGatewaySelect_UnknownGateway(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	_, err := runCmd(t, "gateway", "select", "ghost")
