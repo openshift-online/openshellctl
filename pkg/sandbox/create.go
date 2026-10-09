@@ -42,6 +42,14 @@ type CreateResult struct {
 // transfer path (no upload/forward/attach); the CLI decides output/attach on the
 // returned sandbox. Steps mirror run.rs (§5.5).
 func Create(ctx context.Context, d CreateDeps, r *CreateRequest, ttyResolved bool) (*CreateResult, error) {
+	// (0) --replace: delete and wait for any existing same-named sandbox
+	// first, so the create below never races a deletion still in flight.
+	if r.Replace {
+		if err := replaceExisting(ctx, d.GW, r.Workspace, r.Name, r.ReplaceTimeout, d.Clock); err != nil {
+			return nil, err
+		}
+	}
+
 	// (1) provider inference from Command[0], unless --no-auto-providers.
 	inferred := inferProviderType(ctx, d.GW, r)
 
