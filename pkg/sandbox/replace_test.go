@@ -1,8 +1,10 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +24,7 @@ func TestReplaceExisting_NotFound(t *testing.T) {
 		Return((*types.Sandbox)(nil), &gateway.NotFoundError{Resource: "sandbox", Name: "sb"})
 	// No DeleteSandbox expectation at all — gomock fails the test if it's called.
 
-	if err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil); err != nil {
+	if err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil, nil); err != nil {
 		t.Fatalf("replaceExisting: %v", err)
 	}
 }
@@ -39,7 +41,7 @@ func TestReplaceExisting_FoundDeletedGone(t *testing.T) {
 			Return((*types.Sandbox)(nil), &gateway.NotFoundError{Resource: "sandbox", Name: "sb"}),
 	)
 
-	if err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil); err != nil {
+	if err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil, nil); err != nil {
 		t.Fatalf("replaceExisting: %v", err)
 	}
 }
@@ -52,7 +54,7 @@ func TestReplaceExisting_GetRPCError(t *testing.T) {
 	wantErr := &gateway.UnavailableError{Message: "gateway down"}
 	gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return((*types.Sandbox)(nil), wantErr)
 
-	err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil)
+	err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil, nil)
 	if !errors.Is(err, wantErr) && err != wantErr { //nolint:errorlint // UnavailableError has no Is/Unwrap; direct identity is correct here
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
@@ -70,7 +72,7 @@ func TestReplaceExisting_DeleteRPCErrorPropagates(t *testing.T) {
 		gw.EXPECT().DeleteSandbox(gomock.Any(), "default", "sb").Return(false, wantErr),
 	)
 
-	err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil)
+	err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil, nil)
 	if err != wantErr { //nolint:errorlint // direct identity: replaceExisting must return the DeleteSandbox error unwrapped
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
@@ -97,10 +99,52 @@ func TestReplaceExisting_NeverGoneTimeout(t *testing.T) {
 		return start.Add(time.Hour)
 	}
 
-	err := replaceExistingWithDeps(context.Background(), gw, "default", "sb", time.Minute, waitGoneDeps{Clock: clock, Tick: make(chan time.Time)})
+	err := replaceExistingWithDeps(context.Background(), gw, "default", "sb", time.Minute, waitGoneDeps{Clock: clock, Tick: make(chan time.Time)}, nil)
 	var timeoutErr *ErrDeleteTimeout
 	if !errors.As(err, &timeoutErr) {
 		t.Fatalf("err = %v, want *ErrDeleteTimeout", err)
+	}
+}
+
+// TestReplaceExisting_PrintsProgressMessageOnlyWhenFound is the ticket's
+// first acceptance criterion's output expectation ("the second run's output
+// showing Replacing existing sandbox test-sbx… before the create step"): the
+// progress line appears when there's actually something to replace, and is
+// silent when there's nothing to replace (the first-run case).
+func TestReplaceExisting_PrintsProgressMessageOnlyWhenFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gomock.InOrder(
+		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return(&types.Sandbox{Name: "sb"}, nil),
+		gw.EXPECT().DeleteSandbox(gomock.Any(), "default", "sb").Return(true, nil),
+		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").
+			Return((*types.Sandbox)(nil), &gateway.NotFoundError{Resource: "sandbox", Name: "sb"}),
+	)
+	var stderr bytes.Buffer
+
+	if err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil, &stderr); err != nil {
+		t.Fatalf("replaceExisting: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Replacing existing sandbox sb") {
+		t.Errorf("stderr = %q, want it to mention replacing sandbox sb", stderr.String())
+	}
+}
+
+// TestReplaceExisting_NotFound_PrintsNothing confirms the progress message
+// is NOT printed when there's nothing to replace — it would be misleading
+// ("Replacing existing sandbox" when none exists).
+func TestReplaceExisting_NotFound_PrintsNothing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").
+		Return((*types.Sandbox)(nil), &gateway.NotFoundError{Resource: "sandbox", Name: "sb"})
+	var stderr bytes.Buffer
+
+	if err := replaceExisting(context.Background(), gw, "default", "sb", time.Minute, nil, &stderr); err != nil {
+		t.Fatalf("replaceExisting: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty (nothing to replace)", stderr.String())
 	}
 }
 
@@ -116,7 +160,7 @@ func TestReplaceExisting_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := replaceExistingWithDeps(ctx, gw, "default", "sb", time.Minute, waitGoneDeps{Tick: make(chan time.Time)})
+	err := replaceExistingWithDeps(ctx, gw, "default", "sb", time.Minute, waitGoneDeps{Tick: make(chan time.Time)}, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}

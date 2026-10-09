@@ -36,6 +36,9 @@ func TestSandboxCreate_Replace(t *testing.T) {
 	if !strings.Contains(out, "id-2") {
 		t.Errorf("expected the freshly-created sandbox in output, got:\n%s", out)
 	}
+	if !strings.Contains(out, "Replacing existing sandbox sb") {
+		t.Errorf("expected a replacing-sandbox progress message before the create step, got:\n%s", out)
+	}
 }
 
 // TestSandboxCreate_Replace_DeleteRPCError_NonZeroExit is the ticket's

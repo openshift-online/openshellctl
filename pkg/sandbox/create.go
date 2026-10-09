@@ -45,7 +45,7 @@ func Create(ctx context.Context, d CreateDeps, r *CreateRequest, ttyResolved boo
 	// (0) --replace: delete and wait for any existing same-named sandbox
 	// first, so the create below never races a deletion still in flight.
 	if r.Replace {
-		if err := replaceExisting(ctx, d.GW, r.Workspace, r.Name, r.ReplaceTimeout, d.Clock); err != nil {
+		if err := replaceExisting(ctx, d.GW, r.Workspace, r.Name, r.ReplaceTimeout, d.Clock, d.Stderr); err != nil {
 			return nil, err
 		}
 	}

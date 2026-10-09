@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -302,12 +303,16 @@ func TestCreate_Replace(t *testing.T) {
 	)
 
 	req := &CreateRequest{Workspace: "default", Name: "sb", Image: "img", Replace: true, ReplaceTimeout: time.Minute}
-	res, err := Create(context.Background(), CreateDeps{GW: gw}, req, false)
+	var stderr bytes.Buffer
+	res, err := Create(context.Background(), CreateDeps{GW: gw, Stderr: &stderr}, req, false)
 	if err != nil {
 		t.Fatalf("Create --replace: %v", err)
 	}
 	if res.Sandbox.ID != "id-2" {
 		t.Errorf("sandbox = %+v, want the freshly-created one", res.Sandbox)
+	}
+	if !strings.Contains(stderr.String(), "Replacing existing sandbox sb") {
+		t.Errorf("stderr = %q, want a replacing-sandbox progress message", stderr.String())
 	}
 }
 
