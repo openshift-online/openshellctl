@@ -6,6 +6,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	"sigs.k8s.io/yaml"
 )
@@ -144,6 +145,14 @@ func (s *Sandbox) Validate() []error {
 		case "", "table", "json", "yaml":
 		default:
 			add("spec.sessionOpts.output", `must be one of "", "table", "json", "yaml"`)
+		}
+		if s.Spec.SessionOpts.Replace && s.Metadata.Name == "" {
+			add("spec.sessionOpts.replace", "requires metadata.name (nothing to replace against a server-generated name)")
+		}
+		if t := s.Spec.SessionOpts.ReplaceTimeout; t != "" {
+			if _, err := time.ParseDuration(t); err != nil {
+				add("spec.sessionOpts.replaceTimeout", fmt.Sprintf("invalid duration %q: %v", t, err))
+			}
 		}
 	}
 

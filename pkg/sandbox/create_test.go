@@ -1,10 +1,12 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
 	dm "github.com/NVIDIA/OpenShell/sdk/go/proto/datamodelv1"
@@ -12,6 +14,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/openshift-online/openshellctl/pkg/api/v1alpha1"
+	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gateway/mock"
 )
 
@@ -280,5 +283,72 @@ func TestMerge_GPUFromManifest(t *testing.T) {
 	r, _ := MergeManifestAndFlags(m, CreateFlags{})
 	if r.GPU == nil || r.GPU.Count == nil || *r.GPU.Count != 4 {
 		t.Errorf("GPU not merged from manifest: %+v", r.GPU)
+	}
+}
+
+// TestCreate_Replace is the ticket's explicit "ordered-expectation test"
+// (Get, Delete, Get NotFound, Create): with Replace set, Create must check
+// for an existing sandbox, delete it, confirm it's gone, and only then
+// create the new one — in that exact order.
+func TestCreate_Replace(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gomock.InOrder(
+		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return(&types.Sandbox{Name: "sb"}, nil),
+		gw.EXPECT().DeleteSandbox(gomock.Any(), "default", "sb").Return(true, nil),
+		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").
+			Return((*types.Sandbox)(nil), &gateway.NotFoundError{Resource: "sandbox", Name: "sb"}),
+		gw.EXPECT().CreateSandbox(gomock.Any(), "default", "sb", gomock.Any(), gomock.Any()).
+			Return(&types.Sandbox{ID: "id-2", Name: "sb"}, nil),
+	)
+
+	req := &CreateRequest{Workspace: "default", Name: "sb", Image: "img", Replace: true, ReplaceTimeout: time.Minute}
+	var stderr bytes.Buffer
+	res, err := Create(context.Background(), CreateDeps{GW: gw, Stderr: &stderr}, req, false)
+	if err != nil {
+		t.Fatalf("Create --replace: %v", err)
+	}
+	if res.Sandbox.ID != "id-2" {
+		t.Errorf("sandbox = %+v, want the freshly-created one", res.Sandbox)
+	}
+	if !strings.Contains(stderr.String(), "Replacing existing sandbox sb") {
+		t.Errorf("stderr = %q, want a replacing-sandbox progress message", stderr.String())
+	}
+}
+
+// TestCreate_ReplaceNotFound_SkipsDeleteGoesStraightToCreate confirms
+// Replace with nothing to replace against doesn't attempt a Delete at all.
+func TestCreate_ReplaceNotFound_SkipsDeleteGoesStraightToCreate(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").
+		Return((*types.Sandbox)(nil), &gateway.NotFoundError{Resource: "sandbox", Name: "sb"})
+	gw.EXPECT().CreateSandbox(gomock.Any(), "default", "sb", gomock.Any(), gomock.Any()).
+		Return(&types.Sandbox{ID: "id-1", Name: "sb"}, nil)
+
+	req := &CreateRequest{Workspace: "default", Name: "sb", Image: "img", Replace: true, ReplaceTimeout: time.Minute}
+	if _, err := Create(context.Background(), CreateDeps{GW: gw}, req, false); err != nil {
+		t.Fatalf("Create --replace (nothing to replace): %v", err)
+	}
+}
+
+// TestCreate_ReplaceDeleteRPCError_AbortsBeforeCreate is the ticket's second
+// acceptance criterion end to end through Create: a delete RPC failure
+// during replace must abort — Create is never called, and the real error
+// propagates (not a fake success).
+func TestCreate_ReplaceDeleteRPCError_AbortsBeforeCreate(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	wantErr := &gateway.UnauthenticatedError{Message: "token expired"}
+	gomock.InOrder(
+		gw.EXPECT().GetSandbox(gomock.Any(), "default", "sb").Return(&types.Sandbox{Name: "sb"}, nil),
+		gw.EXPECT().DeleteSandbox(gomock.Any(), "default", "sb").Return(false, wantErr),
+	)
+	// No CreateSandbox expectation — gomock fails the test if it's called.
+
+	req := &CreateRequest{Workspace: "default", Name: "sb", Image: "img", Replace: true, ReplaceTimeout: time.Minute}
+	_, err := Create(context.Background(), CreateDeps{GW: gw}, req, false)
+	if err != wantErr { //nolint:errorlint // direct identity: Create must surface DeleteSandbox's error unwrapped
+		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
 }

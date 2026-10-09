@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"time"
 
 	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
 
@@ -26,12 +27,14 @@ type CreateRequest struct {
 	ApprovalMode         string // "" == manual
 	NoCredentialWarnings bool
 
-	Uploads []v1alpha1.Upload
-	Keep    bool
-	Detach  bool
-	Forward *ForwardSpec
-	Output  string // table|json|yaml
-	Editor  string
+	Uploads        []v1alpha1.Upload
+	Keep           bool
+	Detach         bool
+	Forward        *ForwardSpec
+	Output         string // table|json|yaml
+	Editor         string
+	Replace        bool
+	ReplaceTimeout time.Duration
 }
 
 // CreateFlags is the flag-side create input (before merging with a manifest).
@@ -52,12 +55,14 @@ type CreateFlags struct {
 	ApprovalMode         string
 	NoCredentialWarnings bool
 
-	Uploads []v1alpha1.Upload
-	Keep    *bool // nil = default keep(true); false = --no-keep
-	Detach  bool
-	Forward *ForwardSpec
-	Output  string
-	Editor  string
+	Uploads        []v1alpha1.Upload
+	Keep           *bool // nil = default keep(true); false = --no-keep
+	Detach         bool
+	Forward        *ForwardSpec
+	Output         string
+	Editor         string
+	Replace        bool          // --replace (no "unset" value, same asymmetry as Detach)
+	ReplaceTimeout time.Duration // 0 = not given; a real default is applied in MergeManifestAndFlags
 }
 
 // MergeManifestAndFlags merges a manifest (nil ok) with flags: a flag wins per
@@ -123,6 +128,16 @@ func MergeManifestAndFlags(m *v1alpha1.Sandbox, f CreateFlags) (*CreateRequest, 
 					return nil, fmt.Errorf("spec.sessionOpts.forward: %w", err)
 				}
 				r.Forward = &spec
+			}
+			if so.Replace {
+				r.Replace = true
+			}
+			if so.ReplaceTimeout != "" {
+				d, err := time.ParseDuration(so.ReplaceTimeout)
+				if err != nil {
+					return nil, fmt.Errorf("spec.sessionOpts.replaceTimeout: %w", err)
+				}
+				r.ReplaceTimeout = d
 			}
 		}
 	} else {
@@ -197,6 +212,16 @@ func MergeManifestAndFlags(m *v1alpha1.Sandbox, f CreateFlags) (*CreateRequest, 
 	}
 	if f.Editor != "" {
 		r.Editor = f.Editor
+	}
+	if f.Replace {
+		r.Replace = true
+	}
+	if f.ReplaceTimeout != 0 {
+		r.ReplaceTimeout = f.ReplaceTimeout
+	}
+	if r.Replace && r.ReplaceTimeout == 0 {
+		// Matches `sandbox delete --wait-timeout`'s own default.
+		r.ReplaceTimeout = 5 * time.Minute
 	}
 
 	return r, nil

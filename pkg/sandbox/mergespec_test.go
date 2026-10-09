@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"testing"
+	"time"
 
 	types "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
 
@@ -175,6 +176,93 @@ func TestMerge_FlagsOverrideSessionOpts(t *testing.T) {
 	}
 	if r.Output != "yaml" {
 		t.Errorf("flag --output should override: got %q", r.Output)
+	}
+}
+
+func TestMerge_SessionOptsReplace(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			Image:       "img",
+			SessionOpts: &v1alpha1.SessionOpts{Replace: true, ReplaceTimeout: "90s"},
+		},
+	}
+	r, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Replace {
+		t.Error("sessionOpts.replace should set Replace=true")
+	}
+	if r.ReplaceTimeout != 90*time.Second {
+		t.Errorf("ReplaceTimeout = %v, want 90s", r.ReplaceTimeout)
+	}
+}
+
+func TestMerge_SessionOptsReplaceTimeoutBad(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			SessionOpts: &v1alpha1.SessionOpts{ReplaceTimeout: "not-a-duration"},
+		},
+	}
+	_, err := MergeManifestAndFlags(m, CreateFlags{})
+	if err == nil {
+		t.Fatal("expected error for malformed replaceTimeout")
+	}
+}
+
+// TestMerge_FlagReplaceOverridesSessionOptsTimeout confirms --replace-timeout
+// wins over a manifest's sessionOpts.replaceTimeout (flag > manifest, same
+// precedence every other create field follows).
+func TestMerge_FlagReplaceOverridesSessionOptsTimeout(t *testing.T) {
+	m := &v1alpha1.Sandbox{
+		Spec: v1alpha1.SandboxSpec{
+			SessionOpts: &v1alpha1.SessionOpts{Replace: true, ReplaceTimeout: "90s"},
+		},
+	}
+	r, err := MergeManifestAndFlags(m, CreateFlags{ReplaceTimeout: 2 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ReplaceTimeout != 2*time.Minute {
+		t.Errorf("ReplaceTimeout = %v, want the flag's 2m to win over the manifest's 90s", r.ReplaceTimeout)
+	}
+}
+
+// TestMerge_ReplaceDefaultTimeout confirms Replace with no timeout given
+// anywhere (flag or manifest) defaults to 5m, matching
+// `sandbox delete --wait-timeout`'s own default.
+func TestMerge_ReplaceDefaultTimeout(t *testing.T) {
+	r, err := MergeManifestAndFlags(nil, CreateFlags{Replace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ReplaceTimeout != 5*time.Minute {
+		t.Errorf("ReplaceTimeout = %v, want the 5m default", r.ReplaceTimeout)
+	}
+}
+
+// TestMerge_NoReplace_NoDefaultTimeout confirms the 5m default is only
+// applied when Replace is actually requested — ReplaceTimeout should stay
+// zero otherwise (it's meaningless without Replace).
+func TestMerge_NoReplace_NoDefaultTimeout(t *testing.T) {
+	r, err := MergeManifestAndFlags(nil, CreateFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ReplaceTimeout != 0 {
+		t.Errorf("ReplaceTimeout = %v, want 0 when Replace is false", r.ReplaceTimeout)
+	}
+}
+
+// TestMerge_FlagReplaceTrue_ManifestNil confirms a bare --replace flag
+// (no manifest at all) still works — Replace is a pure flag-side request.
+func TestMerge_FlagReplaceTrue_ManifestNil(t *testing.T) {
+	r, err := MergeManifestAndFlags(nil, CreateFlags{Replace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Replace {
+		t.Error("expected Replace=true from the flag alone")
 	}
 }
 
