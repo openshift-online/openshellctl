@@ -250,6 +250,8 @@ openshellctl sandbox create --from python -o json
 | `--no-keep` | Delete the sandbox after the session ends |
 | `--driver-config-json` | Driver config as inline JSON |
 | `--policy` | Sandbox policy file (env: `OPENSHELL_SANDBOX_POLICY`) |
+| `--replace` | Delete and wait for an existing sandbox with the same name before creating |
+| `--replace-timeout` | Timeout waiting for the existing sandbox to be deleted (default `5m`) |
 | `-o`, `--output` | Output format: `table` (default), `json`, `yaml` |
 
 #### Manifest format
@@ -308,6 +310,8 @@ openshellctl sandbox delete -f sop-improve.yaml
 | `forward` | string | `[bind:]port` to forward to the sandbox |
 | `approvalMode` | string | `manual` (default) or `auto` |
 | `output` | string | `table` (default), `json`, or `yaml` |
+| `replace` | bool | Delete and wait for an existing sandbox with the same name before creating — requires `metadata.name` |
+| `replaceTimeout` | string | Duration (e.g. `"5m"`) bounding `replace`'s wait; default `5m` |
 
 These fields are ignored by the operator — they control what the CLI does after creation. CLI flags always override manifest values.
 
