@@ -78,6 +78,37 @@ func TestParseCredentialPairs(t *testing.T) {
 	}
 }
 
+func TestParseConfigPairs(t *testing.T) {
+	cases := []struct {
+		name    string
+		items   []string
+		want    map[string]string
+		wantErr string
+	}{
+		{name: "inline KEY=VALUE", items: []string{"org=acme"}, want: map[string]string{"org": "acme"}},
+		{name: "no items returns empty map", items: nil, want: map[string]string{}},
+		{name: "missing '=' errors", items: []string{"org"}, wantErr: "KEY=VALUE"},
+		{name: "empty key errors", items: []string{"=acme"}, wantErr: "empty"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseConfigPairs(tc.items)
+			if tc.wantErr != "" {
+				if err == nil || !contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !mapsEqual(got, tc.want) {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseCredentialExpiresAt(t *testing.T) {
 	cases := []struct {
 		name    string

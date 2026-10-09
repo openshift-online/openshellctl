@@ -86,6 +86,7 @@ func NewRootCommand() *cobra.Command {
 		newLoginCommand(),
 		newGatewayCommand(),
 		newDoctorCommand(),
+		newProviderCommand(),
 	)
 
 	return root
