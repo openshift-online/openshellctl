@@ -1,0 +1,10 @@
+{
+  "note": "openshellctl-only flags not present in the upstream openshell CLI at the pinned version. See hack/parity/sandbox_flags_v0.0.116.json for upstream flags. parity_test.go confirms every flag on an implemented subcommand (see implementedSubcommands in parity_test.go) appears in exactly one of the two files.",
+  "subcommands": {
+    "create": [
+      {"long": "file", "short": "f", "type": "string", "note": "manifest input (- for stdin); docs/plans/0002-openshell-go-client-plan.md:585"},
+      {"long": "replace", "type": "bool", "note": "ROSAENG-68832"},
+      {"long": "replace-timeout", "type": "duration", "default": "5m", "note": "ROSAENG-68832"}
+    ]
+  }
+}

@@ -20,8 +20,9 @@ var the13Subcommands = []string{
 
 // implementedSubcommands lists subcommands whose full flag-parity is enforced.
 // As commands land, move their name here from the TODO list and the flag diff
-// (added in a later commit) will apply. Scaffold: none are enforced yet.
-var implementedSubcommands = map[string]bool{}
+// (TestParity_CreateFlagsFullyDocumented, parity_flags_test.go) applies.
+// "create" is the first — ROSAENG-68832.
+var implementedSubcommands = map[string]bool{"create": true}
 
 func collectCommandNames(root *cobra.Command) map[string]*cobra.Command {
 	names := map[string]*cobra.Command{}
