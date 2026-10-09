@@ -6,6 +6,25 @@ hint, when it had actually done nothing or hit a different problem than the
 hint suggested. All of these are fully reproducible offline — no gateway
 connection required.
 
+## Quick reference: symptom → `doctor` check
+
+`openshellctl doctor` (see [the README](../README.md#first-run-openshellctl-doctor)
+and [`doctor.md`](doctor.md)) now catches most of what follows *before* you
+ever run a command that fails confusingly. This table maps each symptom
+below to the check that surfaces it today, or to the fix that made it an
+explicit, honest error instead of a `doctor` check:
+
+| Symptom | Cause | Caught by |
+|---|---|---|
+| Fake success on `token refresh` with nothing configured | `auth.Resolve`'s fallback returned a working-looking no-bearer-token source unconditionally | `doctor`'s **Credentials** check — fails with "no credentials configured" instead of a fake success |
+| `--write` silently did nothing | no registered gateway directory to write `oidc_token.json` into | not a `doctor` check — `--write`/`--write-token` is now a usage error (exit 2) naming the fix, on every auth-resolving command |
+| Role preflight passed with no gateway role present | checked for "any role", not `openshell-user`/`openshell-admin` specifically | `doctor`'s **Roles** check |
+| Audience preflight was effectively dead code | compared only against `--oidc-audience`, which nobody passes to `token show` | `doctor`'s **Audience** check |
+| Permission-denied got the same hint as an expired token | both mapped to the same generic "try `token refresh`" hint | not a distinct `doctor` check — `gateway.PermissionDeniedError` now gets its own exit code (7) and hint, but only on a real `sandbox`/`exec`/etc. call; `doctor`'s own gateway calls don't surface it as a separate check |
+| Invalid audience/issuer got the generic refresh hint | `hintFor` didn't read the gateway's specific rejection reason | not a `doctor` check — `hintFor` now distinguishes `InvalidAudience`/`InvalidIssuer` from `ExpiredSignature`; `doctor`'s **Audience**/**OIDC config match** checks catch a misconfigured audience/issuer *before* a real call would hit this |
+| Endpoint reformatting silently dropped a registered gateway's token/TLS material | exact-string endpoint matching, so `https://host:443` and `https://host` (same gateway) resolved to two different registrations | `doctor`'s **Endpoint URL** check shows the normalized form being used; a token/TLS mismatch itself then surfaces via **Credentials** |
+| Vault-sourced config errors (no session, `VAULT_ADDR` unset, secret not found, permission denied) | `--vault-kv-mount`/`--vault-kv-path` set but Vault itself isn't reachable/authorized/populated | `doctor`'s **Credentials** check — `resolveAuth` runs Vault resolution first, so the check's Detail line shows the Vault error verbatim |
+
 ## `token refresh` printed a fake success with no credentials configured
 
 **Symptom**: running `openshellctl token refresh` against a gateway with no
@@ -56,6 +75,10 @@ bearer token for either mode.
 > (the upstream Rust binary) instead of `openshellctl` now that those
 > commands are native (see [`gateway.md`](gateway.md)).
 
+**Caught by**: `openshellctl doctor`'s **Credentials** check reports this
+same "no credentials configured" failure before you ever reach `token
+refresh` at all.
+
 ## `--write` silently did nothing when there was nowhere to write to
 
 **Symptom**: `openshellctl token refresh --write` (or any other command
@@ -87,6 +110,9 @@ for example `--write --gateway bogus` (a typo'd gateway name) still reports
 remediation, and `--write` with nothing registered and no flags at all still
 reports `No active gateway...` (exit 4), not the generic writer error.
 
+**Caught by**: not a `doctor` check — this is now a usage error (exit 2)
+raised before any auth resolution is attempted.
+
 ## The role preflight checked "any role", not the role the gateway requires
 
 **Symptom**: `token show`'s preflight warning only fired when a token carried
@@ -105,6 +131,9 @@ $ openshellctl token show
 warning: token roles [default-roles-rosa offline_access] include neither "openshell-user" nor "openshell-admin"; gateway calls will likely fail with permission denied
 ```
 
+**Caught by**: `openshellctl doctor`'s **Roles** check, before any gateway
+call that would actually need the role.
+
 ## The audience preflight almost never fired in practice
 
 **Symptom**: `token show`'s audience warning only compared against
@@ -117,6 +146,8 @@ effectively dead code against a real registered gateway.
 `--oidc-audience` (an explicit override) → the resolved gateway's
 `metadata.oidc_audience` → the same `openshell-cli` default
 `OIDCClientIDOrDefault` already uses for the client ID.
+
+**Caught by**: `openshellctl doctor`'s **Audience** check.
 
 ## A permission-denied response got the same hint as an expired token
 
@@ -138,6 +169,12 @@ Hint: you are authenticated, but the gateway denied this action due to insuffici
 
 `token refresh` is no longer suggested for this case.
 
+**Caught by**: not a `doctor` check — `doctor`'s own gateway calls (listing
+providers when `--provider`/`-f` is given) surface a permission-denied the
+same way, but it isn't a distinct check or exit code there; the distinct
+exit code (7) and hint only apply to a real `sandbox create`/`exec`/etc.
+call outside `doctor`.
+
 ## An invalid-audience/invalid-issuer rejection also got the generic refresh hint
 
 **Symptom**: `gateway.UnauthenticatedError` carries the gateway's own
@@ -157,6 +194,11 @@ Hint: the token's audience does not match what the gateway expects. Check --oidc
 
 An `ExpiredSignature` rejection still gets the ordinary refresh hint, since
 that genuinely is what `token refresh` fixes.
+
+**Caught by**: `openshellctl doctor`'s **Audience**/**OIDC config match**
+checks catch a misconfigured audience/issuer ahead of time, against a
+registered gateway; `hintFor`'s distinct hints handle the case where it's
+only caught live, on an actual gateway call.
 
 ## Vault-sourced auth config errors
 
@@ -217,3 +259,39 @@ Error: vault secret field "oidc-client-id" is not a string
 
 exits with code 2 — this is a Vault secret authoring problem, not an auth
 failure; fix the field's value in Vault.
+
+**Caught by**: `openshellctl doctor`'s **Credentials** check — `resolveAuth`
+runs Vault resolution before anything else, so any of the errors above
+surface as that check's `Detail` line, verbatim, instead of only appearing
+on a later real command.
+
+## Endpoint reformatting silently dropped registered credentials
+
+**Symptom**: a registered gateway's token and TLS material went missing —
+not reported as an error, just silently unused — whenever an env var or
+flag spelled the same endpoint slightly differently from how `gateway add`
+originally wrote it (e.g. `https://gw.example.com` vs. the registered
+`https://gw.example.com:443`, or a different letter case in the scheme/host).
+
+**Why**: gateway lookup matched endpoints by exact string equality.
+`gateway add` always writes a fully-qualified form (explicit default port
+included); a later `--gateway-endpoint`/`OPENSHELL_GATEWAY_ENDPOINT` using
+the bare, no-port form (the way these variables are commonly written and
+exported) no longer matched that registration at all — openshellctl quietly
+fell through to "no gateway found for this endpoint" and tried to proceed
+with no credentials, rather than reporting the mismatch.
+
+**The fix**: endpoint matching now normalizes scheme/host case and strips an
+explicit default port (`:443` for `https`, `:80` for `http`) before
+comparing, so `https://gw.example.com:443` (as `gateway add` writes it) and
+`https://gw.example.com` (as commonly exported) resolve to the same
+registration. A different port, or a different path/query/fragment, is
+still correctly treated as a different gateway — see
+[`gateway.md`](gateway.md) for the exact normalization rules.
+
+**Caught by**: `openshellctl doctor`'s **Endpoint URL** check prints both
+the as-given and normalized form, so a mismatch is visible immediately; a
+credentials/TLS problem that endpoint reformatting *would* have caused now
+surfaces through the **Credentials** check instead of silently using no
+auth at all.
+

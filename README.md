@@ -18,15 +18,56 @@ make build          # binary at ./openshellctl
 
 ## Quick start
 
-```bash
-# Point at a gateway (env vars or config file)
-export OPENSHELL_GATEWAY_ENDPOINT=https://gateway.example.com
-export OPENSHELL_TOKEN=$(cat /path/to/token)
+Two complete, runnable paths from a clean machine to a working sandbox,
+depending on how you authenticate. Both end with `openshellctl doctor`
+printing all-green — run it any time something looks wrong; see
+["First run: `openshellctl doctor`"](#first-run-openshellctl-doctor) below
+for what a failure looks like and its exact next command. For running these
+same commands from a Kubernetes CronJob instead of a shell, see
+[`docs/ci.md`](docs/ci.md).
 
-# Create a sandbox and connect
+> **Always `export` a credential, never assign it bare.** `VAR=$(...)`
+> (no `export`) sets a shell-local variable openshellctl's child process
+> never sees — every `OPENSHELL_*` variable below needs `export OPENSHELL_
+> FOO=...` (or `export` on its own line afterward), not a bare assignment.
+> This single mistake is the most common cause of `doctor` reporting
+> "no credentials configured" even though the value is sitting right there
+> in your shell history.
+
+### Service account (CI / fire-and-forget)
+
+For automation: no browser, no interactive login, a client secret does all
+the work.
+
+```bash
+export OPENSHELL_GATEWAY_ENDPOINT=https://gateway.example.com
+export OPENSHELL_OIDC_CLIENT_ID=<client-id>
+export OPENSHELL_OIDC_CLIENT_SECRET=<client-secret>
+
+# Registers the gateway and authenticates via client credentials in one step
+# (gateway add detects the client secret and skips the browser automatically).
+openshellctl gateway add "$OPENSHELL_GATEWAY_ENDPOINT" --name my-gw
+
+openshellctl doctor                           # expect all-green
+openshellctl sandbox create -f sandbox.yaml --no-keep
+```
+
+### Human account (interactive)
+
+```bash
+openshellctl gateway add https://gateway.example.com --name my-gw
+openshellctl gateway login                    # opens a browser for OIDC auth
+
+openshellctl doctor                           # expect all-green
 openshellctl sandbox create --from python
 openshellctl sandbox connect my-sandbox
+```
 
+### Everyday commands
+
+Once a gateway is registered and authenticated (either path above):
+
+```bash
 # Run a one-shot command
 openshellctl sandbox exec --name my-sandbox -- python3 -c "print('hello')"
 
@@ -226,7 +267,9 @@ These flags apply to every command:
 
 ### `sandbox create`
 
-Create a sandbox and optionally connect to it.
+Create a sandbox and optionally connect to it. For running this from a
+Kubernetes CronJob instead of interactively, see
+[`docs/ci.md`](docs/ci.md).
 
 ```bash
 # Create from a community image
