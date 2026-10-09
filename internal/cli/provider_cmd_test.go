@@ -73,6 +73,22 @@ func TestProviderCreate_FromExistingNotYetSupported(t *testing.T) {
 	if !strings.Contains(err.Error(), "from-existing") {
 		t.Errorf("error should name the unsupported flag: %v", err)
 	}
+	if !strings.Contains(err.Error(), "provider create --from-existing") {
+		t.Errorf("error should point at `openshell provider create`, not another subcommand: %v", err)
+	}
+}
+
+func TestProviderUpdate_FromExistingNotYetSupported(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl) // no calls expected
+
+	_, err := runCmdWithGateway(t, cliDeps{Gateway: gw}, "provider", "update", "p1", "--from-existing")
+	if exitCodeFor(err) != ExitUsage {
+		t.Fatalf("err = %v, want a usage error", err)
+	}
+	if !strings.Contains(err.Error(), "provider update --from-existing") {
+		t.Errorf("error should point at `openshell provider update`, not `create`: %v", err)
+	}
 }
 
 func TestProviderGet_WithMockGateway(t *testing.T) {

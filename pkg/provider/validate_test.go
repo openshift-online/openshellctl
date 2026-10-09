@@ -39,6 +39,13 @@ func TestValidateCreateFlags(t *testing.T) {
 			wantErr:      "--from-existing",
 		},
 		{
+			name:         "from-existing hint names 'create', not 'update'",
+			providerName: "p1",
+			providerType: "github",
+			fromExisting: true,
+			wantErr:      "provider create --from-existing",
+		},
+		{
 			name:          "from-gcloud-adc not supported",
 			providerName:  "p1",
 			providerType:  "github",
@@ -84,6 +91,7 @@ func TestValidateUpdateFlags(t *testing.T) {
 	}{
 		{name: "valid, nothing set"},
 		{name: "from-existing not supported", fromExisting: true, wantErr: "--from-existing"},
+		{name: "from-existing hint names 'update', not 'create'", fromExisting: true, wantErr: "provider update --from-existing"},
 		{name: "from-gcloud-adc not supported", fromGcloudADC: true, wantErr: "--from-gcloud-adc"},
 		{name: "runtime-credentials not supported", runtimeCredentials: true, wantErr: "--runtime-credentials"},
 	}
