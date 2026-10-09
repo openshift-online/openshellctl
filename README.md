@@ -147,6 +147,8 @@ openshellctl token refresh --write     # refresh and persist to oidc_token.json
 openshellctl token inspect <JWT>       # decode a JWT's claims (no sig verify)
 ```
 
+`--write` is for interop, not for openshellctl itself: every openshellctl command (including `provider`/`sandbox`/etc.) resolves and re-mints auth transparently per call, with no disk read or write involved. `token refresh --write` exists solely to persist a Rust-CLI-schema `oidc_token.json` so a *separate* process — like the upstream `openshell` binary — can pick up the same credentials. You never need to run it before another openshellctl command.
+
 If a command fails with an expired or invalid token, openshellctl prints:
 
 ```
