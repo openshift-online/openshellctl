@@ -295,6 +295,8 @@ func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string, force bool) err
 		return err
 	}
 	cmd.Printf("✓ Gateway '%s' added and set as active\n", m.Name)
+	cmd.Printf("  Endpoint: %s\n", endpoint)
+	cmd.Printf("  Auth: oidc\n")
 
 	if err := authenticateNewGateway(cmd, m.Name); err != nil {
 		rollbackFailedAdd(w, m.Name, previousActive, hadActive, previousMetadata, previousToken)

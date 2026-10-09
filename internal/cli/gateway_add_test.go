@@ -87,6 +87,9 @@ func TestGatewayAdd_DiscoversOIDCAndAuthenticates(t *testing.T) {
 	if !strings.Contains(out, "✓ Gateway 'test-gw' added and set as active") {
 		t.Errorf("output missing registration confirmation; got:\n%s", out)
 	}
+	if !strings.Contains(out, "  Endpoint: "+srv.URL) || !strings.Contains(out, "  Auth: oidc") {
+		t.Errorf("output missing Endpoint/Auth lines (upstream gateway.rs:872-879); got:\n%s", out)
+	}
 	if !strings.Contains(out, "✓ Authenticated via client credentials") {
 		t.Errorf("output missing auth confirmation; got:\n%s", out)
 	}
