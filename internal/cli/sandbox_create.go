@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -49,6 +50,8 @@ func newSandboxCreateCommand() *cobra.Command {
 		detach           bool
 		driverConfigJSON string
 		policyFile       string
+		replace          bool
+		replaceTimeout   time.Duration
 	)
 	ttyState := &ttyTriState{}
 	autoProvState := &ttyTriState{}
@@ -72,6 +75,7 @@ func newSandboxCreateCommand() *cobra.Command {
 				forward: forward, detach: detach,
 				gpu: gpuFlag, tty: ttyState, autoProviders: autoProvState,
 				driverConfigJSON: driverConfigJSON, policyFile: policyFile,
+				replace: replace, replaceTimeout: replaceTimeout,
 			})
 			if err != nil {
 				return err
@@ -222,6 +226,8 @@ func newSandboxCreateCommand() *cobra.Command {
 	f.Var(ttyStateFlag{autoProvState, false}, "no-auto-providers", "disable auto provider detection")
 	f.Lookup("auto-providers").NoOptDefVal = "true"
 	f.Lookup("no-auto-providers").NoOptDefVal = "true"
+	f.BoolVar(&replace, "replace", false, "delete and wait for an existing sandbox with the same name before creating")
+	f.DurationVar(&replaceTimeout, "replace-timeout", 0, "timeout waiting for the existing sandbox to be deleted (default 5m)")
 	return c
 }
 
@@ -240,6 +246,8 @@ type createFlagInput struct {
 	autoProviders            *ttyTriState
 	driverConfigJSON         string
 	policyFile               string
+	replace                  bool
+	replaceTimeout           time.Duration
 }
 
 func buildCreateFlags(cmd *cobra.Command, in createFlagInput) (sandbox.CreateFlags, error) {
@@ -254,6 +262,8 @@ func buildCreateFlags(cmd *cobra.Command, in createFlagInput) (sandbox.CreateFla
 		NoCredentialWarnings: in.noCredWarn,
 		Workspace:            workspace(),
 		Detach:               in.detach,
+		Replace:              in.replace,
+		ReplaceTimeout:       in.replaceTimeout,
 	}
 	if in.tty != nil {
 		f.TTY = in.tty.Value()
@@ -377,6 +387,10 @@ func validateCreateRequest(r *sandbox.CreateRequest) error {
 		if err := sandbox.ValidateMemory(r.Memory); err != nil {
 			return &UsageError{Err: err}
 		}
+	}
+	if r.Replace && r.Name == "" {
+		return &UsageError{Err: fmt.Errorf(
+			"--replace requires a name — pass --name, a manifest with metadata.name, or --from <image> --name <name>")}
 	}
 	return nil
 }
