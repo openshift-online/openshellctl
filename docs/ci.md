@@ -1,8 +1,8 @@
 # CI and scheduled-job examples
 
-Two complete, runnable examples of using `openshellctl` from automation
-instead of interactively: a Kubernetes `CronJob` and a GitHub Actions
-workflow. Both use the service-account auth path (see the README's
+A complete, runnable example of using `openshellctl` from a Kubernetes
+`CronJob` instead of interactively. Uses the service-account auth path (see
+the README's
 ["Quick start (service account)"](../README.md#service-account-ci--fire-and-forget)) —
 no browser, no interactive login, a client secret does all the work.
 
@@ -98,53 +98,3 @@ Notes:
   appears anywhere — `gateway add`, `doctor`, and `sandbox create --replace`
   are natively implemented in Go.
 
-## GitHub Actions
-
-```yaml
-name: scheduled-job
-on:
-  schedule:
-    - cron: "0 3 * * *"
-  workflow_dispatch: {}
-
-jobs:
-  run:
-    runs-on: ubuntu-latest
-    env:
-      OPENSHELL_GATEWAY_ENDPOINT: ${{ secrets.OPENSHELL_GATEWAY_ENDPOINT }}
-      OPENSHELL_OIDC_ISSUER: ${{ secrets.OPENSHELL_OIDC_ISSUER }}
-      OPENSHELL_OIDC_CLIENT_ID: ${{ secrets.OPENSHELL_OIDC_CLIENT_ID }}
-      OPENSHELL_OIDC_AUDIENCE: ${{ secrets.OPENSHELL_OIDC_AUDIENCE }}
-      OPENSHELL_OIDC_CLIENT_SECRET: ${{ secrets.OPENSHELL_OIDC_CLIENT_SECRET }}
-    steps:
-      - name: Install openshellctl
-        run: |
-          # TODO: replace with a pinned release binary download once
-          # openshellctl has a tagged release (see ROSAENG-68834's own
-          # blocked-on-release note) — `go install ...@<version>` instead
-          # of `@main` once that exists.
-          go install github.com/openshift-online/openshellctl/cmd/openshellctl@main
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      - name: Register gateway
-        run: openshellctl gateway add "$OPENSHELL_GATEWAY_ENDPOINT" --name my-gw
-
-      - name: Preflight
-        run: openshellctl doctor --provider my-provider
-
-      - name: Run job
-        run: |
-          openshellctl sandbox create \
-            --replace \
-            --name my-job \
-            --from my-registry/my-sandbox-image:latest \
-            --provider my-provider \
-            --no-keep \
-            --no-tty \
-            -- my-command --with --args
-```
-
-The same three commands as the CronJob example (`gateway add`, `doctor`,
-`sandbox create --replace`) — only the surrounding automation changes.
-`secrets.*` maps directly to the CronJob's Kubernetes `Secret` field: same
-variable names, same values, different delivery mechanism.

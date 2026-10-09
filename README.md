@@ -23,7 +23,7 @@ depending on how you authenticate. Both end with `openshellctl doctor`
 printing all-green — run it any time something looks wrong; see
 ["First run: `openshellctl doctor`"](#first-run-openshellctl-doctor) below
 for what a failure looks like and its exact next command. For running these
-same commands from a CI job or a Kubernetes CronJob instead of a shell, see
+same commands from a Kubernetes CronJob instead of a shell, see
 [`docs/ci.md`](docs/ci.md).
 
 > **Always `export` a credential, never assign it bare.** `VAR=$(...)`
@@ -267,8 +267,8 @@ These flags apply to every command:
 
 ### `sandbox create`
 
-Create a sandbox and optionally connect to it. For running this from a CI
-job or Kubernetes CronJob instead of interactively, see
+Create a sandbox and optionally connect to it. For running this from a
+Kubernetes CronJob instead of interactively, see
 [`docs/ci.md`](docs/ci.md).
 
 ```bash
