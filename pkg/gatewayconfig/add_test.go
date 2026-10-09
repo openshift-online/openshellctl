@@ -69,6 +69,57 @@ func TestNewMetadata_NameDefaultedFromHost(t *testing.T) {
 	}
 }
 
+// TestIsLoopbackGatewayEndpoint pins ROSAENG-74241 item 6, verified against
+// upstream gateway.rs:589-597 (is_loopback_gateway_endpoint): an IPv4/IPv6
+// loopback IP, or the literal domain "localhost" (case-insensitive) — not a
+// resolved hostname that merely happens to point at loopback.
+func TestIsLoopbackGatewayEndpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		want     bool
+	}{
+		{"IPv4 loopback", "https://127.0.0.1:8443", true},
+		{"IPv6 loopback", "https://[::1]:8443", true},
+		{"localhost lowercase", "https://localhost:8443", true},
+		{"localhost uppercase", "https://LOCALHOST:8443", true},
+		{"normal host", "https://gw.example.com", false},
+		{"non-loopback IP", "https://10.0.0.5:8443", false},
+		{"unparseable endpoint is not loopback", "://bad", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isLoopbackGatewayEndpoint(tt.endpoint); got != tt.want {
+				t.Errorf("isLoopbackGatewayEndpoint(%q) = %v, want %v", tt.endpoint, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDefaultNameFromEndpoint_Loopback pins ROSAENG-74241 item 6, verified
+// against upstream gateway.rs:822-835: a loopback endpoint's default name is
+// the literal "openshell" (matching the local-cert-generation convention),
+// not derived from its hostname.
+func TestDefaultNameFromEndpoint_Loopback(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		want     string
+	}{
+		{"IPv4 loopback defaults to openshell", "https://127.0.0.1:8443", "openshell"},
+		{"IPv6 loopback defaults to openshell", "https://[::1]:8443", "openshell"},
+		{"localhost defaults to openshell", "https://localhost:8443", "openshell"},
+		{"normal host still derives from hostname", "https://gw-foo.example.com", "gw-foo.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := defaultNameFromEndpoint(tt.endpoint); got != tt.want {
+				t.Errorf("defaultNameFromEndpoint(%q) = %q, want %q", tt.endpoint, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewMetadata_ExplicitNameInvalid(t *testing.T) {
 	_, err := NewMetadata(AddInput{
 		Endpoint:   "https://gw.example.com",
