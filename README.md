@@ -147,6 +147,7 @@ openshellctl gateway add <endpoint> --name <name>
 # ✓ Gateway '<name>' added and set as active
 #   Endpoint: <endpoint>
 #   Auth: oidc
+#
 # ✓ Authenticated via client credentials
 
 openshellctl sandbox create -f job.yaml --no-keep
