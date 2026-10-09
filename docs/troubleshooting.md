@@ -20,7 +20,7 @@ explicit, honest error instead of a `doctor` check:
 | `--write` silently did nothing | no registered gateway directory to write `oidc_token.json` into | not a `doctor` check — `--write`/`--write-token` is now a usage error (exit 2) naming the fix, on every auth-resolving command |
 | Role preflight passed with no gateway role present | checked for "any role", not `openshell-user`/`openshell-admin` specifically | `doctor`'s **Roles** check |
 | Audience preflight was effectively dead code | compared only against `--oidc-audience`, which nobody passes to `token show` | `doctor`'s **Audience** check |
-| Permission-denied got the same hint as an expired token | both mapped to the same generic "try `token refresh`" hint | not a `doctor` check — `gateway.PermissionDeniedError` now gets its own exit code (7) and hint; `doctor` itself never calls a provisioning RPC, so this is only observable on real sandbox/provider commands |
+| Permission-denied got the same hint as an expired token | both mapped to the same generic "try `token refresh`" hint | not a distinct `doctor` check — `gateway.PermissionDeniedError` now gets its own exit code (7) and hint, but only on a real `sandbox`/`exec`/etc. call; `doctor`'s own gateway calls don't surface it as a separate check |
 | Invalid audience/issuer got the generic refresh hint | `hintFor` didn't read the gateway's specific rejection reason | not a `doctor` check — `hintFor` now distinguishes `InvalidAudience`/`InvalidIssuer` from `ExpiredSignature`; `doctor`'s **Audience**/**OIDC config match** checks catch a misconfigured audience/issuer *before* a real call would hit this |
 | Endpoint reformatting silently dropped a registered gateway's token/TLS material | exact-string endpoint matching, so `https://host:443` and `https://host` (same gateway) resolved to two different registrations | `doctor`'s **Endpoint URL** check shows the normalized form being used; a token/TLS mismatch itself then surfaces via **Credentials** |
 | Vault-sourced config errors (no session, `VAULT_ADDR` unset, secret not found, permission denied) | `--vault-kv-mount`/`--vault-kv-path` set but Vault itself isn't reachable/authorized/populated | `doctor`'s **Credentials** check — `resolveAuth` runs Vault resolution first, so the check's Detail line shows the Vault error verbatim |
@@ -169,9 +169,11 @@ Hint: you are authenticated, but the gateway denied this action due to insuffici
 
 `token refresh` is no longer suggested for this case.
 
-**Caught by**: not a `doctor` check — `doctor` never calls a provisioning
-RPC, so permission-denied only happens on a real `sandbox`/`provider` call.
-The distinct exit code (7) and hint are what make it actionable there.
+**Caught by**: not a `doctor` check — `doctor`'s own gateway calls (listing
+providers when `--provider`/`-f` is given) surface a permission-denied the
+same way, but it isn't a distinct check or exit code there; the distinct
+exit code (7) and hint only apply to a real `sandbox create`/`exec`/etc.
+call outside `doctor`.
 
 ## An invalid-audience/invalid-issuer rejection also got the generic refresh hint
 
