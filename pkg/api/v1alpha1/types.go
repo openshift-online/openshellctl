@@ -62,10 +62,11 @@ type Upload struct {
 	GitIgnore *bool  `json:"gitignore,omitempty"` // nil/true = filter; false = --no-git-ignore
 }
 
-// SessionOpts groups client-side session behavior that controls what happens
-// after sandbox creation. These are not part of the sandbox resource itself —
-// the gateway and operator ignore them. They exist so that a single manifest
-// file can fully describe "create sandbox X and behave like this."
+// SessionOpts groups client-side session behavior around sandbox creation —
+// Replace/ReplaceTimeout run before creation, the rest after. These are not
+// part of the sandbox resource itself — the gateway and operator ignore
+// them. They exist so that a single manifest file can fully describe
+// "create sandbox X and behave like this."
 type SessionOpts struct {
 	NoKeep       bool   `json:"noKeep,omitempty"`       // delete sandbox when session ends
 	Detach       bool   `json:"detach,omitempty"`       // return after create, do not attach

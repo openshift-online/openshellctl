@@ -313,7 +313,7 @@ openshellctl sandbox delete -f sop-improve.yaml
 | `replace` | bool | Delete and wait for an existing sandbox with the same name before creating — requires `metadata.name` |
 | `replaceTimeout` | string | Duration (e.g. `"5m"`) bounding `replace`'s wait; default `5m` |
 
-These fields are ignored by the operator — they control what the CLI does after creation. CLI flags always override manifest values.
+These fields are ignored by the operator — they control what the CLI does before and after creation (`replace`/`replaceTimeout` run before; the rest run after). CLI flags always override manifest values.
 
 **`spec.policy`** (inline map) and **`spec.policyFile`** (path string) are mutually exclusive. `spec.policyFile` is resolved relative to the manifest file's directory; when the manifest is read from stdin, `policyFile` must be an absolute path.
 
