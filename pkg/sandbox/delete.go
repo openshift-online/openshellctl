@@ -77,7 +77,7 @@ func Delete(ctx context.Context, gw gateway.Gateway, cfgw gatewayconfig.Writer, 
 			report(DeleteOutcome{Name: name, Deleted: deleted})
 		}
 		if r.Wait && deleted {
-			if err := waitForDeletion(ctx, gw, r.Workspace, name, r.WaitTimeout); err != nil {
+			if err := waitGone(ctx, gw, r.Workspace, name, r.WaitTimeout, waitGoneDeps{}); err != nil {
 				return err
 			}
 		}
@@ -85,27 +85,56 @@ func Delete(ctx context.Context, gw gateway.Gateway, cfgw gatewayconfig.Writer, 
 	return nil
 }
 
-// waitForDeletion polls GetSandbox every 500ms until NotFound or timeout.
-func waitForDeletion(ctx context.Context, gw gateway.Gateway, workspace, name string, timeout time.Duration) error {
+// waitGoneDeps lets tests replace both "now" and the poll cadence without
+// real sleeps. Every field is optional: a zero-value waitGoneDeps reproduces
+// the original real-ticker, real-clock behavior.
+type waitGoneDeps struct {
+	Clock Clock // nil -> time.Now (pkg/sandbox's existing func() time.Time type, watch.go)
+	// Tick, when set, drives polling directly instead of a real ticker — the
+	// test seam. Production (nil) builds a real time.NewTicker(Interval or
+	// 500ms).
+	Tick     <-chan time.Time
+	Interval time.Duration // only used when Tick is nil; 0 -> 500ms
+}
+
+// waitGone polls GetSandbox until NotFound or timeout. Replaces the old
+// waitForDeletion, which used raw time.Now()/time.NewTicker with no test
+// seam at all — this version is injectable so "gone on the Nth poll",
+// "timeout", and "context cancel" are all testable without a real sleep.
+func waitGone(ctx context.Context, gw gateway.Gateway, workspace, name string, timeout time.Duration, d waitGoneDeps) error {
+	clock := d.Clock
+	if clock == nil {
+		clock = time.Now
+	}
 	if timeout == 0 {
 		timeout = 5 * time.Minute
 	}
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+
+	tick := d.Tick
+	if tick == nil {
+		interval := d.Interval
+		if interval == 0 {
+			interval = 500 * time.Millisecond
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
+
+	deadline := clock().Add(timeout)
 	for {
 		_, err := gw.GetSandbox(ctx, workspace, name)
 		var nf *gateway.NotFoundError
 		if errors.As(err, &nf) {
 			return nil
 		}
-		if time.Now().After(deadline) {
+		if clock().After(deadline) {
 			return &ErrDeleteTimeout{Name: name, After: timeout}
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-tick:
 		}
 	}
 }
