@@ -26,6 +26,11 @@ func runCmdCtx(t *testing.T, ctx context.Context, args ...string) (string, error
 	t.Helper()
 	viper.Reset()
 	t.Cleanup(viper.Reset)
+	// applyVaultAuthSource (vaultauth.go) memoizes across the process lifetime
+	// by design (see its doc comment) — reset that memoization here too, same
+	// as viper, so one test's Vault state can never leak into the next.
+	resetVaultOnce()
+	t.Cleanup(resetVaultOnce)
 	root := NewRootCommand()
 	if ctx != nil {
 		root.SetContext(ctx)

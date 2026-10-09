@@ -9,6 +9,7 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
+	"github.com/openshift-online/openshellctl/pkg/vaultconfig"
 )
 
 func TestExitCodeFor(t *testing.T) {
@@ -74,6 +75,14 @@ func TestExitCodeFor(t *testing.T) {
 		{"nothing to refresh → auth", &auth.ErrNothingToRefresh{}, ExitAuth},
 		{"wrapped nothing to refresh → auth", errWrap(&auth.ErrNothingToRefresh{}), ExitAuth},
 		{"not a jwt (sentinel) → usage", auth.ErrNotJWT, ExitUsage},
+
+		// pkg/vaultconfig typed errors (Vault auth config source).
+		{"vault no token → auth", &vaultconfig.ErrNoToken{}, ExitAuth},
+		{"wrapped vault no token → auth", errWrap(&vaultconfig.ErrNoToken{}), ExitAuth},
+		{"vault addr not set → auth", &vaultconfig.ErrVaultAddrNotSet{}, ExitAuth},
+		{"vault forbidden → forbidden", &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}, ExitForbidden},
+		{"vault secret not found → notfound", &vaultconfig.ErrSecretNotFound{Mount: "osd-sre", Path: "rosa-agent"}, ExitNotFound},
+		{"vault field not string → usage", &vaultconfig.ErrFieldNotString{Field: "oidc-client-id"}, ExitUsage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

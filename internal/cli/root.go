@@ -46,6 +46,11 @@ type persistentFlags struct {
 	tokenLeeway      string
 	writeToken       bool
 	noBrowser        bool
+
+	// vault auth source
+	vaultKVMount     string
+	vaultKVPath      string
+	vaultFieldPrefix string
 }
 
 // NewRootCommand builds the full command tree. It is exported so tests (parity,
@@ -110,6 +115,10 @@ func registerPersistentFlags(root *cobra.Command, pf *persistentFlags) {
 	f.StringVar(&pf.tokenLeeway, "token-leeway", "30s", "token expiry leeway")
 	f.BoolVar(&pf.writeToken, "write-token", false, "write refreshed tokens back to disk (Rust CLI schema)")
 	f.BoolVar(&pf.noBrowser, "no-browser", false, "skip browser login when no client secret is available, e.g. for service accounts (env OPENSHELL_NO_BROWSER)")
+
+	f.StringVar(&pf.vaultKVMount, "vault-kv-mount", "", "Vault KV v2 mount holding auth config, e.g. osd-sre (env OPENSHELL_VAULT_KV_MOUNT; must be set together with --vault-kv-path)")
+	f.StringVar(&pf.vaultKVPath, "vault-kv-path", "", "path within --vault-kv-mount holding auth config, e.g. rosa-agent (env OPENSHELL_VAULT_KV_PATH)")
+	f.StringVar(&pf.vaultFieldPrefix, "vault-field-prefix", "", "prefix prepended to each field name read from the Vault secret, e.g. hypershell (env OPENSHELL_VAULT_FIELD_PREFIX)")
 }
 
 // bindViper wires the OPENSHELL_* environment prefix and flag binding, per §5.9.

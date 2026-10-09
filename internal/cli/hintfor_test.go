@@ -6,6 +6,7 @@ import (
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
 	"github.com/openshift-online/openshellctl/pkg/gateway"
+	"github.com/openshift-online/openshellctl/pkg/vaultconfig"
 )
 
 func TestHintFor(t *testing.T) {
@@ -62,6 +63,14 @@ func TestHintFor(t *testing.T) {
 		{"unavailable -> no hint", &gateway.UnavailableError{Message: "x"}, true, ""},
 		{"deadline exceeded -> no hint", &gateway.DeadlineError{}, true, ""},
 		{"rpc error (catch-all) -> no hint", &gateway.RPCError{Message: "x"}, true, ""},
+
+		// pkg/vaultconfig typed errors: none of these are a "refresh" problem,
+		// so none may get the generic refreshHint.
+		{"vault no token -> no hint (message is self-contained)", &vaultconfig.ErrNoToken{}, true, ""},
+		{"vault field not string -> no hint (message is self-contained)", &vaultconfig.ErrFieldNotString{Field: "x"}, true, ""},
+		{"vault addr not set -> hint names VAULT_ADDR", &vaultconfig.ErrVaultAddrNotSet{}, false, "VAULT_ADDR"},
+		{"vault forbidden -> hint names the KV v2 policy fix", &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}, false, "osd-sre/data/rosa-agent"},
+		{"vault secret not found -> hint suggests checking KV v2", &vaultconfig.ErrSecretNotFound{Mount: "osd-sre", Path: "rosa-agent"}, false, "KV v2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -119,6 +128,33 @@ func TestHintFor_NoCredentialsNamesBothPaths(t *testing.T) {
 	}
 	if !contains(hint, "openshellctl login") {
 		t.Errorf("hint should name the human/browser-login path, got: %q", hint)
+	}
+}
+
+// TestHintFor_NoCredentialsMentionsVault confirms the existing ErrNoCredentials
+// hint was updated to also name the Vault flags as a third option, alongside
+// the pre-existing service-account and human-login paths.
+func TestHintFor_NoCredentialsMentionsVault(t *testing.T) {
+	hint := hintFor(&auth.ErrNoCredentials{})
+	if !contains(hint, "--vault-kv-mount") {
+		t.Errorf("hint should mention --vault-kv-mount as an option, got: %q", hint)
+	}
+}
+
+// TestHintFor_VaultErrorsNeverSuggestRefresh pins that none of the
+// pkg/vaultconfig error types get the generic refreshHint — none of them are
+// fixed by `openshellctl token refresh`.
+func TestHintFor_VaultErrorsNeverSuggestRefresh(t *testing.T) {
+	for _, err := range []error{
+		&vaultconfig.ErrNoToken{},
+		&vaultconfig.ErrVaultAddrNotSet{},
+		&vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"},
+		&vaultconfig.ErrSecretNotFound{Mount: "osd-sre", Path: "rosa-agent"},
+		&vaultconfig.ErrFieldNotString{Field: "x"},
+	} {
+		if hint := hintFor(err); hint == refreshHint {
+			t.Errorf("hintFor(%v) returned the generic refresh hint, want a distinct (or empty) hint", err)
+		}
 	}
 }
 

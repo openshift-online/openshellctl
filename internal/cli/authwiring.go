@@ -121,6 +121,10 @@ func oidcConfigFetcher(ctx context.Context, endpoint string) (string, string, er
 // When --write-token is set and a gateway is resolved, a write-back Writer is
 // wired so a disk-bundle refresh persists (Rust CLI schema).
 func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Target, error) {
+	if err := applyVaultAuthSource(cmd.Context()); err != nil {
+		return nil, nil, err
+	}
+
 	env, err := gatewayconfig.NewOSEnv()
 	if err != nil {
 		return nil, nil, err

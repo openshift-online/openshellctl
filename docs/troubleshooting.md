@@ -157,3 +157,63 @@ Hint: the token's audience does not match what the gateway expects. Check --oidc
 
 An `ExpiredSignature` rejection still gets the ordinary refresh hint, since
 that genuinely is what `token refresh` fixes.
+
+## Vault-sourced auth config errors
+
+These apply only when `--vault-kv-mount`/`--vault-kv-path` are set (see
+README "4. Vault-sourced config"); without them, none of this code runs and
+these errors cannot occur.
+
+**No Vault session**: openshellctl never runs `vault login` itself.
+
+```
+$ openshellctl --vault-kv-mount osd-sre --vault-kv-path rosa-agent sandbox list
+Error: no Vault token found (checked $VAULT_TOKEN and ~/.vault-token) — run `vault login` first (custom token helpers are not supported)
+```
+
+exits with code 3. Run `vault login` (any method) and retry — openshellctl
+picks up the resulting `~/.vault-token`, or set `VAULT_TOKEN` directly.
+
+**`VAULT_ADDR` not set**: without this check, the Vault SDK would silently
+default to `https://127.0.0.1:8200` and fail with a confusing
+connection-refused error instead.
+
+```
+$ openshellctl --vault-kv-mount osd-sre --vault-kv-path rosa-agent sandbox list
+Error: VAULT_ADDR is not set
+Hint: set VAULT_ADDR to your Vault server's address before using --vault-kv-mount/--vault-kv-path.
+```
+
+exits with code 3.
+
+**Permission denied reading the secret** (authenticated to Vault, but the
+token's policy doesn't grant read access to this path):
+
+```
+Error: permission denied reading vault secret osd-sre/rosa-agent
+Hint: you are authenticated to Vault, but not authorized to read this secret — grant a policy with read access to osd-sre/data/rosa-agent.
+```
+
+exits with code 7 — the same "authenticated but not authorized" bucket as a
+gateway permission-denied response. Re-running with a new Vault token will
+not help; the policy itself needs the grant.
+
+**Secret not found**:
+
+```
+Error: vault secret not found at osd-sre/rosa-agent
+Hint: no secret exists at osd-sre/rosa-agent. Double-check --vault-kv-mount/--vault-kv-path, and confirm the mount is actually a KV v2 engine (a KV v1 mount also 404s here).
+```
+
+exits with code 4. A KV v1 mount produces this exact same error — openshellctl
+only supports KV v2.
+
+**A recognized field is present but isn't a string** (e.g. the secret stores
+`oidc-client-id` as a number or nested object instead of a plain string):
+
+```
+Error: vault secret field "oidc-client-id" is not a string
+```
+
+exits with code 2 — this is a Vault secret authoring problem, not an auth
+failure; fix the field's value in Vault.

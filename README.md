@@ -134,6 +134,37 @@ export OPENSHELL_TOKEN=<JWT>
 
 This overrides all other auth methods. The token is used as-is with no refresh — if it expires, commands will fail.
 
+### 4. Vault-sourced config
+
+Point openshellctl at a Vault KV v2 secret holding any of the gateway/OIDC
+fields above, instead of exporting them yourself:
+
+```bash
+vault login -method=oidc   # openshellctl never does this itself — it expects a session to already exist
+
+openshellctl --vault-kv-mount osd-sre --vault-kv-path rosa-agent --vault-field-prefix hypershell \
+  sandbox list
+```
+
+This reads the secret at `osd-sre/rosa-agent` and, for each of `gateway`,
+`gateway-endpoint`, `oidc-issuer`, `oidc-client-id`, `oidc-client-secret`,
+`oidc-audience`, `oidc-scopes`, looks for a field named
+`<prefix>-<field>` (here, `hypershell-oidc-client-id`,
+`hypershell-oidc-client-secret`, and so on) and uses it only where you
+haven't already set that value via flag or `OPENSHELL_*` env var — Vault is
+always the lowest-priority source, never an override. `--vault-field-prefix`
+is optional; omit it if your secret's fields aren't prefixed.
+
+openshellctl reads `VAULT_ADDR` (and the rest of the standard `VAULT_*` env
+vars) itself; it never runs `vault login` — run that yourself first, the same
+way you would for any other `vault kv get`. The token comes from `VAULT_TOKEN`
+if set, otherwise `~/.vault-token` (the file `vault login` leaves behind).
+
+The static `--token`/`OPENSHELL_TOKEN` bearer token is **not** one of the
+Vault-fillable fields — it's a short-lived JWT, not something to cache in
+Vault, and `--vault-kv-mount`/`--vault-kv-path` must be set together (one
+without the other is a usage error).
+
 ### How auth retry works
 
 Every API call goes through an automatic retry: if the gateway returns `Unauthenticated`, openshellctl invalidates its cached token and retries once with a fresh one. For service accounts this means a full re-mint; for personal logins it means a refresh-token exchange. This is why `--no-keep` cleanup works reliably even after hour-long sessions.
@@ -162,6 +193,7 @@ Configuration is resolved in priority order:
 2. Environment variables (`OPENSHELL_*`)
 3. Config file (`$XDG_CONFIG_HOME/openshellctl/config.yaml`, override with `--config`)
 4. Gateway config dirs (`$XDG_CONFIG_HOME/openshell/gateways/<name>/`)
+5. Vault KV secret (gateway/OIDC fields only, opt-in via `--vault-kv-mount`/`--vault-kv-path` — see "4. Vault-sourced config" above)
 
 ### Global flags
 
@@ -184,6 +216,9 @@ These flags apply to every command:
 | `--client-secret-file` | — | File containing the OIDC client secret |
 | `--token-leeway` | — | Token expiry leeway (default: `30s`) |
 | `--write-token` | — | Write refreshed tokens to disk (Rust CLI schema) |
+| `--vault-kv-mount` | `OPENSHELL_VAULT_KV_MOUNT` | Vault KV v2 mount holding auth config (must be set together with `--vault-kv-path`) |
+| `--vault-kv-path` | `OPENSHELL_VAULT_KV_PATH` | Path within `--vault-kv-mount` holding auth config |
+| `--vault-field-prefix` | `OPENSHELL_VAULT_FIELD_PREFIX` | Prefix prepended to each field name read from the Vault secret |
 
 ## Commands
 

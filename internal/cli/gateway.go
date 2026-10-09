@@ -134,6 +134,10 @@ func newGatewayLogoutCommand() *cobra.Command {
 		Short: "Remove the cached token for a gateway, keeping its registration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := applyVaultAuthSource(cmd.Context()); err != nil {
+				return err
+			}
+
 			env, err := gatewayconfig.NewOSEnv()
 			if err != nil {
 				return err
@@ -199,6 +203,14 @@ func newGatewayAddCommand() *cobra.Command {
 // removed, the previously-active gateway restored) so a corrected retry
 // doesn't hit GatewayExistsError — see authenticateNewGateway's doc comment.
 func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string, force bool) error {
+	// Applied before any viper read below, so a Vault-sourced oidc-issuer/
+	// client-id/audience/scopes value flows into the persisted metadata.json
+	// exactly the way an OPENSHELL_* env var already does — Vault is treated
+	// as just another config source, not special-cased for this one command.
+	if err := applyVaultAuthSource(cmd.Context()); err != nil {
+		return err
+	}
+
 	endpoint, err := gatewayconfig.EnsureScheme(rawEndpoint)
 	if err != nil {
 		return err

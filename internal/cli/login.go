@@ -26,6 +26,10 @@ func newLoginCommand() *cobra.Command {
 // (internal/cli/gateway.go) can share it — a *cobra.Command can't be added to
 // two parents, so the two commands are separate instances with the same RunE.
 func runLogin(cmd *cobra.Command, _ []string) error {
+	if err := applyVaultAuthSource(cmd.Context()); err != nil {
+		return err
+	}
+
 	env, err := gatewayconfig.NewOSEnv()
 	if err != nil {
 		return err
