@@ -87,6 +87,9 @@ func TestGatewayAdd_DiscoversOIDCAndAuthenticates(t *testing.T) {
 	if !strings.Contains(out, "✓ Gateway 'test-gw' added and set as active") {
 		t.Errorf("output missing registration confirmation; got:\n%s", out)
 	}
+	if !strings.Contains(out, "  Endpoint: "+srv.URL+"\n  Auth: oidc\n\n") {
+		t.Errorf("output missing Endpoint/Auth lines or the trailing blank separator (upstream gateway.rs:872-879); got:\n%s", out)
+	}
 	if !strings.Contains(out, "✓ Authenticated via client credentials") {
 		t.Errorf("output missing auth confirmation; got:\n%s", out)
 	}
@@ -358,6 +361,45 @@ func TestShouldRegisterOnly(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := shouldRegisterOnly(tt.hasSecret, tt.noBrowser); got != tt.want {
 				t.Errorf("shouldRegisterOnly(%v, %v) = %v, want %v", tt.hasSecret, tt.noBrowser, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGatewayEnvOverrideWarning pins ROSAENG-74241 item 2, verified against
+// upstream gateway.rs:490-499 (gateway_env_override_warning): a warning only
+// when OPENSHELL_GATEWAY is set, non-empty, and differs from the name just
+// selected — an exact match or an unset/empty var means no warning.
+func TestGatewayEnvOverrideWarning(t *testing.T) {
+	tests := []struct {
+		name         string
+		envValue     string
+		envSet       bool
+		selectedName string
+		want         string
+	}{
+		{"env unset -> no warning", "", false, "a", ""},
+		{"env empty -> no warning", "", true, "a", ""},
+		{"env matches selection -> no warning", "a", true, "a", ""},
+		{
+			"env differs from selection -> warns",
+			"b", true, "a",
+			"OPENSHELL_GATEWAY=b is set and will override this selection.\n  Unset it or run: export OPENSHELL_GATEWAY=a",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			getenv := func(string) string { return "" }
+			if tt.envSet {
+				getenv = func(k string) string {
+					if k == "OPENSHELL_GATEWAY" {
+						return tt.envValue
+					}
+					return ""
+				}
+			}
+			if got := gatewayEnvOverrideWarning(tt.selectedName, getenv); got != tt.want {
+				t.Errorf("gatewayEnvOverrideWarning(%q, ...) = %q, want %q", tt.selectedName, got, tt.want)
 			}
 		})
 	}

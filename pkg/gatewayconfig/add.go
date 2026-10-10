@@ -3,6 +3,7 @@ package gatewayconfig
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -148,13 +149,38 @@ func EnsureScheme(endpoint string) (string, error) {
 }
 
 // defaultNameFromEndpoint derives a gateway name from the endpoint's
-// hostname (no port, no path) when --name is not given.
+// hostname (no port, no path) when --name is not given. A loopback endpoint
+// defaults to the literal "openshell" instead, matching upstream's
+// local-cert-generation convention (gateway.rs:822-835) — not an
+// openshellctl-specific choice, kept for consistency with upstream tooling
+// and docs that assume this name for a local/loopback gateway.
 func defaultNameFromEndpoint(endpoint string) string {
+	if isLoopbackGatewayEndpoint(endpoint) {
+		return "openshell"
+	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return endpoint
 	}
 	return u.Hostname()
+}
+
+// isLoopbackGatewayEndpoint reports whether endpoint's host is a loopback
+// address (any loopback IPv4/IPv6 literal) or the literal domain "localhost"
+// (case-insensitive) — mirroring upstream's is_loopback_gateway_endpoint
+// (gateway.rs:589-597) exactly. A resolved hostname that merely happens to
+// point at loopback (e.g. via /etc/hosts) is deliberately not covered, same
+// as upstream — this checks the literal endpoint string, not a DNS lookup.
+func isLoopbackGatewayEndpoint(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return strings.EqualFold(host, "localhost")
 }
 
 // existsInUserTree reports whether name has a metadata.json in the user tree

@@ -88,11 +88,15 @@ func (e *MetadataParseError) Is(target error) bool { return target == ErrMetadat
 func (e *MetadataParseError) Unwrap() error { return e.Cause }
 
 // GatewayExistsError reports that WriteGateway was asked to create a gateway
-// that already has a metadata.json.
+// that already has a metadata.json. Message matches upstream's three-line
+// hint verbatim except the binary name (gateway.rs:841-847).
 type GatewayExistsError struct{ Name string }
 
 func (e *GatewayExistsError) Error() string {
-	return fmt.Sprintf("gateway %q already exists", e.Name)
+	return fmt.Sprintf(
+		"Gateway '%s' already exists.\nRemove it first with: openshellctl gateway remove %s\nOr choose a different name with: --name <name>",
+		e.Name, e.Name,
+	)
 }
 
 // Is matches the ErrGatewayExists sentinel.

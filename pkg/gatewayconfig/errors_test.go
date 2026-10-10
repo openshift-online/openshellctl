@@ -41,8 +41,10 @@ func TestErrorMessages(t *testing.T) {
 	}
 
 	ge := &GatewayExistsError{Name: "dup"}
-	if !strings.Contains(ge.Error(), "dup") {
-		t.Errorf("GatewayExistsError = %q", ge.Error())
+	if !strings.HasPrefix(ge.Error(), "Gateway 'dup' already exists.\n") ||
+		!strings.Contains(ge.Error(), "openshellctl gateway remove dup") ||
+		!strings.Contains(ge.Error(), "--name <name>") {
+		t.Errorf("GatewayExistsError verbatim mismatch (upstream gateway.rs:841-847):\n%s", ge.Error())
 	}
 	if !errors.Is(ge, ErrGatewayExists) {
 		t.Error("GatewayExistsError should match ErrGatewayExists")

@@ -105,8 +105,8 @@ func TestGatewaySelect_SetsActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gateway select: %v", err)
 	}
-	if !strings.Contains(out, "a") {
-		t.Errorf("confirmation output missing gateway name: %s", out)
+	if !strings.Contains(out, "✓ Active gateway set to 'a'") {
+		t.Errorf("confirmation message mismatch (upstream gateway.rs:485): %q", out)
 	}
 	listOut, err := runCmd(t, "gateway", "list")
 	if err != nil {
@@ -118,6 +118,27 @@ func TestGatewaySelect_SetsActive(t *testing.T) {
 				t.Errorf("gateway a should be active after select: %q", l)
 			}
 		}
+	}
+}
+
+// TestGatewaySelect_EnvOverrideWarning pins ROSAENG-74241 item 2 end to end:
+// selecting a gateway while OPENSHELL_GATEWAY names a different one prints
+// the upstream warning (gateway.rs:490-499) after the success line.
+func TestGatewaySelect_EnvOverrideWarning(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENSHELL_NO_BROWSER", "1")
+	if _, err := runCmd(t, "gateway", "add", "https://a.example.com", "--name", "a", "--oidc-issuer", "https://issuer"); err != nil {
+		t.Fatalf("setup add: %v", err)
+	}
+	t.Setenv("OPENSHELL_GATEWAY", "b")
+
+	out, err := runCmd(t, "gateway", "select", "a")
+	if err != nil {
+		t.Fatalf("gateway select: %v", err)
+	}
+	want := "OPENSHELL_GATEWAY=b is set and will override this selection.\n  Unset it or run: export OPENSHELL_GATEWAY=a"
+	if !strings.Contains(out, want) {
+		t.Errorf("env-override warning missing or wrong, got: %q", out)
 	}
 }
 
@@ -138,8 +159,12 @@ func TestGatewayRemove_RemovesRegistration(t *testing.T) {
 	if _, err := runCmd(t, "gateway", "add", "https://gw.example.com", "--name", "test-gw", "--oidc-issuer", "https://issuer"); err != nil {
 		t.Fatalf("setup add: %v", err)
 	}
-	if _, err := runCmd(t, "gateway", "remove", "test-gw"); err != nil {
+	removeOut, err := runCmd(t, "gateway", "remove", "test-gw")
+	if err != nil {
 		t.Fatalf("gateway remove: %v", err)
+	}
+	if !strings.Contains(removeOut, "✓ Gateway registration 'test-gw' removed.") {
+		t.Errorf("confirmation message mismatch (upstream gateway.rs:1498-1501): %q", removeOut)
 	}
 	out, err := runCmd(t, "gateway", "list")
 	if err != nil {

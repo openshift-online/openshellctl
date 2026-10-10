@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
@@ -85,10 +88,30 @@ func newGatewaySelectCommand() *cobra.Command {
 			if err := gatewayconfig.SetActive(w, name); err != nil {
 				return err
 			}
-			cmd.Printf("✓ Gateway '%s' is now active\n", name)
+			cmd.Printf("✓ Active gateway set to '%s'\n", name)
+			if warning := gatewayEnvOverrideWarning(name, os.Getenv); warning != "" {
+				cmd.PrintErrf("⚠ %s\n", warning)
+			}
 			return nil
 		},
 	}
+}
+
+// gatewayEnvOverrideWarning reports whether OPENSHELL_GATEWAY will silently
+// override the selection just made — selectedName is what `gateway select`
+// just wrote as active, but config resolution always prefers an explicit
+// OPENSHELL_GATEWAY env var over it. Returns "" when no warning applies
+// (the env var is unset, empty, or already matches the selection). Matches
+// upstream's gateway_env_override_warning verbatim (gateway.rs:490-499).
+func gatewayEnvOverrideWarning(selectedName string, getenv func(string) string) string {
+	envName := getenv("OPENSHELL_GATEWAY")
+	if envName == "" || envName == selectedName {
+		return ""
+	}
+	return fmt.Sprintf(
+		"OPENSHELL_GATEWAY=%s is set and will override this selection.\n  Unset it or run: export OPENSHELL_GATEWAY=%s",
+		envName, selectedName,
+	)
 }
 
 // newGatewayRemoveCommand builds `gateway remove <name>`.
@@ -120,7 +143,7 @@ func newGatewayRemoveCommand() *cobra.Command {
 			if err := gatewayconfig.ClearActiveIfMatches(w, name); err != nil {
 				return err
 			}
-			cmd.Printf("✓ Gateway '%s' removed\n", name)
+			cmd.Printf("✓ Gateway registration '%s' removed.\n", name)
 			return nil
 		},
 	}
@@ -272,6 +295,9 @@ func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string, force bool) err
 		return err
 	}
 	cmd.Printf("✓ Gateway '%s' added and set as active\n", m.Name)
+	cmd.Printf("  Endpoint: %s\n", endpoint)
+	cmd.Printf("  Auth: oidc\n")
+	cmd.Println()
 
 	if err := authenticateNewGateway(cmd, m.Name); err != nil {
 		rollbackFailedAdd(w, m.Name, previousActive, hadActive, previousMetadata, previousToken)
