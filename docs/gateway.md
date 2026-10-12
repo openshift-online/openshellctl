@@ -140,6 +140,38 @@ authenticating the already-registered gateway, never in what gets persisted
 to disk), that's a new, explicit decision — not a side effect of adding a
 field to the Vault secret.
 
+### Persisting `--vault-kv-mount`/`--vault-kv-path`/`--vault-field-prefix` (ROSAENG-74343)
+
+`gateway add` and `gateway login`/`login` additionally persist whichever of
+`--vault-kv-mount`/`--vault-kv-path`/`--vault-field-prefix` were explicitly
+given (flag or `OPENSHELL_VAULT_*` env var) this invocation to
+`gateways/<name>/vault_auth.json` (`pkg/gatewayconfig/vaultauth.go`), via
+`persistVaultAuthConfig` (`internal/cli/vaultauth.go`). A later command whose
+own `--vault-kv-mount`/`--vault-kv-path` are both unset falls back to this
+file for whichever gateway it already resolves to (`-g`/`OPENSHELL_GATEWAY`,
+else `active_gateway`) — see `persistedVaultAuthConfig`, called from
+`resolveVaultAuthSource` only when neither flag/env is set, so an explicit
+flag or env var on that later invocation still wins outright, same
+precedence `--vault-kv-mount`/`--vault-kv-path` already had relative to a
+Vault-sourced field.
+
+Only the mount/path/prefix **coordinates** are ever persisted — never the
+Vault secret, or any field read from it. This is why a stale persisted file
+can't silently mask an expired Vault session: every command still performs
+a real Vault KV read against whatever Vault session is live at call time,
+so an expired `vault login` session fails that read exactly as it would
+without any persisted config.
+
+`gateway add` only writes `vault_auth.json` after the new registration's
+`metadata.json`/`active_gateway` are written, and `rollbackFailedAdd`
+restores (or removes) it on an authentication failure the same way it
+already does for `metadata.json`/`oidc_token.json`, so a rolled-back `add`
+doesn't leave an orphaned `vault_auth.json` keyed to a gateway that no
+longer exists. `gateway login`/`login` only persist for an
+already-registered gateway (`target.Resolved != nil`) — an endpoint-only
+invocation's `target.Name` can be the raw endpoint string, never a valid
+gateway name to key the file on.
+
 ## Deferred: `--no-select` / `--no-login`
 
 `gateway add` does not currently accept `--no-select` (register without

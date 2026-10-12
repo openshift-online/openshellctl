@@ -209,6 +209,34 @@ Vault-fillable fields — it's a short-lived JWT, not something to cache in
 Vault, and `--vault-kv-mount`/`--vault-kv-path` must be set together (one
 without the other is a usage error).
 
+#### Persisting the Vault mount/path/prefix
+
+Pass `--vault-kv-mount`/`--vault-kv-path`/`--vault-field-prefix` once, at
+`gateway add` or `gateway login` time, and later commands against that same
+gateway reuse them automatically — no need to repeat the flags (or the
+matching `OPENSHELL_VAULT_*` env vars) on every invocation:
+
+```bash
+openshellctl gateway add https://gw.example.com \
+  --vault-kv-mount osd-sre --vault-kv-path rosa-agent --vault-field-prefix hypershell
+
+openshellctl sandbox list   # reuses osd-sre/rosa-agent/hypershell automatically
+```
+
+This writes `gateways/<name>/vault_auth.json`, holding only the mount/path/
+prefix **coordinates** — never the Vault secret itself, or any field read
+from it. Precedence is unchanged by persistence: an explicit flag or
+`OPENSHELL_VAULT_*` env var on a later invocation still overrides whatever
+was persisted, same as it would override a plain Vault-sourced field.
+
+Persisting the coordinates doesn't cache the Vault session: every command
+still performs a real Vault KV read using whatever Vault token is live at
+that moment (`VAULT_TOKEN` or `~/.vault-token`). If your `vault login`
+session has since expired, a command relying on the persisted config fails
+the same way it always would with no persisted config at all — persistence
+only saves you from retyping *where* the secret lives, not *whether* you're
+still logged in to Vault.
+
 ### How auth retry works
 
 Every API call goes through an automatic retry: if the gateway returns `Unauthenticated`, openshellctl invalidates its cached token and retries once with a fresh one. For service accounts this means a full re-mint; for personal logins it means a refresh-token exchange. This is why `--no-keep` cleanup works reliably even after hour-long sessions.

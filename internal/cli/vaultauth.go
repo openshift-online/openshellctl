@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/viper"
 
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/vaultconfig"
 )
 
@@ -70,6 +71,24 @@ func resolveVaultAuthSource(ctx context.Context) error {
 	mount := viper.GetString("vault-kv-mount")
 	path := viper.GetString("vault-kv-path")
 	prefix := viper.GetString("vault-field-prefix")
+
+	// Neither flag/env set: fall back to whatever mount/path/prefix a prior
+	// `gateway add`/`login` persisted for the gateway this invocation already
+	// resolves to (see persistVaultAuthConfig and
+	// gatewayconfig.VaultAuthConfig) — ROSAENG-74343. Explicit flag/env still
+	// wins outright: this only runs when BOTH are empty, same precedence
+	// level "no Vault source configured" already occupied, just no longer
+	// requiring the flags on every single invocation.
+	if mount == "" && path == "" {
+		if cfg, ok := persistedVaultAuthConfig(); ok {
+			mount = cfg.Mount
+			path = cfg.Path
+			if prefix == "" {
+				prefix = cfg.FieldPrefix
+			}
+		}
+	}
+
 	if mount == "" && path == "" {
 		if prefix != "" {
 			return &UsageError{Err: fmt.Errorf("--vault-field-prefix has no effect without --vault-kv-mount and --vault-kv-path")}
@@ -105,6 +124,66 @@ func resolveVaultAuthSource(ctx context.Context) error {
 		viper.SetDefault(key, val)
 	}
 	return nil
+}
+
+// persistedVaultAuthConfig looks up a previously-persisted Vault mount/path/
+// prefix (gatewayconfig.VaultAuthConfig) for the gateway this invocation
+// already resolves to via signals that exist *before* any Vault involvement
+// — an explicit --gateway/OPENSHELL_GATEWAY, or else the active_gateway file.
+// It deliberately never considers a Vault-sourced "gateway" field: this
+// function only runs when neither --vault-kv-mount nor --vault-kv-path is
+// set, so there would be no mount/path yet to resolve such a value with —
+// resolving the gateway name via Vault here would be circular. An
+// endpoint-only invocation, or one with no resolvable gateway at all, simply
+// has nothing to look up and returns ok=false, falling through to "no Vault
+// source configured" exactly as before this feature existed.
+func persistedVaultAuthConfig() (gatewayconfig.VaultAuthConfig, bool) {
+	env, err := gatewayconfig.NewOSEnv()
+	if err != nil {
+		return gatewayconfig.VaultAuthConfig{}, false
+	}
+	name := viper.GetString("gateway")
+	if name == "" {
+		name, err = gatewayconfig.ActiveGateway(env)
+		if err != nil {
+			return gatewayconfig.VaultAuthConfig{}, false
+		}
+	}
+	resolved, err := gatewayconfig.Load(env, name)
+	if err != nil {
+		return gatewayconfig.VaultAuthConfig{}, false
+	}
+	return gatewayconfig.LoadVaultAuthConfig(resolved)
+}
+
+// persistVaultAuthConfig saves the --vault-kv-mount/--vault-kv-path/
+// --vault-field-prefix this invocation was given to gatewayName's
+// vault_auth.json (gatewayconfig.SaveVaultAuthConfig), so a later command
+// against the same gateway doesn't have to repeat them.
+//
+// A no-op when mount/path aren't both currently set in viper or gatewayName
+// is empty. Note this reads viper directly rather than taking the
+// already-resolved mount/path as parameters: resolveVaultAuthSource leaves
+// vault-kv-mount/vault-kv-path untouched in viper even when it fell back to
+// a persisted value (see resolveVaultAuthSource), so an invocation that
+// merely *reused* a persisted config — rather than being given explicit
+// flags/env of its own — sees mount=="" here and correctly skips rewriting
+// the file with the same bytes.
+func persistVaultAuthConfig(gatewayName string) error {
+	mount := viper.GetString("vault-kv-mount")
+	path := viper.GetString("vault-kv-path")
+	if mount == "" || path == "" || gatewayName == "" {
+		return nil
+	}
+	w, err := gatewayconfig.NewOSWriter()
+	if err != nil {
+		return err
+	}
+	return gatewayconfig.SaveVaultAuthConfig(w, gatewayName, gatewayconfig.VaultAuthConfig{
+		Mount:       mount,
+		Path:        path,
+		FieldPrefix: viper.GetString("vault-field-prefix"),
+	})
 }
 
 // vaultReaderFor returns the context-injected VaultReader for tests, or
