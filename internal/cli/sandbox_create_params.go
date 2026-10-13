@@ -66,6 +66,21 @@ func needsTemplating(data []byte, tf templateFlags) bool {
 //
 // On --parameters, it writes the manifest's parameter names to cmd's stdout
 // and returns (nil, true, nil): the caller must create nothing and exit 0.
+//
+// Depth note (AGENTS.md's N+1 orchestration rule): sandbox create's RunE
+// calls this as its one orchestration function; this in turn calls
+// applyManifestTemplate for the templating case, which is the three-level
+// ceiling, not the two-level target. That third level is deliberate, not
+// incidental: --parameters must short-circuit (print names, exit 0) before
+// it ever reaches the manifest-decode/validate/gateway-dial machinery
+// below, and applyManifestTemplate is itself independently unit-tested
+// (TestApplyManifestTemplate_UsesInjectedFS and
+// TestApplyManifestTemplate_NoRefs_ReturnsOriginalBytesUnchanged, both
+// in sandbox_create_params_test.go) with no need to drive it through a full
+// cobra command. Splitting it out keeps loadManifestWithParams itself at
+// exactly the I/O concerns (read the file, decide whether to call it at
+// all) — pushing its body inline here would not remove a decision level, it
+// would just make one function do both.
 func loadManifestWithParams(cmd *cobra.Command, fsys fs.FS, path string, tf templateFlags) (*v1alpha1.Sandbox, bool, error) {
 	var data []byte
 	var err error
