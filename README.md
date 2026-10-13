@@ -36,20 +36,16 @@ same commands from a Kubernetes CronJob instead of a shell, see
 ### Vault + template (the HyperShell CI path)
 
 The shortest path when the gateway's service-account credentials are already
-in Vault, as they are for HyperShell gateways. No `gateway add`, no exported
-`OPENSHELL_*` variables, no hand-written `sandbox create` flags: one Vault
-session, one template, two parameters.
+in Vault, as they are for HyperShell gateways. No `gateway add`, no
+hand-written `sandbox create` flags: one Vault session, one template, two
+parameters.
 
 ```bash
 export VAULT_ADDR=https://vault.example.com
 vault login -method=oidc        # openshellctl reads the resulting token; it never logs in itself
 
-export OPENSHELL_VAULT_KV_MOUNT=osd-sre
-export OPENSHELL_VAULT_KV_PATH=rosa-agent
-export OPENSHELL_VAULT_FIELD_PREFIX=hypershell
-
-openshellctl doctor                           # expect all-green
-openshellctl sandbox create -f templates/noninteractive.yaml \
+openshellctl --vault-kv-mount osd-sre --vault-kv-path rosa-agent --vault-field-prefix hypershell \
+  sandbox create -f templates/noninteractive.yaml \
   -p NAME=ROSAENG-12345 \
   -p PROMPT="retrieve and implement ROSAENG-12345"
 ```
