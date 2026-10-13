@@ -36,9 +36,8 @@ same commands from a Kubernetes CronJob instead of a shell, see
 ### Vault + template (the HyperShell CI path)
 
 The shortest path when the gateway's service-account credentials are already
-in Vault, as they are for HyperShell gateways. No `gateway add`, no
-hand-written `sandbox create` flags: one Vault session, one template, two
-parameters.
+in Vault. No `gateway add`, no hand-written `sandbox create` flags: one Vault
+session, one template, two parameters.
 
 ```bash
 export VAULT_ADDR=https://vault.example.com
