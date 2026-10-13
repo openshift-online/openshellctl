@@ -3,6 +3,8 @@ package paramtemplate
 import (
 	"reflect"
 	"testing"
+
+	yaml "go.yaml.in/yaml/v3"
 )
 
 func TestParseDocument(t *testing.T) {
@@ -86,5 +88,17 @@ func TestCollectReferences(t *testing.T) {
 				t.Errorf("CollectReferences() = %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestWalkStringScalars_NilNodeIsNoop exercises the defensive nil guard
+// directly — unreachable through the public ParseDocument/CollectReferences/
+// Substitute entry points, since ParseDocument never returns a nil node
+// without also returning an error.
+func TestWalkStringScalars_NilNodeIsNoop(t *testing.T) {
+	called := false
+	walkStringScalars(nil, func(*yaml.Node) { called = true })
+	if called {
+		t.Error("visit was called for a nil node")
 	}
 }

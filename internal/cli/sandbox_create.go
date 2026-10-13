@@ -426,12 +426,32 @@ func resolveTTY(r *sandbox.CreateRequest) bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// loadManifest decodes a -f manifest (- = stdin) and validates it. It is
-// loadManifestWithParams with no template flags, kept as its own entry point
-// since most callers (and most manifests) never use -p/--param-file.
+// loadManifest decodes a -f manifest (- = stdin) and validates it.
+//
+// Deliberately NOT routed through loadManifestWithParams/the paramtemplate
+// pipeline: this function is the shared entry point for every -f consumer
+// other than `sandbox create` itself (doctor.go, namesFromManifest in
+// sandbox_lifecycle.go — used by get/connect/upload/download/ssh-config/
+// logs/stop/start/delete/provider), and ROSAENG-74244's "Out of scope" list
+// is explicit: "Any command other than sandbox create." Templating must
+// never leak into those commands — a manifest with incidental,
+// non-template "${...}"-shaped text (e.g. a shell command embedding
+// "${HOME}") that decodes fine today via `doctor -f`/`sandbox delete -f`
+// must keep decoding fine after this change. Only sandbox create's own RunE
+// calls loadManifestWithParams, with the real --param/--param-file/
+// --parameters/--ignore-unknown-parameters flags.
 func loadManifest(cmd *cobra.Command, path string) (*v1alpha1.Sandbox, error) {
-	m, _, err := loadManifestWithParams(cmd, osFS{}, path, templateFlags{})
-	return m, err
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = readAll(cmd.InOrStdin())
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeManifestBytes(data)
 }
 
 // loadPolicy reads a policy YAML file and parses it to the SDK type.

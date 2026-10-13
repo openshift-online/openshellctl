@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -163,13 +164,42 @@ func TestSandboxCreate_ParamFile_OverriddenByParam_WarnsOnStderr(t *testing.T) {
 	}
 }
 
+// TestNeedsTemplating is the authoritative proof for acceptance criterion 6
+// ("a manifest with no ${...} references produces an identical create
+// request to the current release"): it exercises the actual decision
+// function loadManifestWithParams branches on, directly, rather than
+// inferring the skip from downstream output equality (which a round trip
+// could still coincidentally produce for a semantically-simple manifest).
+func TestNeedsTemplating(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		tf   templateFlags
+		want bool
+	}{
+		{"no refs, no flags: the golden no-op case", "metadata:\n  name: sb\n", templateFlags{}, false},
+		{"a real reference with no flags still needs templating", "metadata:\n  name: ${NAME}\n", templateFlags{}, true},
+		{"--param alone forces templating even with no ${ text", "metadata:\n  name: sb\n", templateFlags{params: []string{"X=1"}}, true},
+		{"--param-file alone forces templating", "metadata:\n  name: sb\n", templateFlags{paramFiles: []string{"p.txt"}}, true},
+		{"--parameters alone forces templating", "metadata:\n  name: sb\n", templateFlags{printParameters: true}, true},
+		{"an escaped $${KEY} still trips the cheap pre-filter (applyManifestTemplate handles the no-op from there)", "metadata:\n  name: $${ESCAPED}\n", templateFlags{}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := needsTemplating([]byte(tt.data), tt.tf); got != tt.want {
+				t.Errorf("needsTemplating(%q, %+v) = %v, want %v", tt.data, tt.tf, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSandboxCreate_NoReferences_IdenticalToUntemplatedDecode is the card's
-// sixth acceptance criterion: a manifest with no ${...} references, and no
-// -p flags, decodes identically whether or not the templating machinery
-// exists — loadManifestWithParams must skip the YAML round-trip entirely in
-// this case (not merely produce an equal-by-chance result), since
-// yaml.v3's Marshal reformats indentation and would otherwise silently
-// change behavior for every manifest that never uses this feature.
+// sixth acceptance criterion end to end: a manifest with no ${...}
+// references, and no -p flags, decodes identically whether or not the
+// templating machinery exists. TestNeedsTemplating above is the direct proof
+// that loadManifestWithParams's round-trip-skip branch is actually taken for
+// this input; this test additionally confirms the full decoded manifest
+// (not just two fields) matches decodeManifestBytes's output.
 func TestSandboxCreate_NoReferences_IdenticalToUntemplatedDecode(t *testing.T) {
 	const manifest = "apiVersion: openshell.managed.openshift.io/v1alpha1\n" +
 		"kind: Sandbox\n" +
@@ -190,7 +220,7 @@ func TestSandboxCreate_NoReferences_IdenticalToUntemplatedDecode(t *testing.T) {
 	if printedOnly {
 		t.Fatal("printedOnly = true, want false")
 	}
-	if viaLoader.Metadata.Name != direct.Metadata.Name || viaLoader.Spec.Image != direct.Spec.Image {
+	if !reflect.DeepEqual(viaLoader, direct) {
 		t.Errorf("loadManifestWithParams() = %+v, want identical to decodeManifestBytes() = %+v", viaLoader, direct)
 	}
 }
@@ -212,7 +242,10 @@ func TestSandboxCreate_ParamWithoutFile_UsageError(t *testing.T) {
 }
 
 // TestSandboxCreate_MalformedParam_UsageError confirms a malformed --param
-// value (no '=') surfaces as a usage error naming the offending text.
+// entry (no '=') surfaces as a usage error — and, since there is no '=' to
+// split on, the entry is not echoed back (see
+// TestSandboxCreate_MalformedParam_NeverLeaksValue): it could just as
+// easily be an accidentally-bare secret value as a mistyped key.
 func TestSandboxCreate_MalformedParam_UsageError(t *testing.T) {
 	path := writeManifestFile(t, templatedManifest)
 	_, err := runCmd(t, "sandbox", "create", "-f", path, "-p", "NOTKEYVALUE", "--detach")
@@ -222,8 +255,29 @@ func TestSandboxCreate_MalformedParam_UsageError(t *testing.T) {
 	if exitCodeFor(err) != ExitUsage {
 		t.Errorf("exit = %d, want ExitUsage (2)", exitCodeFor(err))
 	}
-	if !strings.Contains(err.Error(), "NOTKEYVALUE") {
-		t.Errorf("error should mention the offending text, got: %v", err)
+	if !strings.Contains(err.Error(), "--param") {
+		t.Errorf("error should name the --param source, got: %v", err)
+	}
+}
+
+// TestSandboxCreate_MalformedParam_NeverLeaksValue is the ticket's explicit
+// security requirement end to end: a --param entry with a syntactically
+// invalid key must never echo its VALUE half into any output the command
+// produces, at any verbosity.
+func TestSandboxCreate_MalformedParam_NeverLeaksValue(t *testing.T) {
+	path := writeManifestFile(t, templatedManifest)
+	out, err := runCmd(t, "sandbox", "create", "-f", path, "-v", "-p", "1BAD=supersecretvalue", "--detach")
+	if err == nil {
+		t.Fatal("expected a usage error")
+	}
+	if strings.Contains(out, "supersecretvalue") {
+		t.Errorf("output leaks the --param value: %q", out)
+	}
+	if strings.Contains(err.Error(), "supersecretvalue") {
+		t.Errorf("error leaks the --param value: %v", err)
+	}
+	if !strings.Contains(err.Error(), "1BAD") {
+		t.Errorf("error should still name the invalid key, got: %v", err)
 	}
 }
 
@@ -261,5 +315,93 @@ func TestApplyManifestTemplate_UsesInjectedFS(t *testing.T) {
 	}
 	if !strings.Contains(string(substituted), "fromfs") {
 		t.Errorf("substituted manifest = %q, want it to contain %q", substituted, "fromfs")
+	}
+}
+
+// manifestWithIncidentalDollarBrace is NOT a template: its "${HOME}" is
+// ordinary shell-expansion text that happens to share ${KEY}'s syntax. Every
+// -f consumer other than `sandbox create` must keep decoding it exactly as
+// before this card, since templating is scoped to `sandbox create` alone
+// (ROSAENG-74244's "Out of scope: any command other than sandbox create").
+const manifestWithIncidentalDollarBrace = `apiVersion: openshell.managed.openshift.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: from-file
+spec:
+  image: test:latest
+  command: ["bash", "-c", "echo ${HOME}/workspace"]
+`
+
+// TestDelete_FileWithIncidentalDollarBrace_NotTreatedAsTemplate is the
+// regression test for the scope leak a pre-PR review caught: loadManifest
+// (shared by doctor and every namesFromManifest caller — get/connect/
+// upload/download/ssh-config/logs/stop/start/delete/provider) must never
+// route through the paramtemplate pipeline, or this manifest's incidental
+// "${HOME}" would turn into a hard "unresolved parameter reference" error
+// for a command that was never given, and never asked for, -p/--param-file.
+func TestDelete_FileWithIncidentalDollarBrace_NotTreatedAsTemplate(t *testing.T) {
+	path := writeManifestFile(t, manifestWithIncidentalDollarBrace)
+	// Same assertion shape as TestDelete_FileExtractsName: -f should parse
+	// fine and fail on the gateway dial (no mock injected here), never on
+	// manifest/param validation.
+	_, err := runCmd(t, "sandbox", "delete", "--file", path)
+	if err == nil {
+		t.Fatal("expected a gateway error, not success")
+	}
+	if exitCodeFor(err) == ExitUsage {
+		t.Fatalf("should not be a usage error — ${HOME} in a non-create manifest must not be treated as an unresolved template parameter: %v", err)
+	}
+}
+
+// TestDoctor_FileWithIncidentalDollarBrace_NotTreatedAsTemplate is the same
+// regression for doctor -f, which also calls loadManifest directly.
+func TestDoctor_FileWithIncidentalDollarBrace_NotTreatedAsTemplate(t *testing.T) {
+	path := writeManifestFile(t, manifestWithIncidentalDollarBrace)
+	out, err := runCmd(t, "doctor", "--file", path, "-o", "json")
+	if err != nil && strings.Contains(err.Error(), "unresolved parameter") {
+		t.Fatalf("doctor -f treated incidental ${HOME} as a template reference: %v\noutput:\n%s", err, out)
+	}
+}
+
+// TestSandboxCreate_RealReference_NoFlags_ErrorsAsUnresolved documents the
+// flip side of the two tests above: for `sandbox create` itself, a manifest
+// using ${KEY} syntax IS treated as a template regardless of whether any
+// -p/--param-file flag was given — oc process makes the identical tradeoff
+// for any ${PARAMETER} with no declared default. This is intentional, not a
+// bug: the feature's only point is that such a reference must resolve
+// before the manifest is ever validated or sent to the gateway.
+func TestSandboxCreate_RealReference_NoFlags_ErrorsAsUnresolved(t *testing.T) {
+	path := writeManifestFile(t, templatedManifest)
+	_, err := runCmd(t, "sandbox", "create", "-f", path, "--detach")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if exitCodeFor(err) != ExitUsage {
+		t.Errorf("exit = %d, want ExitUsage (2)", exitCodeFor(err))
+	}
+	if !strings.Contains(err.Error(), "NAME") || !strings.Contains(err.Error(), "PROMPT") {
+		t.Errorf("error should name both NAME and PROMPT as unresolved, got: %v", err)
+	}
+}
+
+// TestApplyManifestTemplate_NoRefs_ReturnsOriginalBytesUnchanged confirms
+// the refinement a pre-PR review asked for: when the manifest's only
+// "${"-looking text turns out to be escaped ($${KEY}) or brace-less ($KEY)
+// — i.e. CollectReferences finds nothing — the function returns raw
+// unchanged rather than running it through Substitute/Render, so a
+// manifest's original formatting (indentation, comments, key order) is
+// never silently rewritten when there is nothing to substitute.
+func TestApplyManifestTemplate_NoRefs_ReturnsOriginalBytesUnchanged(t *testing.T) {
+	const raw = "metadata:\n  name: $${ESCAPED}\n  # a comment that Render would not reproduce\n"
+	var out, errw strings.Builder
+	got, printedOnly, err := applyManifestTemplate(fstest.MapFS{}, &out, &errw, []byte(raw), templateFlags{})
+	if err != nil {
+		t.Fatalf("applyManifestTemplate: %v", err)
+	}
+	if printedOnly {
+		t.Fatal("printedOnly = true, want false")
+	}
+	if string(got) != raw {
+		t.Errorf("applyManifestTemplate() = %q, want the original bytes unchanged: %q", got, raw)
 	}
 }
