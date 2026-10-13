@@ -50,6 +50,18 @@ openshellctl --vault-kv-mount osd-sre --vault-kv-path rosa-agent --vault-field-p
   -p PROMPT="retrieve and implement ROSAENG-12345"
 ```
 
+> **Note:** every `--vault-*` flag above has a Cobra/Viper-style env var
+> equivalent (`OPENSHELL_VAULT_KV_MOUNT`, `OPENSHELL_VAULT_KV_PATH`,
+> `OPENSHELL_VAULT_FIELD_PREFIX` — same pattern as every other flag in this
+> README). Export them once per shell or CI job and every later command
+> drops the three flags entirely:
+> ```bash
+> export OPENSHELL_VAULT_KV_MOUNT=osd-sre
+> export OPENSHELL_VAULT_KV_PATH=rosa-agent
+> export OPENSHELL_VAULT_FIELD_PREFIX=hypershell
+> openshellctl sandbox create -f templates/noninteractive.yaml -p NAME=... -p PROMPT="..."
+> ```
+
 The secret at `osd-sre/rosa-agent` supplies `hypershell-gateway-endpoint`,
 `hypershell-oidc-client-id`, `hypershell-oidc-client-secret` and the rest;
 anything you set yourself via flag or `OPENSHELL_*` env var still wins. See
