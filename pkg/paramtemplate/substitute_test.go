@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/openshift-online/openshellctl/pkg/api/v1alpha1"
 )
 
 func TestSubstitute(t *testing.T) {
@@ -113,5 +115,49 @@ func TestSubstitute_RoundTripsThroughDecode(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "a, b: c=d") {
 		t.Errorf("rendered output does not contain the exact substituted value:\n%s", out)
+	}
+}
+
+// TestSubstitute_QuotesAndNewlineSurviveRealDecode is the card's own named
+// reason for parsing before substituting ("a PROMPT containing ', : or a
+// newline would corrupt the YAML" if substitution ran on raw text instead):
+// it exercises a value containing a single quote, a double quote, and an
+// embedded newline, through the actual production decode path
+// (v1alpha1.Decode, sigs.k8s.io/yaml) rather than a strings.Contains check
+// on the rendered bytes — proving the *decoded Go string* is byte-for-byte
+// identical to what was supplied, not just that some substring of it
+// appears somewhere in the YAML.
+func TestSubstitute_QuotesAndNewlineSurviveRealDecode(t *testing.T) {
+	const manifestYAML = "apiVersion: openshell.managed.openshift.io/v1alpha1\n" +
+		"kind: Sandbox\n" +
+		"metadata:\n  name: sb\n" +
+		"spec:\n" +
+		"  image: python\n" +
+		"  command:\n" +
+		"    - claude\n" +
+		"    - '${PROMPT}'\n"
+	const value = "line1 'q' \"dq\"\nline2"
+
+	doc, err := ParseDocument([]byte(manifestYAML))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if missing := Substitute(doc, map[string]string{"PROMPT": value}); len(missing) != 0 {
+		t.Fatalf("unexpected missing: %v", missing)
+	}
+	rendered, err := Render(doc)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	sb, err := v1alpha1.Decode(strings.NewReader(string(rendered)))
+	if err != nil {
+		t.Fatalf("v1alpha1.Decode(rendered manifest): %v\nrendered:\n%s", err, rendered)
+	}
+	if len(sb.Spec.Command) != 2 {
+		t.Fatalf("Spec.Command = %#v, want 2 elements", sb.Spec.Command)
+	}
+	if sb.Spec.Command[1] != value {
+		t.Errorf("Spec.Command[1] = %q, want the exact substituted value %q", sb.Spec.Command[1], value)
 	}
 }
