@@ -69,6 +69,11 @@ func TestCollectReferences(t *testing.T) {
 			yaml: "spec:\n  resources:\n    gpu:\n      count: 1\n  tty: true\n",
 			want: nil,
 		},
+		{
+			name: "empty document has no references",
+			yaml: "",
+			want: nil,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
