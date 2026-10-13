@@ -52,6 +52,10 @@ func newSandboxCreateCommand() *cobra.Command {
 		policyFile       string
 		replace          bool
 		replaceTimeout   time.Duration
+		params           []string
+		paramFiles       []string
+		printParameters  bool
+		ignoreUnknown    bool
 	)
 	ttyState := &ttyTriState{}
 	autoProvState := &ttyTriState{}
@@ -83,10 +87,22 @@ func newSandboxCreateCommand() *cobra.Command {
 
 			var manifest *v1alpha1.Sandbox
 			if file != "" {
-				manifest, err = loadManifest(cmd, file)
-				if err != nil {
-					return err
+				m, printedOnly, lerr := loadManifestWithParams(cmd, osFS{}, file, templateFlags{
+					params:                  params,
+					paramFiles:              paramFiles,
+					printParameters:         printParameters,
+					ignoreUnknownParameters: ignoreUnknown,
+				})
+				if lerr != nil {
+					return lerr
 				}
+				if printedOnly {
+					return nil
+				}
+				manifest = m
+			} else if printParameters || len(params) > 0 || len(paramFiles) > 0 || ignoreUnknown {
+				return &UsageError{Err: fmt.Errorf(
+					"--param/--param-file/--parameters/--ignore-unknown-parameters require -f/--file")}
 			}
 
 			// flagExplicit is always true when flagPolicy != nil in production; the parameter exists for the test contract.
@@ -228,6 +244,10 @@ func newSandboxCreateCommand() *cobra.Command {
 	f.Lookup("no-auto-providers").NoOptDefVal = "true"
 	f.BoolVar(&replace, "replace", false, "delete and wait for an existing sandbox with the same name before creating")
 	f.DurationVar(&replaceTimeout, "replace-timeout", 0, "timeout waiting for the existing sandbox to be deleted (default 5m)")
+	f.StringArrayVarP(&params, "param", "p", nil, "template parameter KEY=VALUE, substituted for ${KEY} in the -f manifest (repeatable)")
+	f.StringArrayVar(&paramFiles, "param-file", nil, "file of KEY=VALUE template parameters, one per line, '#' comments allowed (repeatable)")
+	f.BoolVar(&printParameters, "parameters", false, "print the -f manifest's ${KEY} parameter names, one per line, and exit without creating anything")
+	f.BoolVar(&ignoreUnknown, "ignore-unknown-parameters", false, "do not error when --param/--param-file supplies a key the manifest does not reference")
 	return c
 }
 
@@ -406,26 +426,12 @@ func resolveTTY(r *sandbox.CreateRequest) bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// loadManifest decodes a -f manifest (- = stdin) and validates it.
+// loadManifest decodes a -f manifest (- = stdin) and validates it. It is
+// loadManifestWithParams with no template flags, kept as its own entry point
+// since most callers (and most manifests) never use -p/--param-file.
 func loadManifest(cmd *cobra.Command, path string) (*v1alpha1.Sandbox, error) {
-	var data []byte
-	var err error
-	if path == "-" {
-		data, err = readAll(cmd.InOrStdin())
-	} else {
-		data, err = os.ReadFile(path)
-	}
-	if err != nil {
-		return nil, err
-	}
-	m, err := v1alpha1.Decode(bytesReader(data))
-	if err != nil {
-		return nil, err
-	}
-	if errs := m.Validate(); len(errs) > 0 {
-		return nil, &UsageError{Err: fmt.Errorf("manifest invalid: %v", errs[0])}
-	}
-	return m, nil
+	m, _, err := loadManifestWithParams(cmd, osFS{}, path, templateFlags{})
+	return m, err
 }
 
 // loadPolicy reads a policy YAML file and parses it to the SDK type.
