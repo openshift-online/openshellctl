@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -39,14 +40,46 @@ const (
 // (detected via url.Parse + Scheme, never a regex, so case variations like
 // "HTTPS://" and other odd inputs behave predictably) is a URL, anything
 // else is a local filesystem path. No I/O, no fetch — just the decision.
+//
+// Two refinements on top of a bare url.Parse+Scheme check, both found in
+// correctness review:
+//
+//  1. u.Opaque != "" excludes an opaque URI like "http:foo.yaml" — a scheme
+//     followed by ":" with no "//" is also a legal POSIX filename
+//     containing a colon, and url.Parse happily assigns it Scheme="http"/
+//     Opaque="foo.yaml". Without this check, that real local file would be
+//     misrouted to fetchManifestURL instead of os.ReadFile — a regression
+//     from the pre-URL-support behavior (unconditional os.ReadFile for
+//     anything but "-").
+//  2. looksLikeHTTPURL is a fallback for a string url.Parse rejects
+//     outright (e.g. one containing a raw control character) but which is
+//     unambiguously URL-shaped by its prefix. Without it, such a string
+//     falls through to sourceFile, os.ReadFile fails with a confusing "no
+//     such file or directory", and fetchManifestURL's own clear "invalid
+//     manifest URL" error (which does the real, authoritative url.Parse)
+//     never gets a chance to fire.
 func classifyManifestSource(path string) manifestSourceKind {
 	if path == "-" {
 		return sourceStdin
 	}
-	if u, err := url.Parse(path); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+	if u, err := url.Parse(path); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Opaque == "" {
+		return sourceURL
+	}
+	if looksLikeHTTPURL(path) {
 		return sourceURL
 	}
 	return sourceFile
+}
+
+// looksLikeHTTPURL is a narrow, case-insensitive prefix check — not a
+// general regex-based detector, and not the primary classification
+// mechanism (url.Parse+Scheme above is). It exists solely to route a string
+// that is unambiguously URL-shaped by prefix, but that url.Parse itself
+// rejects (e.g. a raw control character later in the string), to
+// fetchManifestURL rather than silently treating it as a local path.
+func looksLikeHTTPURL(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
 // redactURL is a pure function: it prints only scheme://host/path for use in
@@ -57,6 +90,32 @@ func classifyManifestSource(path string) manifestSourceKind {
 func redactURL(u *url.URL) string {
 	redacted := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
 	return redacted.String()
+}
+
+// redactRawURLBestEffort is used only when url.Parse itself fails on a -f
+// URL, so there is no *url.URL to hand to redactURL. It is a conservative,
+// best-effort scrub, not a parser: drop everything from the first '?'
+// onward (the query string, where presigned-URL credentials typically
+// live), then drop whatever sits between "://" and the next '@' (userinfo,
+// e.g. "user:pass@") if both are present. Unlike a naive "truncate at the
+// first '@'" — which would keep the "user:pass" portion and discard the
+// host/path instead — this removes the credential itself and keeps the
+// scheme/host/path for diagnostics. A malformed URL that still contains a
+// credential or token (e.g. "https://user:pass@%zzbadhost/x") can never be
+// echoed verbatim into an error message or log, even on this parse-failure
+// path. Security review (ROSAENG-74491): every error naming the URL must
+// use a redacted form, no exceptions.
+func redactRawURLBestEffort(raw string) string {
+	if i := strings.IndexByte(raw, '?'); i >= 0 {
+		raw = raw[:i]
+	}
+	if schemeEnd := strings.Index(raw, "://"); schemeEnd >= 0 {
+		afterScheme := schemeEnd + len("://")
+		if at := strings.IndexByte(raw[afterScheme:], '@'); at >= 0 {
+			raw = raw[:afterScheme] + raw[afterScheme+at+1:]
+		}
+	}
+	return raw
 }
 
 // errManifestRedirectDowngrade is returned by rejectHTTPSDowngrade, and
@@ -81,11 +140,11 @@ func rejectHTTPSDowngrade(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// ManifestHTTPDoer performs a single HTTP request, the same shape as
+// manifestHTTPDoer performs a single HTTP request, the same shape as
 // *http.Client.Do. Tests inject a fake/httptest-backed doer; production uses
 // newManifestHTTPClient, so fetchManifestURL never dials the network in a
 // hermetic test.
-type ManifestHTTPDoer interface {
+type manifestHTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
@@ -104,36 +163,36 @@ func newManifestHTTPClient() *http.Client {
 	}
 }
 
-// ManifestFetchError reports a -f URL manifest fetch that failed after the
+// manifestFetchError reports a -f URL manifest fetch that failed after the
 // request was made: a non-2xx response, a redirect-downgrade refusal, or a
 // network/timeout failure. It is never constructed with the raw URL — only
 // redactURL's output — so a presigned URL's query string or userinfo can
 // never reach an error message. Maps to ExitError (exitcode.go): closer to a
 // network failure than a usage error.
-type ManifestFetchError struct {
+type manifestFetchError struct {
 	URL    string // already redacted
 	Status int    // non-zero for a non-2xx response; zero otherwise
 	Err    error  // wrapped cause; nil for a pure non-2xx status
 }
 
-func (e *ManifestFetchError) Error() string {
+func (e *manifestFetchError) Error() string {
 	if e.Status != 0 {
 		return fmt.Sprintf("fetching manifest %s: unexpected HTTP status %d", e.URL, e.Status)
 	}
 	return fmt.Sprintf("fetching manifest %s: %v", e.URL, e.Err)
 }
 
-func (e *ManifestFetchError) Unwrap() error { return e.Err }
+func (e *manifestFetchError) Unwrap() error { return e.Err }
 
-// ManifestURLSizeError reports a -f URL manifest response that exceeded
+// manifestURLSizeError reports a -f URL manifest response that exceeded
 // manifestURLSizeLimit. The body is never fully read once the cap is
 // crossed. Maps to ExitError (exitcode.go).
-type ManifestURLSizeError struct {
+type manifestURLSizeError struct {
 	URL   string // already redacted
 	Limit int64
 }
 
-func (e *ManifestURLSizeError) Error() string {
+func (e *manifestURLSizeError) Error() string {
 	return fmt.Sprintf("manifest at %s exceeds the %d-byte size limit", e.URL, e.Limit)
 }
 
@@ -153,10 +212,10 @@ func manifestUserAgent() string {
 // size cap. No gateway credential (OIDC bearer token, Vault token) is ever
 // read or attached here — this function never has access to one; the only
 // header it sets is User-Agent.
-func fetchManifestURL(ctx context.Context, doer ManifestHTTPDoer, rawURL string) ([]byte, error) {
+func fetchManifestURL(ctx context.Context, doer manifestHTTPDoer, rawURL string) ([]byte, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, &UsageError{Err: fmt.Errorf("invalid manifest URL %q: %w", rawURL, err)}
+		return nil, &UsageError{Err: fmt.Errorf("invalid manifest URL %q: %w", redactRawURLBestEffort(rawURL), err)}
 	}
 	if u.User != nil {
 		return nil, &UsageError{Err: fmt.Errorf(
@@ -165,27 +224,27 @@ func fetchManifestURL(ctx context.Context, doer ManifestHTTPDoer, rawURL string)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, &UsageError{Err: fmt.Errorf("invalid manifest URL %q: %w", rawURL, err)}
+		return nil, &UsageError{Err: fmt.Errorf("invalid manifest URL %q: %w", redactURL(u), err)}
 	}
 	req.Header.Set("User-Agent", manifestUserAgent())
 
 	resp, err := doer.Do(req)
 	if err != nil {
-		return nil, &ManifestFetchError{URL: redactURL(u), Err: err}
+		return nil, &manifestFetchError{URL: redactURL(u), Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, &ManifestFetchError{URL: redactURL(u), Status: resp.StatusCode}
+		return nil, &manifestFetchError{URL: redactURL(u), Status: resp.StatusCode}
 	}
 
 	limited := io.LimitReader(resp.Body, manifestURLSizeLimit+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, &ManifestFetchError{URL: redactURL(u), Err: err}
+		return nil, &manifestFetchError{URL: redactURL(u), Err: err}
 	}
 	if int64(len(data)) > manifestURLSizeLimit {
-		return nil, &ManifestURLSizeError{URL: redactURL(u), Limit: manifestURLSizeLimit}
+		return nil, &manifestURLSizeError{URL: redactURL(u), Limit: manifestURLSizeLimit}
 	}
 	return data, nil
 }
@@ -198,7 +257,15 @@ func fetchManifestURL(ctx context.Context, doer ManifestHTTPDoer, rawURL string)
 // http(s):// URL is fetched via doer, anything else is a local path via
 // os.ReadFile — one branch, in one place, so URL support reaches every -f
 // command uniformly rather than being added per command.
-func readManifestBytes(cmd *cobra.Command, doer ManifestHTTPDoer, path string) ([]byte, error) {
+//
+// This is a thin I/O shell, not a second orchestrator: it makes no decision
+// readManifestBytes' own callers didn't already make (classifyManifestSource
+// decided stdin/URL/file; this just performs the corresponding read). Its
+// one extra level below loadManifest/loadManifestWithParams is a deliberate,
+// documented exception to AGENTS.md's N+1 depth rule, existing solely so
+// those two orchestrators share one manifest-byte-reading boundary instead
+// of duplicating the branch.
+func readManifestBytes(cmd *cobra.Command, doer manifestHTTPDoer, path string) ([]byte, error) {
 	switch classifyManifestSource(path) {
 	case sourceStdin:
 		return readAll(cmd.InOrStdin())

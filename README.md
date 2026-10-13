@@ -292,8 +292,9 @@ cat sandbox.yaml | openshellctl sandbox create -f -
 
 # Create from a manifest hosted at an http(s):// URL — e.g. a manifest kept
 # in a git repo or object store, fetched the same way kubectl/oc do for
-# "apply -f <url>" (see "Manifest URLs" below for the trust-boundary note)
-openshellctl sandbox create -f https://raw.githubusercontent.com/org/repo/<commit-sha>/sandbox.yaml
+# "apply -f <url>" (see "Manifest URLs" below for the trust-boundary note;
+# a1b2c3d below stands in for a real pinned commit SHA)
+openshellctl sandbox create -f https://raw.githubusercontent.com/org/repo/a1b2c3d/sandbox.yaml
 
 # Create from a templated manifest file (see "Manifest template parameters")
 openshellctl sandbox create -f sandbox.yaml \
@@ -425,11 +426,9 @@ openshellctl sandbox get -f https://internal.example.com/manifests/sb.yaml
 
 The response is capped at 1 MiB and the request times out after 10s; a non-2xx response is an error naming the URL and status code, never decoded as a manifest. Redirects follow Go's default `http.Client` policy except for one refusal: an `https://` URL redirecting to a plain `http://` URL is rejected, since following it would let a man-in-the-middle on the second hop rewrite the manifest in flight. A URL containing userinfo (`https://user:pass@host/...`) is rejected outright — `net/http` would otherwise silently attach that as a Basic `Authorization` header, and no credential (gateway OIDC bearer token, Vault token, or otherwise) is ever attached to a manifest-fetch request regardless. Authenticated manifest URLs (one requiring its own bearer token or basic auth) are not supported.
 
-**Trust boundary:** a manifest controls `spec.upload[].local` (which local files get uploaded), `spec.command` and `spec.env` (what runs inside the sandbox, with what environment), and `spec.policy`/`spec.policyFile` and `providerRefs` (what the sandbox is allowed to do and reach) — so whoever controls a `-f` URL's content controls all of that. Prefer a URL pinned to an immutable commit SHA (as in the example above, `.../org/repo/<commit-sha>/sandbox.yaml`) over a branch or tag ref that can change underneath you. A `--file-sha256`-style content-verification flag is a natural follow-up (not implemented here) for pinning to a specific manifest's bytes rather than trusting the host.
+**Trust boundary:** a manifest controls `spec.upload[].local` (which local files get uploaded), `spec.command` and `spec.env` (what runs inside the sandbox, with what environment), and `spec.policy`/`spec.policyFile` and `providerRefs` (what the sandbox is allowed to do and reach) — so whoever controls a `-f` URL's content controls all of that. Prefer a URL pinned to an immutable commit SHA (as in the example above, `.../org/repo/a1b2c3d/sandbox.yaml`) over a branch or tag ref that can change underneath you. A `--file-sha256`-style content-verification flag is a natural follow-up (not implemented here) for pinning to a specific manifest's bytes rather than trusting the host.
 
 `spec.upload[].local` paths are resolved relative to the CLI's current working directory, not the manifest's location — true for a local-file manifest too, and unchanged by URL support; a URL manifest has no "manifest directory" a relative upload path could even mean.
-
-
 
 #### Manifest template parameters
 

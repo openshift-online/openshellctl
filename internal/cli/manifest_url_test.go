@@ -31,6 +31,10 @@ func TestClassifyManifestSource(t *testing.T) {
 		{"file scheme is not a url source (out of scope: no behavioral difference from a local path)", "file:///tmp/sandbox.yaml", sourceFile},
 		{"empty string", "", sourceFile},
 		{"windows-drive-shaped path stays a file", `C:\sandbox.yaml`, sourceFile},
+		{"opaque scheme-colon-no-slashes is a legal local filename, not a URL", "http:foo.yaml", sourceFile},
+		{"opaque https-colon filename is also a local file", "https:notes.txt", sourceFile},
+		{"malformed but unambiguously http-prefixed string still routes to the URL fetch path, for a clear error instead of a confusing file-not-found", "https://example.com/\x7f", sourceURL},
+		{"malformed uppercase-prefixed string also routes to URL", "HTTPS://example.com/\x7f", sourceURL},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -81,7 +85,47 @@ func TestRedactURL(t *testing.T) {
 	}
 }
 
-// fakeDoer is a hermetic ManifestHTTPDoer: it never touches the network.
+func TestRedactRawURLBestEffort(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "truncates at query string",
+			raw:  "https://example.com/sb.yaml?token=secret",
+			want: "https://example.com/sb.yaml",
+		},
+		{
+			name: "strips userinfo, never leaking the password",
+			raw:  "https://user:pass@%zzbadhost/x",
+			want: "https://%zzbadhost/x",
+		},
+		{
+			name: "query stripped before userinfo scan, and userinfo-shaped text in the query never counted as real userinfo",
+			raw:  "https://example.com/sb.yaml?token=secret@evil",
+			want: "https://example.com/sb.yaml",
+		},
+		{
+			name: "no query or userinfo is unchanged",
+			raw:  "https://example.com/bad",
+			want: "https://example.com/bad",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := redactRawURLBestEffort(tt.raw)
+			if got != tt.want {
+				t.Errorf("redactRawURLBestEffort(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+			if strings.Contains(got, "pass") {
+				t.Errorf("redactRawURLBestEffort(%q) = %q, must never contain the password", tt.raw, got)
+			}
+		})
+	}
+}
+
+// fakeDoer is a hermetic manifestHTTPDoer: it never touches the network.
 type fakeDoer struct {
 	resp *http.Response
 	err  error
@@ -148,7 +192,7 @@ func TestFetchManifestURL_NonHTTPStatus(t *testing.T) {
 	}{
 		{"404", http.StatusNotFound},
 		{"500", http.StatusInternalServerError},
-		{"301 not followed by a fake doer and surfaced raw", http.StatusMovedPermanently},
+		{"301 treated as non-2xx when returned directly (no live redirect-follow here)", http.StatusMovedPermanently},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -157,9 +201,9 @@ func TestFetchManifestURL_NonHTTPStatus(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected an error for a non-2xx response")
 			}
-			var fe *ManifestFetchError
+			var fe *manifestFetchError
 			if !errors.As(err, &fe) {
-				t.Fatalf("err = %T, want *ManifestFetchError", err)
+				t.Fatalf("err = %T, want *manifestFetchError", err)
 			}
 			if fe.Status != tt.status {
 				t.Errorf("Status = %d, want %d", fe.Status, tt.status)
@@ -185,9 +229,9 @@ func TestFetchManifestURL_SizeCapExceeded(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a size-cap error")
 	}
-	var se *ManifestURLSizeError
+	var se *manifestURLSizeError
 	if !errors.As(err, &se) {
-		t.Fatalf("err = %T, want *ManifestURLSizeError", err)
+		t.Fatalf("err = %T, want *manifestURLSizeError", err)
 	}
 	if se.Limit != manifestURLSizeLimit {
 		t.Errorf("Limit = %d, want %d", se.Limit, manifestURLSizeLimit)
@@ -256,9 +300,9 @@ func TestFetchManifestURL_NetworkError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a network error")
 	}
-	var fe *ManifestFetchError
+	var fe *manifestFetchError
 	if !errors.As(err, &fe) {
-		t.Fatalf("err = %T, want *ManifestFetchError", err)
+		t.Fatalf("err = %T, want *manifestFetchError", err)
 	}
 	if exitCodeFor(err) != ExitError {
 		t.Errorf("exitCodeFor = %d, want ExitError", exitCodeFor(err))
@@ -434,6 +478,31 @@ func TestReadManifestBytes_DispatchesByClassification(t *testing.T) {
 			t.Errorf("data = %q", data)
 		}
 	})
+}
+
+// TestReadManifestBytes_MalformedURLReachesFetchManifestURL confirms, through
+// the real chokepoint (not by calling fetchManifestURL directly), that a
+// string url.Parse itself rejects but which is still unambiguously
+// http(s)-prefixed gets the clear, typed "invalid manifest URL" UsageError —
+// never a confusing os.ReadFile "no such file or directory" from being
+// misclassified as a local path (correctness review: classifyManifestSource
+// and fetchManifestURL must agree on what counts as a URL, or the malformed-
+// URL error path is dead code unreachable from the real CLI).
+func TestReadManifestBytes_MalformedURLReachesFetchManifestURL(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	doer := &fakeDoer{} // must never be called: fetchManifestURL rejects before any Do
+	_, err := readManifestBytes(cmd, doer, "https://example.com/\x7f")
+	if err == nil {
+		t.Fatal("expected an error for a malformed URL")
+	}
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %T, want *UsageError (classifyManifestSource must route this to fetchManifestURL, not os.ReadFile)", err)
+	}
+	if doer.capturedReq != nil {
+		t.Error("doer.Do must never be called for a malformed URL")
+	}
 }
 
 func writeFileHelper(path, content string) error {

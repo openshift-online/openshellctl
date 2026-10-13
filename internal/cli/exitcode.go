@@ -166,8 +166,8 @@ func exitCodeFor(err error) int {
 	// Listed explicitly (rather than only falling into the catch-all below)
 	// so a future change to either type is caught by this function's own
 	// exhaustive-by-construction test.
-	var manifestFetch *ManifestFetchError
-	var manifestSize *ManifestURLSizeError
+	var manifestFetch *manifestFetchError
+	var manifestSize *manifestURLSizeError
 	if errors.As(err, &manifestFetch) || errors.As(err, &manifestSize) {
 		return ExitError
 	}

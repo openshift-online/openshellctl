@@ -200,10 +200,9 @@ func TestSandboxCreate_ManifestFromURL_OversizedBody_NoGatewayCall(t *testing.T)
 }
 
 // TestSandboxCreate_ManifestFromURL_Userinfo_UsageError confirms a -f URL
-// with userinfo is rejected with ExitUsage before any fetch (httptest.Server
-// never even receives a request, since there's nothing listening at that
-// host — if the request were sent, the test would hang/fail on connection
-// refused instead of returning a UsageError).
+// with userinfo is rejected with ExitUsage before any fetch — manifests.invalid
+// resolves nowhere, so if the request were actually sent, the test would
+// fail with a DNS/connection error instead of returning a UsageError.
 func TestSandboxCreate_ManifestFromURL_Userinfo_UsageError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	gw := mock.NewMockGateway(ctrl) // no EXPECT() calls at all
