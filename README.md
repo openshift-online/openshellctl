@@ -6,7 +6,7 @@ openshellctl exists because getting an agent sandbox running on HyperShell from 
 
 - **Sandboxes as code.** A `kind: Sandbox` YAML manifest holds the image, command, providers, env, resources, uploads and session behaviour. `sandbox create -f`, `sandbox delete -f`, `sandbox get -f` and every other `-f` command read the same file, from disk, stdin or an `http(s)://` URL. See [Manifest format](#manifest-format).
 - **Templates, not copies.** Manifests take `${NAME}`/`${PROMPT}`-style parameters filled from `-p KEY=VALUE` or `--param-file`, `oc process` style, so one checked-in template serves every run. Ready-made ones live in [`templates/`](templates/). See [Manifest template parameters](#manifest-template-parameters).
-- **Vault-backed, zero-prelude auth.** Point it at a Vault KV v2 secret and it fills in the gateway endpoint, OIDC issuer, client ID and client secret itself; a service account authenticates with `client_credentials` and the token is re-minted per request, so an hour-long job's `--no-keep` cleanup still has a valid token. See [Authentication](#authentication).
+- **Vault-backed, zero-prelude auth.** Point it at a Vault KV v2 secret and it fills in the gateway endpoint, OIDC issuer, client ID and client secret itself; a service account authenticates with `client_credentials` and the token is checked on every request and re-minted before it expires, so an hour-long job's `--no-keep` cleanup still has a valid token. See [Authentication](#authentication).
 - **Nothing to install alongside it.** Pure Go, single static binary, no shell-out to `openshell`, `ssh`, `tar`, `git` or `vault`. It is a standalone replacement for the upstream Rust CLI, not a wrapper around it, and its `pkg/` packages are importable for operators and controllers.
 
 ## Installation
@@ -26,8 +26,10 @@ make build          # binary at ./openshellctl
 ## Quick start
 
 Three complete, runnable paths from a clean machine to a working sandbox,
-depending on where your credentials live. All end with `openshellctl doctor`
-printing all-green — run it any time something looks wrong; see
+depending on where your credentials live. The Service account and Human
+account paths below end with `openshellctl doctor` printing all-green; the
+Vault path can be checked the same way by handing `doctor` the same
+`--vault-*` flags. Run `doctor` any time something looks wrong — see
 ["First run: `openshellctl doctor`"](#first-run-openshellctl-doctor) below
 for what a failure looks like and its exact next command. For running these
 same commands from a Kubernetes CronJob instead of a shell, see
@@ -46,19 +48,20 @@ vault login -method=oidc        # openshellctl reads the resulting token; it nev
 openshellctl --vault-kv-mount secret --vault-kv-path myapp --vault-field-prefix myapp \
   sandbox create -f templates/noninteractive.yaml \
   -p NAME=ROSAENG-12345 \
-  -p PROMPT="retrieve and implement ROSAENG-12345"
+  -p PROMPT="retrieve and implement ROSAENG-12345" \
+  --no-keep
 ```
 
 > **Note:** every `--vault-*` flag above has a Cobra/Viper-style env var
 > equivalent (`OPENSHELL_VAULT_KV_MOUNT`, `OPENSHELL_VAULT_KV_PATH`,
-> `OPENSHELL_VAULT_FIELD_PREFIX` — same pattern as every other flag in this
-> README). Export them once per shell or CI job and every later command
-> drops the three flags entirely:
+> `OPENSHELL_VAULT_FIELD_PREFIX` — same pattern as every global flag; see
+> [Global flags](#global-flags)). Export them once per shell or CI job and
+> every later command drops the three flags entirely:
 > ```bash
 > export OPENSHELL_VAULT_KV_MOUNT=secret
 > export OPENSHELL_VAULT_KV_PATH=myapp
 > export OPENSHELL_VAULT_FIELD_PREFIX=myapp
-> openshellctl sandbox create -f templates/noninteractive.yaml -p NAME=... -p PROMPT="..."
+> openshellctl sandbox create -f templates/noninteractive.yaml -p NAME=... -p PROMPT="..." --no-keep
 > ```
 
 The secret at your `--vault-kv-path` supplies `<prefix>-gateway-endpoint`,
@@ -242,7 +245,7 @@ openshellctl --vault-kv-mount secret --vault-kv-path myapp --vault-field-prefix 
 export OPENSHELL_VAULT_KV_MOUNT=secret
 export OPENSHELL_VAULT_KV_PATH=myapp
 export OPENSHELL_VAULT_FIELD_PREFIX=myapp
-openshellctl sandbox create -f templates/noninteractive.yaml -p NAME=my-run -p PROMPT="..."
+openshellctl sandbox create -f templates/noninteractive.yaml -p NAME=my-run -p PROMPT="..." --no-keep
 ```
 
 This reads the secret at `secret/myapp` and, for each of `gateway`,
