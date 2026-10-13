@@ -43,7 +43,7 @@ session, one template, two parameters.
 export VAULT_ADDR=https://vault.example.com
 vault login -method=oidc        # openshellctl reads the resulting token; it never logs in itself
 
-openshellctl --vault-kv-mount osd-sre --vault-kv-path rosa-agent --vault-field-prefix hypershell \
+openshellctl --vault-kv-mount secret --vault-kv-path myapp --vault-field-prefix myapp \
   sandbox create -f templates/noninteractive.yaml \
   -p NAME=ROSAENG-12345 \
   -p PROMPT="retrieve and implement ROSAENG-12345"
@@ -55,15 +55,15 @@ openshellctl --vault-kv-mount osd-sre --vault-kv-path rosa-agent --vault-field-p
 > README). Export them once per shell or CI job and every later command
 > drops the three flags entirely:
 > ```bash
-> export OPENSHELL_VAULT_KV_MOUNT=osd-sre
-> export OPENSHELL_VAULT_KV_PATH=rosa-agent
-> export OPENSHELL_VAULT_FIELD_PREFIX=hypershell
+> export OPENSHELL_VAULT_KV_MOUNT=secret
+> export OPENSHELL_VAULT_KV_PATH=myapp
+> export OPENSHELL_VAULT_FIELD_PREFIX=myapp
 > openshellctl sandbox create -f templates/noninteractive.yaml -p NAME=... -p PROMPT="..."
 > ```
 
 The secret at your `--vault-kv-path` supplies `<prefix>-gateway-endpoint`,
 `<prefix>-oidc-client-id`, `<prefix>-oidc-client-secret` and the rest, where
-`<prefix>` is whatever you pass to `--vault-field-prefix` (`hypershell` in
+`<prefix>` is whatever you pass to `--vault-field-prefix` (`myapp` in
 the example above, but your own mount, path and prefix can be anything);
 anything you set yourself via flag or `OPENSHELL_*` env var still wins. See
 ["4. Vault-sourced config"](#4-vault-sourced-config). The template is one of
@@ -235,21 +235,21 @@ Point openshellctl at the secret instead of exporting the fields yourself:
 ```bash
 vault login -method=oidc   # openshellctl never does this itself — it expects a session to already exist
 
-openshellctl --vault-kv-mount osd-sre --vault-kv-path rosa-agent --vault-field-prefix hypershell \
+openshellctl --vault-kv-mount secret --vault-kv-path myapp --vault-field-prefix myapp \
   sandbox list
 
 # or, once per shell/job, via env vars:
-export OPENSHELL_VAULT_KV_MOUNT=osd-sre
-export OPENSHELL_VAULT_KV_PATH=rosa-agent
-export OPENSHELL_VAULT_FIELD_PREFIX=hypershell
+export OPENSHELL_VAULT_KV_MOUNT=secret
+export OPENSHELL_VAULT_KV_PATH=myapp
+export OPENSHELL_VAULT_FIELD_PREFIX=myapp
 openshellctl sandbox create -f templates/noninteractive.yaml -p NAME=my-run -p PROMPT="..."
 ```
 
-This reads the secret at `osd-sre/rosa-agent` and, for each of `gateway`,
+This reads the secret at `secret/myapp` and, for each of `gateway`,
 `gateway-endpoint`, `oidc-issuer`, `oidc-client-id`, `oidc-client-secret`,
 `oidc-audience`, `oidc-scopes`, looks for a field named
-`<prefix>-<field>` (here, `hypershell-oidc-client-id`,
-`hypershell-oidc-client-secret`, and so on) and uses it only where you
+`<prefix>-<field>` (here, `myapp-oidc-client-id`,
+`myapp-oidc-client-secret`, and so on) and uses it only where you
 haven't already set that value via flag or `OPENSHELL_*` env var — Vault is
 always the lowest-priority source, never an override. `--vault-field-prefix`
 is optional; omit it if your secret's fields aren't prefixed.
