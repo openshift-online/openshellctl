@@ -444,10 +444,12 @@ openshellctl sandbox create -f sandbox.yaml --parameters
 Rules:
 
 - `KEY` matches `[A-Za-z_][A-Za-z0-9_]*`; a reference may appear more than once and may be embedded in literal text (e.g. `"${NAME}-worker"`).
-- Every `${KEY}` left unresolved after substitution is an error listing every missing key — a literal `${KEY}` is never sent to the gateway.
+- Every `${KEY}` left unresolved after substitution is an error listing every missing key — a literal `${KEY}` is never sent to the gateway. This applies even with **no** `-p`/`--param-file` given at all: a manifest containing a real `${KEY}` reference always needs it resolved, the same tradeoff `oc process` makes for any `${PARAMETER}` with no declared default (this card has no `parameters:`/defaults block).
 - A `-p`/`--param-file` key the manifest does not reference is an error unless `--ignore-unknown-parameters` is set.
 - `$KEY` (no braces) and `$${KEY}` are never substituted — `$${KEY}` is the literal text `$${KEY}` in the output; there is no other escape mechanism.
-- A manifest with no `${...}` references behaves exactly as without this feature, whether or not `-p`/`--param-file` are given (an unused `-p` is the unknown-parameter error above).
+- A manifest with no `${...}` references at all, and no `-p`/`--param-file`/`--parameters` given, behaves exactly as without this feature (no YAML re-serialization, so original formatting/comments are untouched).
+- Substitution only reaches string-valued scalars. A non-string field (e.g. `spec.resources.cpu`, `sessionOpts.noKeep`) keeps its `${KEY}` text as a literal string after substitution — `cpu: "${CPU}"` decodes as the string `"2"` (fine, `cpu` is already a string field), but `noKeep: ${KEEP}` fails manifest decoding, since a boolean field can't hold the substituted string. Template only string fields.
+- `--parameters` cannot be combined with `-p`/`--param-file` — it's a usage error, matching `oc process`'s rejection of the same combination, rather than silently ignoring the supplied values.
 - Substituted values are never logged, at any `-v` verbosity — only parameter *names* ever appear in output or error text.
 
 ### `sandbox get`

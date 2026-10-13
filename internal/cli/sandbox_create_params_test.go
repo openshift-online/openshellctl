@@ -138,6 +138,31 @@ func TestSandboxCreate_Parameters_PrintsNamesAndExits(t *testing.T) {
 	}
 }
 
+// TestSandboxCreate_ParametersWithParam_UsageError: --parameters combined
+// with --param/--param-file is a usage error, matching oc process (the
+// convention this card's flags mirror) rather than silently ignoring the
+// supplied values — a user who passed both almost certainly meant one or
+// the other, not a request where half the input is quietly discarded.
+func TestSandboxCreate_ParametersWithParam_UsageError(t *testing.T) {
+	path := writeManifestFile(t, templatedManifest)
+
+	ctrl := gomock.NewController(t)
+	gw := mock.NewMockGateway(ctrl)
+	// No expectations set — any call fails the test.
+
+	_, err := runCmdWithGateway(t, cliDeps{Gateway: gw}, "sandbox", "create",
+		"-f", path, "--parameters", "-p", "NAME=X")
+	if err == nil {
+		t.Fatal("expected a usage error")
+	}
+	if exitCodeFor(err) != ExitUsage {
+		t.Errorf("exit = %d, want ExitUsage (2)", exitCodeFor(err))
+	}
+	if !strings.Contains(err.Error(), "--parameters") {
+		t.Errorf("error should mention --parameters, got: %v", err)
+	}
+}
+
 // TestSandboxCreate_ParamFile_OverriddenByParam_WarnsOnStderr is the card's
 // fifth acceptance criterion: --param-file values are overridden by --param
 // for the same key, with a stderr warning.
@@ -182,7 +207,7 @@ func TestNeedsTemplating(t *testing.T) {
 		{"--param alone forces templating even with no ${ text", "metadata:\n  name: sb\n", templateFlags{params: []string{"X=1"}}, true},
 		{"--param-file alone forces templating", "metadata:\n  name: sb\n", templateFlags{paramFiles: []string{"p.txt"}}, true},
 		{"--parameters alone forces templating", "metadata:\n  name: sb\n", templateFlags{printParameters: true}, true},
-		{"an escaped $${KEY} still trips the cheap pre-filter (applyManifestTemplate handles the no-op from there)", "metadata:\n  name: $${ESCAPED}\n", templateFlags{}, true},
+		{"an escaped $${KEY} still trips the cheap pre-filter (loadManifestWithParams falls back to a direct decode from there)", "metadata:\n  name: $${ESCAPED}\n", templateFlags{}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -295,26 +320,29 @@ func TestSandboxCreate_ParamFile_UnreadablePath_UsageError(t *testing.T) {
 	}
 }
 
-// TestApplyManifestTemplate_UsesInjectedFS confirms the orchestrator reads
+// TestLoadManifestWithParams_UsesInjectedFS confirms the orchestrator reads
 // --param-file through the fs.FS it is given (a seam the CLI's production
 // osFS production path never exercises in-test) rather than the real
 // filesystem.
-func TestApplyManifestTemplate_UsesInjectedFS(t *testing.T) {
+func TestLoadManifestWithParams_UsesInjectedFS(t *testing.T) {
+	path := writeManifestFile(t, "apiVersion: openshell.managed.openshift.io/v1alpha1\nkind: Sandbox\nmetadata:\n  name: ${NAME}\nspec:\n  image: python\n")
 	fsys := fstest.MapFS{
 		"params.txt": {Data: []byte("NAME=fromfs\n")},
 	}
+	cmd := &cobra.Command{}
 	var out, errw strings.Builder
-	substituted, printedOnly, err := applyManifestTemplate(fsys, &out, &errw,
-		[]byte("metadata:\n  name: ${NAME}\n"),
-		templateFlags{paramFiles: []string{"params.txt"}})
+	cmd.SetOut(&out)
+	cmd.SetErr(&errw)
+
+	m, printedOnly, err := loadManifestWithParams(cmd, fsys, path, templateFlags{paramFiles: []string{"params.txt"}})
 	if err != nil {
-		t.Fatalf("applyManifestTemplate: %v", err)
+		t.Fatalf("loadManifestWithParams: %v", err)
 	}
 	if printedOnly {
 		t.Fatal("printedOnly = true, want false")
 	}
-	if !strings.Contains(string(substituted), "fromfs") {
-		t.Errorf("substituted manifest = %q, want it to contain %q", substituted, "fromfs")
+	if m.Metadata.Name != "fromfs" {
+		t.Errorf("Metadata.Name = %q, want %q", m.Metadata.Name, "fromfs")
 	}
 }
 
@@ -384,24 +412,42 @@ func TestSandboxCreate_RealReference_NoFlags_ErrorsAsUnresolved(t *testing.T) {
 	}
 }
 
-// TestApplyManifestTemplate_NoRefs_ReturnsOriginalBytesUnchanged confirms
-// the refinement a pre-PR review asked for: when the manifest's only
-// "${"-looking text turns out to be escaped ($${KEY}) or brace-less ($KEY)
-// — i.e. CollectReferences finds nothing — the function returns raw
-// unchanged rather than running it through Substitute/Render, so a
-// manifest's original formatting (indentation, comments, key order) is
-// never silently rewritten when there is nothing to substitute.
-func TestApplyManifestTemplate_NoRefs_ReturnsOriginalBytesUnchanged(t *testing.T) {
-	const raw = "metadata:\n  name: $${ESCAPED}\n  # a comment that Render would not reproduce\n"
-	var out, errw strings.Builder
-	got, printedOnly, err := applyManifestTemplate(fstest.MapFS{}, &out, &errw, []byte(raw), templateFlags{})
+// TestLoadManifestWithParams_NoRefs_SkipsRender confirms the refinement a
+// pre-PR review asked for: when the manifest's only "${"-looking text turns
+// out to be escaped ($${KEY}) — i.e. CollectReferences finds nothing — the
+// function decodes the original bytes directly rather than running them
+// through Substitute/Render, so a manifest's original formatting
+// (indentation, comments, key order) is never silently rewritten when there
+// is nothing to substitute. Proven the same way as
+// TestSandboxCreate_NoReferences_IdenticalToUntemplatedDecode: full
+// structural equality against decodeManifestBytes called directly on the
+// untouched source bytes.
+func TestLoadManifestWithParams_NoRefs_SkipsRender(t *testing.T) {
+	const manifest = "apiVersion: openshell.managed.openshift.io/v1alpha1\n" +
+		"kind: Sandbox\n" +
+		"metadata:\n" +
+		"  name: $${ESCAPED}\n" + // literal text, not a reference — CollectReferences finds nothing
+		"  # a comment that Render would not reproduce\n" +
+		"spec:\n  image: python\n"
+	path := writeManifestFile(t, manifest)
+
+	direct, err := decodeManifestBytes([]byte(manifest))
 	if err != nil {
-		t.Fatalf("applyManifestTemplate: %v", err)
+		t.Fatalf("decodeManifestBytes: %v", err)
+	}
+
+	cmd := &cobra.Command{}
+	got, printedOnly, err := loadManifestWithParams(cmd, fstest.MapFS{}, path, templateFlags{})
+	if err != nil {
+		t.Fatalf("loadManifestWithParams: %v", err)
 	}
 	if printedOnly {
 		t.Fatal("printedOnly = true, want false")
 	}
-	if string(got) != raw {
-		t.Errorf("applyManifestTemplate() = %q, want the original bytes unchanged: %q", got, raw)
+	if !reflect.DeepEqual(got, direct) {
+		t.Errorf("loadManifestWithParams() = %+v, want identical to decodeManifestBytes() = %+v", got, direct)
+	}
+	if got.Metadata.Name != "$${ESCAPED}" {
+		t.Errorf("Metadata.Name = %q, want the literal %q (never substituted)", got.Metadata.Name, "$${ESCAPED}")
 	}
 }
