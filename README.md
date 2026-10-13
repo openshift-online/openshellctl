@@ -61,8 +61,10 @@ openshellctl --vault-kv-mount osd-sre --vault-kv-path rosa-agent --vault-field-p
 > openshellctl sandbox create -f templates/noninteractive.yaml -p NAME=... -p PROMPT="..."
 > ```
 
-The secret at `osd-sre/rosa-agent` supplies `hypershell-gateway-endpoint`,
-`hypershell-oidc-client-id`, `hypershell-oidc-client-secret` and the rest;
+The secret at your `--vault-kv-path` supplies `<prefix>-gateway-endpoint`,
+`<prefix>-oidc-client-id`, `<prefix>-oidc-client-secret` and the rest, where
+`<prefix>` is whatever you pass to `--vault-field-prefix` (`hypershell` in
+the example above, but your own mount, path and prefix can be anything);
 anything you set yourself via flag or `OPENSHELL_*` env var still wins. See
 ["4. Vault-sourced config"](#4-vault-sourced-config). The template is one of
 two checked in under [`templates/`](templates/) — `interactive.yaml`
