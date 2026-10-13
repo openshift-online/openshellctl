@@ -222,6 +222,15 @@ func fetchManifestURL(ctx context.Context, doer manifestHTTPDoer, rawURL string)
 			"manifest URL must not contain userinfo (credentials in a -f URL are not supported): %s", redactURL(u))}
 	}
 
+	// cobra's real ExecuteC always sets a non-nil context, so this only
+	// matters for a test that builds a bare &cobra.Command{} and calls
+	// cmd.Context() before SetContext — fall back rather than let
+	// http.NewRequestWithContext surface net/http's internal "nil Context"
+	// message, which is accurate but unrelated to the actual problem a user
+	// would hit.
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, &UsageError{Err: fmt.Errorf("invalid manifest URL %q: %w", redactURL(u), err)}
