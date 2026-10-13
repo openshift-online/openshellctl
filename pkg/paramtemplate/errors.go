@@ -10,19 +10,34 @@ import (
 // [A-Za-z_][A-Za-z0-9_]*. Source is "--param" for a flag entry, or the
 // --param-file path for a file entry (with Line set to its 1-based line
 // number).
+//
+// The entry's VALUE is deliberately never captured here, in either shape:
+// param values must never be logged, including in error output (the card's
+// explicit security requirement) — only the key half of a well-formed-but-
+// invalid "KEY=..." may appear in Error(), and when there is no '=' at all
+// there is no reliable key/value split to begin with, so nothing from the
+// raw entry is echoed.
 type MalformedParamError struct {
-	Raw    string
-	Source string
-	Line   int
+	Key       string // the (invalid) key, set only when HasEquals is true
+	HasEquals bool   // whether an '=' was found in the entry at all
+	Source    string
+	Line      int
 }
 
 func (e *MalformedParamError) Error() string {
-	if e.Line > 0 {
-		return fmt.Sprintf("%s:%d: invalid parameter %q, expected KEY=VALUE with KEY matching [A-Za-z_][A-Za-z0-9_]*",
-			e.Source, e.Line, e.Raw)
+	if !e.HasEquals {
+		return fmt.Sprintf("%s: malformed parameter entry, expected KEY=VALUE (no '=' found)", e.location())
 	}
-	return fmt.Sprintf("%s: invalid parameter %q, expected KEY=VALUE with KEY matching [A-Za-z_][A-Za-z0-9_]*",
-		e.Source, e.Raw)
+	return fmt.Sprintf("%s: invalid parameter key %q, expected KEY matching [A-Za-z_][A-Za-z0-9_]*", e.location(), e.Key)
+}
+
+// location formats Source (with Line, for a --param-file entry) the same way
+// both branches of Error() need it.
+func (e *MalformedParamError) location() string {
+	if e.Line > 0 {
+		return fmt.Sprintf("%s:%d", e.Source, e.Line)
+	}
+	return e.Source
 }
 
 // ParamFileUnreadableError wraps a failure to open or read a --param-file.

@@ -29,7 +29,7 @@ func TestExitCodeFor(t *testing.T) {
 		// wraps these in *UsageError (sandbox_create_params.go), the same
 		// convention every other --param/-f input-validation error in this
 		// package already follows, so they map to ExitUsage like the rest.
-		{"malformed --param → usage", &UsageError{Err: &paramtemplate.MalformedParamError{Raw: "NAME", Source: "--param"}}, ExitUsage},
+		{"malformed --param → usage", &UsageError{Err: &paramtemplate.MalformedParamError{Key: "1BAD", HasEquals: true, Source: "--param"}}, ExitUsage},
 		{"unreadable --param-file → usage", &UsageError{Err: &paramtemplate.ParamFileUnreadableError{Path: "p.txt", Err: errors.New("no such file")}}, ExitUsage},
 		{"unresolved parameter reference → usage", &UsageError{Err: &paramtemplate.UnresolvedParamsError{Keys: []string{"NAME"}}}, ExitUsage},
 		{"unknown parameter → usage", &UsageError{Err: &paramtemplate.UnknownParamsError{Keys: []string{"EXTRA"}}}, ExitUsage},

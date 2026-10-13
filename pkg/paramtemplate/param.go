@@ -25,23 +25,26 @@ type Param struct {
 // ParseParam parses one "KEY=VALUE" entry from a --param flag. Split is on
 // the first '=' only, so a VALUE may itself contain '=' or ','; KEY must
 // match [A-Za-z_][A-Za-z0-9_]*. Returns a *MalformedParamError (Source:
-// "--param") when raw has no '=' or KEY is invalid.
+// "--param") when raw has no '=' or KEY is invalid. The error never carries
+// the VALUE half of raw — see MalformedParamError's doc comment.
 func ParseParam(raw string) (Param, error) {
 	return parseParamEntry(raw, "--param", 0)
 }
 
 // parseParamEntry is the shared KEY=VALUE parser for both the --param flag
 // form and each line of a --param-file; source/line identify the entry in
-// any resulting error.
+// any resulting error. It deliberately never puts raw's VALUE half into the
+// Param-less error path — a malformed entry's error must report only a key,
+// or nothing at all when there is no '=' to split on.
 func parseParamEntry(raw, source string, line int) (Param, error) {
 	for i := 0; i < len(raw); i++ {
 		if raw[i] == '=' {
 			key, value := raw[:i], raw[i+1:]
 			if !paramKeyRe.MatchString(key) {
-				return Param{}, &MalformedParamError{Raw: raw, Source: source, Line: line}
+				return Param{}, &MalformedParamError{Key: key, HasEquals: true, Source: source, Line: line}
 			}
 			return Param{Key: key, Value: value}, nil
 		}
 	}
-	return Param{}, &MalformedParamError{Raw: raw, Source: source, Line: line}
+	return Param{}, &MalformedParamError{HasEquals: false, Source: source, Line: line}
 }
