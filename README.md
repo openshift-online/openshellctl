@@ -1,6 +1,6 @@
 # openshellctl
 
-The CLI for running sandboxes on [HyperShell](https://github.com/openshift-online/hypershell) — Red Hat's managed [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) gateways — from a laptop, a CI job, or a Kubernetes CronJob, with the same YAML manifest in every case.
+A CLI tool for running sandboxes on [HyperShell](https://github.com/openshift-online/hypershell) — Red Hat's managed [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) gateways — from a laptop, a CI job, or a Kubernetes CronJob, with the same YAML manifest in every case.
 
 openshellctl exists because getting an agent sandbox running on HyperShell from automation used to mean a bash prelude: fetch credentials from Vault, write the gateway's `metadata.json`, mint a token, hope it hasn't expired by cleanup time, then hand-assemble a long `sandbox create` command. openshellctl folds all of that into the binary:
 
