@@ -230,7 +230,15 @@ func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string, force bool) err
 	// client-id/audience/scopes value flows into the persisted metadata.json
 	// exactly the way an OPENSHELL_* env var already does — Vault is treated
 	// as just another config source, not special-cased for this one command.
-	if err := applyVaultAuthSource(cmd.Context()); err != nil {
+	//
+	// Uses the ForNewGateway variant (no persisted-config fallback): this
+	// runs before the gateway being registered exists, so falling back to
+	// whatever OTHER gateway happens to be active's persisted Vault config
+	// would leak that gateway's credentials into this one (ROSAENG-74343
+	// review). An explicit --vault-kv-mount/--vault-kv-path on this `gateway
+	// add` invocation itself is unaffected — only the ambient fallback is
+	// disabled.
+	if err := applyVaultAuthSourceForNewGateway(cmd.Context()); err != nil {
 		return err
 	}
 

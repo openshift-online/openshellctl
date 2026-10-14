@@ -25,6 +25,24 @@ import (
 // it always has (vaultconfig.ErrNoToken, ErrForbidden, ...); the persisted
 // file cannot mask that, since it only tells the CLI where to look, not what
 // it will find.
+//
+// Two known limitations, both inherited from the exact same pattern
+// last_sandbox (lastsandbox.go) already has, not introduced by this type:
+//
+//   - System-tree gateways: SaveVaultAuthConfig always writes through a
+//     Writer rooted at the USER config tree, but LoadVaultAuthConfig reads
+//     from a Resolved's FS, which for a gateway found only in the system
+//     tree is rooted there instead. The two trees aren't reconciled, so a
+//     persisted file for a system-tree-only gateway is effectively
+//     write-only (never read back). last_sandbox has this identical gap
+//     today; fixing it for either would mean writing into the system tree,
+//     which is a bigger, separate change this feature doesn't attempt.
+//   - Ambient OPENSHELL_VAULT_* env vars get persisted too, not just flags:
+//     if a shell still has gateway A's OPENSHELL_VAULT_KV_MOUNT/PATH
+//     exported and the user runs `gateway add`/`login` for gateway B, B
+//     silently inherits A's coordinates. This matches the documented
+//     "flag or env, same precedence" contract, but is easy to trigger by
+//     accident when switching between gateways in one shell session.
 type VaultAuthConfig struct {
 	Mount       string `json:"mount"`
 	Path        string `json:"path"`
@@ -65,7 +83,15 @@ func LoadVaultAuthConfig(r *Resolved) (VaultAuthConfig, bool) {
 // USER tree (w is responsible for the atomic write, 0600 file, 0700 parent
 // dir — see Writer/OSWriter), so later commands against the same gateway
 // reuse the mount/path/prefix without repeating the flags/env vars.
+//
+// Validates gatewayName the same way every other mutator in this package
+// does (SetActive, WriteGateway, RemoveGateway, Logout) — ROSAENG-74343
+// review flagged this as the one mutator that didn't, which matters here
+// specifically because vaultAuthRel builds a path from gatewayName.
 func SaveVaultAuthConfig(w Writer, gatewayName string, cfg VaultAuthConfig) error {
+	if err := ValidateGatewayName(gatewayName); err != nil {
+		return err
+	}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return err

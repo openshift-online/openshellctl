@@ -33,11 +33,19 @@ func (f *capturingVaultReader) ReadSecret(_ context.Context, mount, path string)
 // it the same way `gateway add` would have left it.
 func writeTestGateway(t *testing.T, xdg, name string) {
 	t.Helper()
+	writeTestGatewayWithEndpoint(t, xdg, name, "https://gw.example.com")
+}
+
+// writeTestGatewayWithEndpoint is writeTestGateway, but lets the caller pick
+// a distinct endpoint — needed for tests with more than one registered
+// gateway, where FindByEndpoint must be able to tell them apart.
+func writeTestGatewayWithEndpoint(t *testing.T, xdg, name, endpoint string) {
+	t.Helper()
 	dir := filepath.Join(xdg, "openshell", "gateways", name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	md := `{"name":"` + name + `","gateway_endpoint":"https://gw.example.com","is_remote":true,"gateway_port":0,"auth_mode":"oidc","oidc_issuer":"https://issuer"}`
+	md := `{"name":"` + name + `","gateway_endpoint":"` + endpoint + `","is_remote":true,"gateway_port":0,"auth_mode":"oidc","oidc_issuer":"https://issuer"}`
 	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(md), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +198,8 @@ func TestGatewayAdd_NoVaultFlagsDoesNotWriteVaultAuthConfig(t *testing.T) {
 
 // TestGatewayAddThenLaterCommand_ReusesPersistedVaultConfig is the
 // end-to-end acceptance test: `gateway add` with explicit Vault flags, then a
-// second, separate command against the same gateway with none at all, still
+// second, separate command (a distinct root.Execute() run, not a direct
+// function call) against the same gateway with no Vault flags at all, still
 // resolves auth via Vault using the persisted mount/path.
 func TestGatewayAddThenLaterCommand_ReusesPersistedVaultConfig(t *testing.T) {
 	xdg := t.TempDir()
@@ -205,18 +214,17 @@ func TestGatewayAddThenLaterCommand_ReusesPersistedVaultConfig(t *testing.T) {
 		t.Fatalf("gateway add: %v", err)
 	}
 
-	// A later, separate process invocation: no -g, no vault flags — relies
+	// A genuinely separate command invocation: no -g, no vault flags — relies
 	// entirely on active_gateway (set by `gateway add`) + the persisted
-	// vault_auth.json. applyVaultAuthSource memoizes per process (see its
-	// doc comment), so simulate a fresh process the way runCmdCtx does
-	// between tests — within a single test binary this in-process reset is
-	// what makes a second, independent invocation observable at all.
-	resetVaultOnce()
-	viper.Reset()
-	laterReader := &capturingVaultReader{data: map[string]any{"oidc-client-id": "later-client"}}
+	// vault_auth.json. `gateway logout` is a real command (not a direct call
+	// to applyVaultAuthSource) that goes through the exact same
+	// resolveVaultAuthSource path a production second process would.
+	// runCmdCtx resets viper + the vaultAuthOnce memoization before running,
+	// matching what a fresh `openshellctl` process actually gets.
+	laterReader := &capturingVaultReader{data: map[string]any{}}
 	laterCtx := withVaultDeps(context.Background(), vaultDeps{Reader: laterReader})
-	if err := applyVaultAuthSource(laterCtx); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if out, err := runCmdCtx(t, laterCtx, "gateway", "logout"); err != nil {
+		t.Fatalf("gateway logout: %v\noutput:\n%s", err, out)
 	}
 	if laterReader.calls != 1 {
 		t.Fatalf("reader was called %d times, want 1", laterReader.calls)

@@ -237,6 +237,22 @@ the same way it always would with no persisted config at all — persistence
 only saves you from retyping *where* the secret lives, not *whether* you're
 still logged in to Vault.
 
+`gateway add` registering a brand-new gateway never falls back to another,
+already-active gateway's persisted config — a plain `gateway add` with no
+`--vault-kv-*` flags of its own stays a complete no-op w.r.t. Vault, exactly
+as if no gateway anywhere had a persisted config. `gateway remove` also
+deletes the persisted file, so re-adding the same name later doesn't
+silently inherit a previous registration's Vault coordinates.
+
+To disable the Vault source entirely for a single invocation — ignoring both
+`--vault-kv-mount`/`--vault-kv-path`/`--vault-field-prefix` and any persisted
+`vault_auth.json` — pass `--no-vault` (or set `OPENSHELL_NO_VAULT=1`),
+instead of deleting the persisted file by hand:
+
+```bash
+openshellctl --no-vault --token "$MY_TOKEN" sandbox list
+```
+
 ### How auth retry works
 
 Every API call goes through an automatic retry: if the gateway returns `Unauthenticated`, openshellctl invalidates its cached token and retries once with a fresh one. For service accounts this means a full re-mint; for personal logins it means a refresh-token exchange. This is why `--no-keep` cleanup works reliably even after hour-long sessions.
@@ -293,6 +309,7 @@ These flags apply to every command:
 | `--vault-kv-mount` | `OPENSHELL_VAULT_KV_MOUNT` | Vault KV v2 mount holding auth config (must be set together with `--vault-kv-path`) |
 | `--vault-kv-path` | `OPENSHELL_VAULT_KV_PATH` | Path within `--vault-kv-mount` holding auth config |
 | `--vault-field-prefix` | `OPENSHELL_VAULT_FIELD_PREFIX` | Prefix prepended to each field name read from the Vault secret |
+| `--no-vault` | `OPENSHELL_NO_VAULT` | Disable the Vault auth source entirely for this invocation (flags, env, and persisted config) |
 
 ## Commands
 
