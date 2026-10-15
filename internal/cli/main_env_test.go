@@ -2,6 +2,8 @@ package cli
 
 import (
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -12,26 +14,15 @@ import (
 func envNamesToScrub(environ []string, prefixes []string) []string {
 	var names []string
 	for _, kv := range environ {
-		key := kv
-		for i, c := range kv {
-			if c == '=' {
-				key = kv[:i]
-				break
-			}
-		}
+		key, _, _ := strings.Cut(kv, "=")
 		for _, p := range prefixes {
-			if len(key) >= len(p) && key[:len(p)] == p {
+			if strings.HasPrefix(key, p) {
 				names = append(names, key)
 				break
 			}
 		}
 	}
-	// Insertion sort keeps this dependency-free; the lists involved are tiny.
-	for i := 1; i < len(names); i++ {
-		for j := i; j > 0 && names[j-1] > names[j]; j-- {
-			names[j-1], names[j] = names[j], names[j-1]
-		}
-	}
+	sort.Strings(names)
 	return names
 }
 
