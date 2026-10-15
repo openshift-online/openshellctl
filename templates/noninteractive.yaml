@@ -5,10 +5,14 @@ metadata:
 spec:
   image: quay.io/redhat-services-prod/rosa-tenant/rosa-agent/rosa-agent:latest
   command:
-    - claude
-    - --dangerously-skip-permissions
-    - --print
-    - ${PROMPT}
+    - /bin/sh
+    - -c
+    - |
+      echo "DEPRECATED: templates/noninteractive.yaml has moved out of openshellctl." >&2
+      echo "Use openshift-online/rosa-agent's sandbox/templates/noninteractive.yaml instead:" >&2
+      echo "  https://github.com/openshift-online/rosa-agent/blob/main/sandbox/templates/noninteractive.yaml" >&2
+      echo "(ignored prompt: ${PROMPT})" >&2
+      exit 1
   providerRefs:
     - name: rosa-general-vertex
     - name: rosa-agent-github
