@@ -13,15 +13,6 @@ spec:
       echo "  https://github.com/openshift-online/rosa-agent/blob/main/sandbox/templates/interactive.yaml" >&2
       echo "(ignored prompt: ${PROMPT})" >&2
       exit 1
-  providerRefs:
-    - name: rosa-general-vertex
-    - name: rosa-agent-github
-    - name: rosa-agent-jira
-  env:
-    ANTHROPIC_BASE_URL: https://inference.local
-    ANTHROPIC_API_KEY: unused
-    JIRA_EMAIL: sd-sre-platform+rosa-agent@redhat.com
-    JIRA_BASE_URL: https://redhat.atlassian.net
   sessionOpts:
     noKeep: true
   tty: true
