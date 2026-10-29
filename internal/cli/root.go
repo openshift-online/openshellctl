@@ -153,17 +153,20 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 		text := selfupdate.NoticeText(current.Tag, cache.LatestTag, pf.noColor)
 		if text != "" {
 			ch := make(chan noticeResult, 1)
-			ctx := cmd.Context()
-			cmd.SetContext(context.WithValue(ctx, noticeChKey{}, ch))
+			root := cmd.Root()
+			root.SetContext(context.WithValue(root.Context(), noticeChKey{}, ch))
 			ch <- noticeResult{text: text, latestTag: cache.LatestTag}
 		}
 		return
 	}
 
 	// Cache is stale — start background goroutine to fetch from the API.
+	// Store the channel on the ROOT command's context because collectNotice
+	// reads root.Context(); cmd here is the subcommand, not the root.
 	ch := make(chan noticeResult, 1)
-	ctx := cmd.Context()
-	cmd.SetContext(context.WithValue(ctx, noticeChKey{}, ch))
+	root := cmd.Root()
+	ctx := root.Context()
+	root.SetContext(context.WithValue(ctx, noticeChKey{}, ch))
 
 	noticeBudget := 2 * time.Second
 	go func() {
