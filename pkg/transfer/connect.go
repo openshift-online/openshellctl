@@ -416,35 +416,22 @@ func filterDetach(data []byte, pending *bool) (forward []byte, detach bool) {
 }
 
 // pumpDetach copies src→dst, returning true if the Ctrl-P Ctrl-Q chord was seen
-// (the chord bytes are not forwarded). Byte-at-a-time is acceptable for
-// interactive input volumes.
+// (the chord bytes are not forwarded). Reads in 32 KiB chunks to avoid
+// per-byte write overhead on large pastes.
 func pumpDetach(src io.Reader, dst io.Writer) bool {
-	buf := make([]byte, 1)
-	sawCtrlP := false
+	buf := make([]byte, 32*1024)
+	var pending bool
 	for {
 		n, err := src.Read(buf)
 		if n > 0 {
-			b := buf[0]
-			switch {
-			case sawCtrlP && b == ctrlQ:
+			fwd, detach := filterDetach(buf[:n], &pending)
+			if len(fwd) > 0 {
+				if _, werr := dst.Write(fwd); werr != nil {
+					return false
+				}
+			}
+			if detach {
 				return true
-			case sawCtrlP && b == ctrlP:
-				// consecutive Ctrl-P: forward one, keep armed.
-				if _, werr := dst.Write([]byte{ctrlP}); werr != nil {
-					return false
-				}
-			case sawCtrlP:
-				// Ctrl-P not followed by Ctrl-Q: forward the held Ctrl-P then this byte.
-				if _, werr := dst.Write([]byte{ctrlP, b}); werr != nil {
-					return false
-				}
-				sawCtrlP = false
-			case b == ctrlP:
-				sawCtrlP = true
-			default:
-				if _, werr := dst.Write([]byte{b}); werr != nil {
-					return false
-				}
 			}
 		}
 		if err != nil {

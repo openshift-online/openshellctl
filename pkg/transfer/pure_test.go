@@ -3,6 +3,7 @@ package transfer
 import (
 	"archive/tar"
 	"bytes"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -517,6 +518,59 @@ func TestPumpDetach(t *testing.T) {
 			t.Errorf("forwarded = %v, want single ctrl-p", dst.Bytes())
 		}
 	})
+}
+
+// countingWriter records how many Write calls it receives.
+type countingWriter struct {
+	buf    bytes.Buffer
+	writes int
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	w.writes++
+	return w.buf.Write(p)
+}
+
+func TestPumpDetach_CoalescesWrites(t *testing.T) {
+	const size = 32 * 1024
+	data := bytes.Repeat([]byte{'a'}, size)
+	var wc countingWriter
+	// bytes.Reader returns all available bytes in one Read call, so the
+	// refactored pumpDetach should forward them in a single Write.
+	pumpDetach(bytes.NewReader(data), &wc)
+	if wc.writes >= size {
+		t.Errorf("pumpDetach made %d Write calls for %d bytes; want far fewer (32 KiB buffer expected)", wc.writes, size)
+	}
+}
+
+// chunkedReader delivers data in exact slices, one per Read call.
+type chunkedReader struct {
+	chunks [][]byte
+	idx    int
+}
+
+func (r *chunkedReader) Read(p []byte) (int, error) {
+	if r.idx >= len(r.chunks) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.chunks[r.idx])
+	r.idx++
+	return n, nil
+}
+
+func TestPumpDetach_ChordSplitAcrossReads(t *testing.T) {
+	// First chunk ends with Ctrl-P; second chunk starts with Ctrl-Q.
+	src := &chunkedReader{chunks: [][]byte{
+		{'d', 'a', 't', 'a', ctrlP},
+		{ctrlQ, 'x'},
+	}}
+	var dst bytes.Buffer
+	if !pumpDetach(src, &dst) {
+		t.Error("expected detach when chord split across two Read calls")
+	}
+	if !bytes.Equal(dst.Bytes(), []byte("data")) {
+		t.Errorf("forwarded = %v, want %q", dst.Bytes(), "data")
+	}
 }
 
 func TestWriteUploadArchive_FileDirSymlink(t *testing.T) {
