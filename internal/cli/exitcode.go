@@ -10,6 +10,7 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
+	"github.com/openshift-online/openshellctl/pkg/transfer"
 	"github.com/openshift-online/openshellctl/pkg/vaultconfig"
 )
 
@@ -159,6 +160,14 @@ func exitCodeFor(err error) int {
 		errors.As(err, &lifecycle) || errors.As(err, &lifecycleTimeout) ||
 		errors.As(err, &lifecycleEnded) || errors.As(err, &deleteTimeout) {
 		return ExitProvision
+	}
+
+	// SSH channel closed without exit-status (transport loss mid-attach) → 1.
+	// Listed explicitly so the exhaustive-by-construction test catches future
+	// changes to this mapping; callers use errors.Is(err, ErrNoExitStatus).
+	var attachClosed *transfer.AttachClosedError
+	if errors.As(err, &attachClosed) {
+		return ExitError
 	}
 
 	// -f URL manifest fetch failures (non-2xx, size cap, redirect downgrade,

@@ -10,6 +10,7 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 	"github.com/openshift-online/openshellctl/pkg/paramtemplate"
 	"github.com/openshift-online/openshellctl/pkg/sandbox"
+	"github.com/openshift-online/openshellctl/pkg/transfer"
 	"github.com/openshift-online/openshellctl/pkg/vaultconfig"
 )
 
@@ -93,6 +94,10 @@ func TestExitCodeFor(t *testing.T) {
 		{"vault forbidden → forbidden", &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}, ExitForbidden},
 		{"vault secret not found → notfound", &vaultconfig.ErrSecretNotFound{Mount: "osd-sre", Path: "rosa-agent"}, ExitNotFound},
 		{"vault field not string → usage", &vaultconfig.ErrFieldNotString{Field: "oidc-client-id"}, ExitUsage},
+
+		// SSH channel closed without exit-status (transport loss during attach) → 1.
+		{"attach closed error (no tunnel) → error", &transfer.AttachClosedError{}, ExitError},
+		{"attach closed error (tunnel err) → error", &transfer.AttachClosedError{Tunnel: errors.New("io: EOF")}, ExitError},
 
 		// -f URL manifest fetch typed errors (ROSAENG-74491) — exercised
 		// indirectly from manifest_url_test.go/manifest_url_cli_test.go too,
