@@ -33,8 +33,9 @@ openshellctl update --check            # report the available version without in
 ```
 
 After any command finishes, openshellctl prints a one-line notice to stderr when a newer
-release is available. The check runs in the background and never delays the command. To
-disable it: pass `--no-update-check` or set `OPENSHELL_NO_UPDATE_CHECK=1`.
+release is available. The check runs in the background and adds at most 250 ms to the
+command's exit time. To disable it: pass `--no-update-check` or set
+`OPENSHELL_NO_UPDATE_CHECK=1`.
 
 ## Quick start
 
