@@ -93,6 +93,7 @@ func NewRootCommand() *cobra.Command {
 		newGatewayCommand(),
 		newDoctorCommand(),
 		newProviderCommand(),
+		newUpdateCommand(),
 	)
 
 	return root
