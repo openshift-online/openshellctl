@@ -10,10 +10,17 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// srvHosts extracts the hostname from srv.URL for use in testAllowedHosts.
+func srvHosts(srv *httptest.Server) []string {
+	u, _ := url.Parse(srv.URL)
+	return []string{u.Hostname()}
+}
 
 // fakeFetcher implements Fetcher for tests.
 type fakeFetcher struct {
@@ -37,7 +44,7 @@ func (f *fakeFetcher) GetRelease(_ context.Context, tag string) (Release, error)
 	if rel, ok := f.byTag[tag]; ok {
 		return rel, nil
 	}
-	return Release{}, &ErrNoRelease{}
+	return Release{}, &ErrTagNotFound{Tag: tag}
 }
 
 // testReleaseServer builds a tiny valid release archive and checksum file,
@@ -105,14 +112,15 @@ func TestRun_HappyPath(t *testing.T) {
 	_ = os.WriteFile(exePath, []byte("old binary"), 0o755)
 
 	opts := Options{
-		GOOS:       "linux",
-		GOARCH:     "amd64",
-		Current:    ParseCurrent("v0.1.5"),
-		Fetcher:    &fakeFetcher{releases: []Release{rel}},
-		WorkDir:    dir,
-		ExePath:    exePath,
-		MaxBytes:   256 << 20,
-		HTTPClient: srv.Client(),
+		GOOS:             "linux",
+		GOARCH:           "amd64",
+		Current:          ParseCurrent("v0.1.5"),
+		Fetcher:          &fakeFetcher{releases: []Release{rel}},
+		WorkDir:          dir,
+		ExePath:          exePath,
+		MaxBytes:         256 << 20,
+		HTTPClient:       srv.Client(),
+		testAllowedHosts: srvHosts(srv),
 	}
 	result, err := Run(context.Background(), opts)
 	if err != nil {
@@ -170,14 +178,15 @@ func TestRun_SameVersionNoOp(t *testing.T) {
 	_ = os.WriteFile(exePath, []byte("same binary"), 0o755)
 
 	opts := Options{
-		GOOS:       "linux",
-		GOARCH:     "amd64",
-		Current:    ParseCurrent("v0.1.5"),
-		Fetcher:    &fakeFetcher{releases: []Release{rel}},
-		WorkDir:    dir,
-		ExePath:    exePath,
-		MaxBytes:   256 << 20,
-		HTTPClient: srv.Client(),
+		GOOS:             "linux",
+		GOARCH:           "amd64",
+		Current:          ParseCurrent("v0.1.5"),
+		Fetcher:          &fakeFetcher{releases: []Release{rel}},
+		WorkDir:          dir,
+		ExePath:          exePath,
+		MaxBytes:         256 << 20,
+		HTTPClient:       srv.Client(),
+		testAllowedHosts: srvHosts(srv),
 	}
 	result, err := Run(context.Background(), opts)
 	if err != nil {
@@ -200,15 +209,16 @@ func TestRun_DowngradeViaVersionFlag(t *testing.T) {
 	_ = os.WriteFile(exePath, []byte("newer binary"), 0o755)
 
 	opts := Options{
-		GOOS:       "linux",
-		GOARCH:     "amd64",
-		Current:    ParseCurrent("v0.1.5"),
-		Fetcher:    &fakeFetcher{byTag: map[string]Release{"v0.1.4": rel}},
-		WorkDir:    dir,
-		ExePath:    exePath,
-		MaxBytes:   256 << 20,
-		TargetTag:  "v0.1.4",
-		HTTPClient: srv.Client(),
+		GOOS:             "linux",
+		GOARCH:           "amd64",
+		Current:          ParseCurrent("v0.1.5"),
+		Fetcher:          &fakeFetcher{byTag: map[string]Release{"v0.1.4": rel}},
+		WorkDir:          dir,
+		ExePath:          exePath,
+		MaxBytes:         256 << 20,
+		TargetTag:        "v0.1.4",
+		HTTPClient:       srv.Client(),
+		testAllowedHosts: srvHosts(srv),
 	}
 	result, err := Run(context.Background(), opts)
 	if err != nil {
@@ -216,6 +226,39 @@ func TestRun_DowngradeViaVersionFlag(t *testing.T) {
 	}
 	if !result.Updated {
 		t.Error("Updated should be true for downgrade via --version")
+	}
+}
+
+func TestRun_DefaultResolutionNeverDowngrades(t *testing.T) {
+	// Default resolution (no --version) should return AlreadyAtTarget when the
+	// best available release is older than the running binary (plan §2.5).
+	rel, srv := testReleaseServer(t, "v0.1.4", "linux", "amd64")
+	defer srv.Close()
+
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "openshellctl")
+	_ = os.WriteFile(exePath, []byte("newer binary"), 0o755)
+
+	opts := Options{
+		GOOS:     "linux",
+		GOARCH:   "amd64",
+		Current:  ParseCurrent("v0.1.5"),
+		Fetcher:  &fakeFetcher{releases: []Release{rel}},
+		WorkDir:  dir,
+		ExePath:  exePath,
+		MaxBytes: 256 << 20,
+		// TargetTag intentionally empty — default resolution path.
+		HTTPClient: srv.Client(),
+	}
+	result, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Updated {
+		t.Error("Updated should be false: default resolution must not downgrade")
+	}
+	if !result.AlreadyAtTarget {
+		t.Errorf("AlreadyAtTarget should be true when best release < current; got Downgrade=%v Updated=%v", result.Downgrade, result.Updated)
 	}
 }
 
@@ -247,15 +290,16 @@ func TestRun_UnknownCurrentWithTargetTag(t *testing.T) {
 	_ = os.WriteFile(exePath, []byte("dev binary"), 0o755)
 
 	opts := Options{
-		GOOS:       "linux",
-		GOARCH:     "amd64",
-		Current:    ParseCurrent("dev"),
-		Fetcher:    &fakeFetcher{byTag: map[string]Release{"v0.1.5": rel}},
-		WorkDir:    dir,
-		ExePath:    exePath,
-		MaxBytes:   256 << 20,
-		TargetTag:  "v0.1.5",
-		HTTPClient: srv.Client(),
+		GOOS:             "linux",
+		GOARCH:           "amd64",
+		Current:          ParseCurrent("dev"),
+		Fetcher:          &fakeFetcher{byTag: map[string]Release{"v0.1.5": rel}},
+		WorkDir:          dir,
+		ExePath:          exePath,
+		MaxBytes:         256 << 20,
+		TargetTag:        "v0.1.5",
+		HTTPClient:       srv.Client(),
+		testAllowedHosts: srvHosts(srv),
 	}
 	result, err := Run(context.Background(), opts)
 	if err != nil {
@@ -304,7 +348,7 @@ func TestRun_ChecksumEntryMissing(t *testing.T) {
 	})
 	// Checksum file intentionally has no entry for the archive.
 	mux.HandleFunc("/"+checksumName, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("aabbccdd  other_file.tar.gz\n"))
+		_, _ = w.Write([]byte("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  other_file.tar.gz\n"))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -322,14 +366,15 @@ func TestRun_ChecksumEntryMissing(t *testing.T) {
 	_ = os.WriteFile(exePath, []byte("old binary"), 0o755)
 
 	opts := Options{
-		GOOS:       "linux",
-		GOARCH:     "amd64",
-		Current:    ParseCurrent("v0.1.5"),
-		Fetcher:    &fakeFetcher{releases: []Release{rel}},
-		WorkDir:    dir,
-		ExePath:    exePath,
-		MaxBytes:   256 << 20,
-		HTTPClient: srv.Client(),
+		GOOS:             "linux",
+		GOARCH:           "amd64",
+		Current:          ParseCurrent("v0.1.5"),
+		Fetcher:          &fakeFetcher{releases: []Release{rel}},
+		WorkDir:          dir,
+		ExePath:          exePath,
+		MaxBytes:         256 << 20,
+		HTTPClient:       srv.Client(),
+		testAllowedHosts: srvHosts(srv),
 	}
 	_, err := Run(context.Background(), opts)
 	var missing *ErrChecksumEntryMissing
@@ -366,14 +411,15 @@ func TestRun_TempFileCleanup(t *testing.T) {
 	_ = os.WriteFile(exePath, []byte("old binary"), 0o755)
 
 	opts := Options{
-		GOOS:       "linux",
-		GOARCH:     "amd64",
-		Current:    ParseCurrent("v0.1.5"),
-		Fetcher:    &fakeFetcher{releases: []Release{rel}},
-		WorkDir:    dir,
-		ExePath:    exePath,
-		MaxBytes:   256 << 20,
-		HTTPClient: srv.Client(),
+		GOOS:             "linux",
+		GOARCH:           "amd64",
+		Current:          ParseCurrent("v0.1.5"),
+		Fetcher:          &fakeFetcher{releases: []Release{rel}},
+		WorkDir:          dir,
+		ExePath:          exePath,
+		MaxBytes:         256 << 20,
+		HTTPClient:       srv.Client(),
+		testAllowedHosts: srvHosts(srv),
 	}
 	_, err := Run(context.Background(), opts)
 	if err != nil {

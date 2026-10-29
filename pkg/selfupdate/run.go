@@ -36,6 +36,11 @@ type Options struct {
 	// immediately. Set from internal/version.InstallMethod.
 	InstallMethod string
 
+	// testAllowedHosts extends the download URL allow-list beyond the default
+	// github.com and objects.githubusercontent.com. Only for use by in-package
+	// tests (e.g. to allow httptest.Server URLs); leave nil in production.
+	testAllowedHosts []string
+
 	// Fetcher is used to resolve releases.
 	Fetcher Fetcher
 
@@ -130,7 +135,14 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 			return res, nil
 		}
 		if cmp > 0 {
-			res.Downgrade = true
+			if opts.TargetTag != "" {
+				// Explicit --version target: downgrade is intentional.
+				res.Downgrade = true
+			} else {
+				// Default resolution never downgrades (plan §2.5).
+				res.AlreadyAtTarget = true
+				return res, nil
+			}
 		}
 	}
 
@@ -160,10 +172,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	// 4. Download checksum file (no digest gate — it IS the gate).
-	if err := validateDownloadURL(checksumAsset.BrowserDownloadURL); err != nil {
+	if err := validateDownloadURL(checksumAsset.BrowserDownloadURL, opts.testAllowedHosts); err != nil {
 		return Result{}, err
 	}
-	if err := validateDownloadURL(archiveAsset.BrowserDownloadURL); err != nil {
+	if err := validateDownloadURL(archiveAsset.BrowserDownloadURL, opts.testAllowedHosts); err != nil {
 		return Result{}, err
 	}
 	csPath, err := fetchToTemp(ctx, client, checksumAsset.BrowserDownloadURL, workDir, maxChecksumFileSize)
@@ -220,22 +232,23 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	return res, nil
 }
 
-// validateDownloadURL returns an error if rawURL is not an https URL whose
-// host is github.com, objects.githubusercontent.com, or localhost (the last
-// is allowed so httptest.Server URLs work in tests).
-func validateDownloadURL(rawURL string) error {
+// validateDownloadURL returns an error if rawURL does not have a host in the
+// production allow-list (github.com, objects.githubusercontent.com) or in the
+// caller-supplied extraHosts list (used by in-package tests for httptest URLs).
+func validateDownloadURL(rawURL string, extraHosts []string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid download URL: %w", err)
 	}
 	host := strings.ToLower(u.Hostname())
-	switch {
-	case host == "github.com",
-		host == "objects.githubusercontent.com",
-		host == "localhost",
-		host == "127.0.0.1",
-		host == "::1":
+	switch host {
+	case "github.com", "objects.githubusercontent.com":
 		return nil
+	}
+	for _, h := range extraHosts {
+		if host == strings.ToLower(h) {
+			return nil
+		}
 	}
 	return fmt.Errorf("download URL has unexpected host %q: must be github.com or objects.githubusercontent.com", host)
 }
