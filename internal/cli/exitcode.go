@@ -83,6 +83,17 @@ func exitCodeFor(err error) int {
 		return checksFailed.ExitCode()
 	}
 
+	// SSH channel closed without exit-status (transport loss mid-attach) → 1.
+	// Checked before all gateway error buckets: AttachClosedError.Unwrap()
+	// exposes the tunnel error, and if that tunnel error is itself a gateway
+	// type (e.g. UnauthenticatedError on a future SSHTunnel that classifies
+	// errors), errors.As would otherwise reach through and misclassify
+	// transport loss as an auth or permission failure.
+	var attachClosed *transfer.AttachClosedError
+	if errors.As(err, &attachClosed) {
+		return ExitError
+	}
+
 	// Permission denied → 7 (authenticated, but not authorized). Checked
 	// before the generic auth bucket below since it is NOT an auth failure.
 	var gwPerm *gateway.PermissionDeniedError
@@ -160,14 +171,6 @@ func exitCodeFor(err error) int {
 		errors.As(err, &lifecycle) || errors.As(err, &lifecycleTimeout) ||
 		errors.As(err, &lifecycleEnded) || errors.As(err, &deleteTimeout) {
 		return ExitProvision
-	}
-
-	// SSH channel closed without exit-status (transport loss mid-attach) → 1.
-	// Listed explicitly so the exhaustive-by-construction test catches future
-	// changes to this mapping; callers use errors.Is(err, ErrNoExitStatus).
-	var attachClosed *transfer.AttachClosedError
-	if errors.As(err, &attachClosed) {
-		return ExitError
 	}
 
 	// -f URL manifest fetch failures (non-2xx, size cap, redirect downgrade,

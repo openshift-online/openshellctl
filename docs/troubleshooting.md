@@ -315,9 +315,10 @@ close sends an `exit-status` request before tearing down the channel. When
 openshellctl receives a channel close with no prior `exit-status`, the
 transport underneath the SSH connection was lost — the main process may still
 be running in the sandbox. The `tunnel:` part names the first error the
-gateway tunnel reported on that connection (typically `io: EOF` or
-`connection reset by peer`); its absence means the tunnel closed cleanly from
-the gateway's side without reporting a reason.
+gateway tunnel reported on that connection (typically `EOF` or
+`connection reset by peer`); its absence means the transport closed without
+the tunnel layer reporting an error (e.g. the SSH server half-closed the
+connection cleanly, or openshellctl detected the loss above the tunnel).
 
 **What to do**:
 

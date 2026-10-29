@@ -96,8 +96,11 @@ func TestExitCodeFor(t *testing.T) {
 		{"vault field not string → usage", &vaultconfig.ErrFieldNotString{Field: "oidc-client-id"}, ExitUsage},
 
 		// SSH channel closed without exit-status (transport loss during attach) → 1.
+		// AttachClosedError wraps its tunnel error, so checked before all
+		// gateway error buckets to prevent misclassification via Unwrap.
 		{"attach closed error (no tunnel) → error", &transfer.AttachClosedError{}, ExitError},
-		{"attach closed error (tunnel err) → error", &transfer.AttachClosedError{Tunnel: errors.New("io: EOF")}, ExitError},
+		{"attach closed error (tunnel err) → error", &transfer.AttachClosedError{Tunnel: errors.New("EOF")}, ExitError},
+		{"attach closed error (tunnel is gateway unauth) → still error, not auth", &transfer.AttachClosedError{Tunnel: &gateway.UnauthenticatedError{Message: "token expired"}}, ExitError},
 
 		// -f URL manifest fetch typed errors (ROSAENG-74491) — exercised
 		// indirectly from manifest_url_test.go/manifest_url_cli_test.go too,
