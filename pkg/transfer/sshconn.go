@@ -48,19 +48,18 @@ func (c *client) dialSSH(ctx context.Context, workspace, sandbox string) (*ssh.C
 // ClientConfig, and RPC context cancellation tears the tunnel down).
 type tunnelConn struct {
 	io.ReadWriteCloser
-	once sync.Once  // ensures err is written at most once
-	mu   sync.Mutex // guards err on both the write inside once.Do and the read in firstErr
-	err  error
+	mu  sync.Mutex // guards err; first non-nil write wins
+	err error
 }
 
 func (tc *tunnelConn) Read(p []byte) (int, error) {
 	n, err := tc.ReadWriteCloser.Read(p)
 	if err != nil {
-		tc.once.Do(func() {
-			tc.mu.Lock()
+		tc.mu.Lock()
+		if tc.err == nil {
 			tc.err = err
-			tc.mu.Unlock()
-		})
+		}
+		tc.mu.Unlock()
 	}
 	return n, err
 }
@@ -68,11 +67,11 @@ func (tc *tunnelConn) Read(p []byte) (int, error) {
 func (tc *tunnelConn) Write(p []byte) (int, error) {
 	n, err := tc.ReadWriteCloser.Write(p)
 	if err != nil {
-		tc.once.Do(func() {
-			tc.mu.Lock()
+		tc.mu.Lock()
+		if tc.err == nil {
 			tc.err = err
-			tc.mu.Unlock()
-		})
+		}
+		tc.mu.Unlock()
 	}
 	return n, err
 }
@@ -84,6 +83,7 @@ func (tc *tunnelConn) firstErr() error {
 	return tc.err
 }
 
+// rwcConn wraps an io.ReadWriteCloser as a net.Conn; used by tests.
 func rwcConn(rwc io.ReadWriteCloser) net.Conn { return &tunnelConn{ReadWriteCloser: rwc} }
 
 func (*tunnelConn) LocalAddr() net.Addr                { return tunnelAddr{} }

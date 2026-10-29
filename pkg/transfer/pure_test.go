@@ -536,9 +536,9 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 }
 
 func TestPumpDetach_CoalescesWrites(t *testing.T) {
-	// 12,070 bytes: larger than 1 byte but fits in a single 32 KiB Read.
-	// bytes.Reader returns all bytes in one Read call, so pumpDetach should
-	// produce at most 2 Write calls (one forward pass + EOF handling).
+	// 12,070 non-control bytes fit in a single stdinChunkSize Read.
+	// bytes.Reader returns (n, nil) on the data read then (0, io.EOF) on the
+	// next read, and the EOF read produces no Write — so exactly 1 Write.
 	const size = 12070
 	data := bytes.Repeat([]byte{'a'}, size)
 	var wc countingWriter
@@ -546,8 +546,8 @@ func TestPumpDetach_CoalescesWrites(t *testing.T) {
 	if wc.total != size {
 		t.Errorf("pumpDetach forwarded %d bytes, want %d", wc.total, size)
 	}
-	if wc.writes > 2 {
-		t.Errorf("pumpDetach made %d Write calls for %d bytes; want ≤ 2 (32 KiB buffer expected)", wc.writes, size)
+	if wc.writes != 1 {
+		t.Errorf("pumpDetach made %d Write calls for %d bytes; want 1 (single 32 KiB read, no write on EOF read)", wc.writes, size)
 	}
 }
 

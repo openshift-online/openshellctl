@@ -47,6 +47,12 @@ const (
 	ctrlQ = 0x11
 )
 
+// stdinChunkSize bounds one local read from stdin. The SSH layer turns every
+// Write into one CHANNEL_DATA packet, so this controls the maximum packet
+// size and the gateway gRPC frame size. 32 KiB matches OpenSSH's send_data
+// buffer and is cited in the README and in TestPumpDetach_CoalescesWrites.
+const stdinChunkSize = 32 * 1024
+
 // SSH keepalive constants matching the Rust CLI's ServerAliveInterval /
 // ServerAliveCountMax (emitted in ssh-config).
 const (
@@ -456,7 +462,7 @@ func filterDetach(data []byte, pending *bool) (forward []byte, detach bool) {
 // behaviour of OpenSSH's ssh(1) and avoids queue pressure in the supervisor's
 // 64-slot mpsc input channel on large pastes.
 func pumpDetach(src io.Reader, dst io.Writer) bool {
-	buf := make([]byte, 32*1024)
+	buf := make([]byte, stdinChunkSize)
 	var pending bool
 	for {
 		n, err := src.Read(buf)
