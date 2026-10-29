@@ -64,7 +64,7 @@ func TestGitHubFetcher_GetRelease(t *testing.T) {
 	}
 }
 
-func TestGitHubFetcher_404ReturnsErrNoRelease(t *testing.T) {
+func TestGitHubFetcher_404ReturnsErrTagNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 	}))
@@ -72,9 +72,12 @@ func TestGitHubFetcher_404ReturnsErrNoRelease(t *testing.T) {
 
 	f := newTestFetcher(srv)
 	_, err := f.GetRelease(context.Background(), "v9.9.9")
-	var noRel *ErrNoRelease
-	if !errors.As(err, &noRel) {
-		t.Errorf("GetRelease 404 error = %T(%v), want *ErrNoRelease", err, err)
+	var notFound *ErrTagNotFound
+	if !errors.As(err, &notFound) {
+		t.Errorf("GetRelease 404 error = %T(%v), want *ErrTagNotFound", err, err)
+	}
+	if notFound != nil && notFound.Tag != "v9.9.9" {
+		t.Errorf("ErrTagNotFound.Tag = %q, want v9.9.9", notFound.Tag)
 	}
 }
 

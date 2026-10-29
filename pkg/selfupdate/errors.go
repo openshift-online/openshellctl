@@ -14,6 +14,15 @@ func (e *ErrNoRelease) Error() string {
 	return "no stable release published; use --prerelease or --version to select a pre-release"
 }
 
+// ErrTagNotFound is returned by GetRelease when the requested tag does not
+// exist (HTTP 404). Distinct from ErrNoRelease so callers can provide a
+// targeted error message (e.g. "release v1.2.3 not found").
+type ErrTagNotFound struct{ Tag string }
+
+func (e *ErrTagNotFound) Error() string {
+	return fmt.Sprintf("release %s not found", e.Tag)
+}
+
 // ErrAssetMissing is returned when a required asset is not present in the release.
 type ErrAssetMissing struct{ Name string }
 

@@ -3,6 +3,7 @@ package selfupdate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -54,12 +55,16 @@ func (f *GitHubFetcher) ListReleases(ctx context.Context) ([]Release, error) {
 	return out, nil
 }
 
-// GetRelease fetches the release for the given tag. Returns ErrNoRelease on
-// HTTP 404.
+// GetRelease fetches the release for the given tag. Returns ErrTagNotFound on
+// HTTP 404 (the tag does not exist).
 func (f *GitHubFetcher) GetRelease(ctx context.Context, tag string) (Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", f.baseURL(), f.Owner, f.Repo, tag)
 	var out Release
 	if err := f.get(ctx, url, &out); err != nil {
+		var noRel *ErrNoRelease
+		if errors.As(err, &noRel) {
+			return Release{}, &ErrTagNotFound{Tag: tag}
+		}
 		return Release{}, err
 	}
 	return out, nil
