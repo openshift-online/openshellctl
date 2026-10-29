@@ -398,11 +398,11 @@ func TestTrimPrefixSlash(t *testing.T) {
 
 func TestFilterDetach(t *testing.T) {
 	cases := []struct {
-		name    string
-		pending bool // initial pending state
-		data    []byte
-		want    []byte
-		detach  bool
+		name        string
+		pending     bool // initial pending state
+		data        []byte
+		want        []byte
+		detach      bool
 		wantPending bool // expected pending state after call
 	}{
 		{
@@ -419,7 +419,7 @@ func TestFilterDetach(t *testing.T) {
 			wantPending: false,
 		},
 		{
-			name:        "prefix before chord not forwarded",
+			name:        "bytes before chord forwarded, chord bytes dropped",
 			data:        []byte{'a', ctrlP, ctrlQ},
 			want:        []byte{'a'},
 			detach:      true,
@@ -522,26 +522,32 @@ func TestPumpDetach(t *testing.T) {
 	})
 }
 
-// countingWriter records how many Write calls it receives.
+// countingWriter records how many Write calls it receives and the total bytes.
 type countingWriter struct {
 	buf    bytes.Buffer
 	writes int
+	total  int
 }
 
 func (w *countingWriter) Write(p []byte) (int, error) {
 	w.writes++
+	w.total += len(p)
 	return w.buf.Write(p)
 }
 
 func TestPumpDetach_CoalescesWrites(t *testing.T) {
-	const size = 32 * 1024
+	// 12,070 bytes: larger than 1 byte but fits in a single 32 KiB Read.
+	// bytes.Reader returns all bytes in one Read call, so pumpDetach should
+	// produce at most 2 Write calls (one forward pass + EOF handling).
+	const size = 12070
 	data := bytes.Repeat([]byte{'a'}, size)
 	var wc countingWriter
-	// bytes.Reader returns all available bytes in one Read call, so the
-	// refactored pumpDetach should forward them in a single Write.
 	pumpDetach(bytes.NewReader(data), &wc)
-	if wc.writes >= size {
-		t.Errorf("pumpDetach made %d Write calls for %d bytes; want far fewer (32 KiB buffer expected)", wc.writes, size)
+	if wc.total != size {
+		t.Errorf("pumpDetach forwarded %d bytes, want %d", wc.total, size)
+	}
+	if wc.writes > 2 {
+		t.Errorf("pumpDetach made %d Write calls for %d bytes; want ≤ 2 (32 KiB buffer expected)", wc.writes, size)
 	}
 }
 
@@ -624,6 +630,18 @@ func TestOutDoneResult_ExitSet(t *testing.T) {
 	}
 }
 
+func TestOutDoneResult_ExitSetWinsOverKeepaliveDead(t *testing.T) {
+	// Both exitSet=true AND keepaliveDead closed: a delivered exit-status is
+	// authoritative; the keepalive goroutine may have accumulated failures while
+	// the process was exiting normally. Exit code must win.
+	kd := make(chan struct{})
+	close(kd)
+	code, err := outDoneResult(true, 7, kd, nil)
+	if err != nil || code != 7 {
+		t.Errorf("outDoneResult(exitSet=true, 7, kd=closed, nil) = (%d, %v), want (7, nil)", code, err)
+	}
+}
+
 func TestOutDoneResult_NoExitStatus(t *testing.T) {
 	kd := make(chan struct{}) // keepalive alive
 	_, err := outDoneResult(false, 0, kd, nil)
@@ -640,11 +658,13 @@ type errRWC struct {
 
 func (e *errRWC) Read(_ []byte) (int, error)  { return 0, e.readErr }
 func (e *errRWC) Write(_ []byte) (int, error) { return 0, e.writeErr }
-func (e *errRWC) Close() error               { return nil }
+func (e *errRWC) Close() error                { return nil }
 
-var errRead1 = errors.New("read error 1")
-var errRead2 = errors.New("read error 2")
-var errWrite1 = errors.New("write error 1")
+var (
+	errRead1  = errors.New("read error 1")
+	errRead2  = errors.New("read error 2")
+	errWrite1 = errors.New("write error 1")
+)
 
 func TestTunnelConn_RecordsFirstReadError(t *testing.T) {
 	tc := rwcConn(&errRWC{readErr: errRead1}).(*tunnelConn)
@@ -691,6 +711,14 @@ func TestTunnelConn_ConcurrentSafe(t *testing.T) {
 	err := tc.firstErr()
 	if err != errRead1 && err != errWrite1 {
 		t.Errorf("unexpected firstErr() = %v", err)
+	}
+}
+
+func TestTunnelConn_NilBeforeAnyError(t *testing.T) {
+	// A fresh tunnelConn must return nil from firstErr() before any Read or Write.
+	tc := rwcConn(&errRWC{}).(*tunnelConn)
+	if got := tc.firstErr(); got != nil {
+		t.Errorf("firstErr() before any Read/Write = %v, want nil", got)
 	}
 }
 

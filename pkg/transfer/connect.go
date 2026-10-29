@@ -404,17 +404,20 @@ func (c *client) ConnectMainProcess(ctx context.Context, workspace, sandbox stri
 }
 
 // outDoneResult decides what to return when the main process output stream ends.
-// keepaliveDead is checked first: the keepalive goroutine closes it before
-// calling cli.Close() which causes outDone to fire, so when both are ready the
-// keepalive timeout is the more specific (and earlier) diagnosis.
+// exitSet is checked first: a delivered exit-status is authoritative regardless
+// of keepalive state (the keepalive goroutine may accumulate failures while the
+// process is exiting normally, so checking keepaliveDead first would mask the
+// real exit code). When no exit-status was delivered, keepaliveDead is checked
+// next: the keepalive goroutine closes it before calling cli.Close() which
+// causes outDone, making the keepalive timeout the more specific diagnosis.
 func outDoneResult(exitSet bool, exitCode int, keepaliveDead <-chan struct{}, tunnelErr error) (int, error) {
+	if exitSet {
+		return exitCode, nil
+	}
 	select {
 	case <-keepaliveDead:
 		return 0, fmt.Errorf("ssh keepalive timeout: %d consecutive failures", keepaliveMaxCount)
 	default:
-	}
-	if exitSet {
-		return exitCode, nil
 	}
 	return 0, &AttachClosedError{Tunnel: tunnelErr}
 }
