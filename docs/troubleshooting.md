@@ -295,3 +295,42 @@ credentials/TLS problem that endpoint reformatting *would* have caused now
 surfaces through the **Credentials** check instead of silently using no
 auth at all.
 
+## `ssh channel closed without exit-status; tunnel: …`
+
+**Symptom**: `sandbox create` or `sandbox connect` exits with code 1 and the
+message:
+
+```
+Error: ssh channel closed without exit-status; tunnel: <reason>
+```
+
+or, without a tunnel error:
+
+```
+Error: ssh channel closed without exit-status
+```
+
+**Why**: Per the supervisor contract, every supervisor-initiated SSH channel
+close sends an `exit-status` request before tearing down the channel. When
+openshellctl receives a channel close with no prior `exit-status`, the
+transport underneath the SSH connection was lost — the main process may still
+be running in the sandbox. The `tunnel:` part names the first error the
+gateway tunnel reported on that connection (typically `io: EOF` or
+`connection reset by peer`); its absence means the tunnel closed cleanly from
+the gateway's side without reporting a reason.
+
+**What to do**:
+
+- Check your network connection and gateway reachability.
+- If using `--no-keep`, openshellctl attempts to delete the sandbox
+  automatically (the gateway's ephemeral cleanup hook does not fire on a
+  transport loss). Verify with `sandbox list` that the sandbox is gone; if
+  not, delete it manually with `sandbox delete`.
+- If the problem recurs, run `openshellctl doctor` to check gateway health.
+- If the main process was still running and left data, reconnect with
+  `sandbox connect`.
+
+**Caught by**: `exitCodeFor(*transfer.AttachClosedError)` maps this error to
+exit code 1 (generic error). The `errors.Is(err, transfer.ErrNoExitStatus)`
+sentinel is true for this error type, and `errors.As` unwraps the tunnel error.
+
