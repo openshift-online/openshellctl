@@ -388,6 +388,33 @@ func (c *client) ConnectMainProcess(ctx context.Context, workspace, sandbox stri
 	}
 }
 
+// filterDetach processes one chunk of input data against the Ctrl-P Ctrl-Q
+// detach chord state machine. pending tracks whether a Ctrl-P was seen at the
+// end of the previous chunk. Returns the bytes to forward and detach=true when
+// the full chord is detected. The Ctrl-P byte is never forwarded when followed
+// by Ctrl-Q; consecutive Ctrl-P causes one to be forwarded.
+func filterDetach(data []byte, pending *bool) (forward []byte, detach bool) {
+	out := make([]byte, 0, len(data))
+	for _, b := range data {
+		switch {
+		case *pending && b == ctrlQ:
+			*pending = false
+			return out, true
+		case *pending && b == ctrlP:
+			out = append(out, ctrlP)
+			// *pending stays true
+		case *pending:
+			out = append(out, ctrlP, b)
+			*pending = false
+		case b == ctrlP:
+			*pending = true
+		default:
+			out = append(out, b)
+		}
+	}
+	return out, false
+}
+
 // pumpDetach copies src→dst, returning true if the Ctrl-P Ctrl-Q chord was seen
 // (the chord bytes are not forwarded). Byte-at-a-time is acceptable for
 // interactive input volumes.

@@ -393,6 +393,102 @@ func TestTrimPrefixSlash(t *testing.T) {
 	}
 }
 
+func TestFilterDetach(t *testing.T) {
+	cases := []struct {
+		name    string
+		pending bool // initial pending state
+		data    []byte
+		want    []byte
+		detach  bool
+		wantPending bool // expected pending state after call
+	}{
+		{
+			name:        "plain bytes pass through",
+			data:        []byte("hello"),
+			want:        []byte("hello"),
+			wantPending: false,
+		},
+		{
+			name:        "chord in one chunk",
+			data:        []byte{ctrlP, ctrlQ},
+			want:        []byte{},
+			detach:      true,
+			wantPending: false,
+		},
+		{
+			name:        "prefix before chord not forwarded",
+			data:        []byte{'a', ctrlP, ctrlQ},
+			want:        []byte{'a'},
+			detach:      true,
+			wantPending: false,
+		},
+		{
+			name:        "chord split: first chunk ends with ctrl-p",
+			data:        []byte{'x', ctrlP},
+			want:        []byte{'x'},
+			detach:      false,
+			wantPending: true,
+		},
+		{
+			name:        "chord split: second chunk starts with ctrl-q",
+			pending:     true,
+			data:        []byte{ctrlQ, 'y'},
+			want:        []byte{},
+			detach:      true,
+			wantPending: false,
+		},
+		{
+			name:        "consecutive ctrl-p forwards one and stays armed",
+			data:        []byte{ctrlP, ctrlP},
+			want:        []byte{ctrlP},
+			detach:      false,
+			wantPending: true,
+		},
+		{
+			name:        "ctrl-p then non-chord byte forwards both",
+			pending:     true,
+			data:        []byte{'x'},
+			want:        []byte{ctrlP, 'x'},
+			detach:      false,
+			wantPending: false,
+		},
+		{
+			name:        "trailing ctrl-p held not forwarded",
+			data:        []byte{'a', ctrlP},
+			want:        []byte{'a'},
+			detach:      false,
+			wantPending: true,
+		},
+		{
+			name:        "empty input with pending keeps pending",
+			pending:     true,
+			data:        []byte{},
+			want:        []byte{},
+			detach:      false,
+			wantPending: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pending := c.pending
+			got, detach := filterDetach(c.data, &pending)
+			if detach != c.detach {
+				t.Errorf("detach=%v, want %v", detach, c.detach)
+			}
+			if pending != c.wantPending {
+				t.Errorf("pending=%v, want %v", pending, c.wantPending)
+			}
+			want := c.want
+			if want == nil {
+				want = []byte{}
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("forward=%v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestPumpDetach(t *testing.T) {
 	t.Run("chord detaches without forwarding", func(t *testing.T) {
 		var dst bytes.Buffer
