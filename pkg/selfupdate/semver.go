@@ -29,10 +29,9 @@
 // commands.
 //
 // This file contains semver parsing and comparison logic adapted from
-// golang.org/x/mod/semver (the Go toolchain's own vendor copy). That package
-// is listed in go.mod but was not available in the module cache at
-// implementation time; replace this file with a direct import once the cache
-// is warm.
+// golang.org/x/mod/semver (the Go toolchain's own vendor copy). If
+// golang.org/x/mod is promoted to a direct dependency, this file can be
+// deleted and callers updated to import semver from that package directly.
 package selfupdate
 
 // semverParsed is the parsed form of a "vMAJOR.MINOR.PATCH[-PRERELEASE]" string.
