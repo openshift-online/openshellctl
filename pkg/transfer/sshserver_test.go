@@ -25,25 +25,25 @@ import (
 // other methods panic (unused by transfer tests).
 type fakeGateway struct {
 	gateway.Gateway
-	root            string // the remote "workspace" root (absolute, on the real FS)
-	hostKey         ssh.Signer
-	mu              sync.Mutex
-	tunnels         int
-	lastMain        string // last payload written by a Connect session
-	mainReply       string // canned bytes the shell session streams back
-	mainExit        int    // exit code the shell session returns
-	mainHold        bool   // when true, the session holds its write side open until the client tears the channel down (models a live session that only ends on detach)
-	failExtract     bool   // when true, the upload extract command reports non-zero
-	lastReqType     string // tracks the request type used for the interactive session ("shell", "exec", or "subsystem")
-	lastExecCmd     string // last exec command received
-	lastSubsystem   string // last subsystem name requested
-	rejectShell     bool   // when true, the server rejects shell requests (models a broken server)
-	noExitStatus    bool   // when true, the server closes the channel without sending exit-status
-	keepaliveCount    int      // number of keepalive@openssh.com global requests received
-	rejectKeepalive   bool     // when true, server replies false to keepalive requests (models unresponsive server)
-	tunnelErr         error    // when non-nil, the client-side tunnel's Read returns this instead of any error (including EOF) from the underlying conn
-	dropAfterMainReply bool   // when true, close the raw server-side conn after sending mainReply (simulates mid-session transport loss)
-	rawServerConn     net.Conn // raw server-side conn; set by SSHTunnel, closed by runMain when dropAfterMainReply
+	root               string // the remote "workspace" root (absolute, on the real FS)
+	hostKey            ssh.Signer
+	mu                 sync.Mutex
+	tunnels            int
+	lastMain           string   // last payload written by a Connect session
+	mainReply          string   // canned bytes the shell session streams back
+	mainExit           int      // exit code the shell session returns
+	mainHold           bool     // when true, the session holds its write side open until the client tears the channel down (models a live session that only ends on detach)
+	failExtract        bool     // when true, the upload extract command reports non-zero
+	lastReqType        string   // tracks the request type used for the interactive session ("shell", "exec", or "subsystem")
+	lastExecCmd        string   // last exec command received
+	lastSubsystem      string   // last subsystem name requested
+	rejectShell        bool     // when true, the server rejects shell requests (models a broken server)
+	noExitStatus       bool     // when true, the server closes the channel without sending exit-status
+	keepaliveCount     int      // number of keepalive@openssh.com global requests received
+	rejectKeepalive    bool     // when true, server replies false to keepalive requests (models unresponsive server)
+	tunnelErr          error    // when non-nil, the client-side tunnel's Read returns this instead of any error (including EOF) from the underlying conn
+	dropAfterMainReply bool     // when true, close the raw server-side conn after sending mainReply (simulates mid-session transport loss)
+	rawServerConn      net.Conn // raw server-side conn; set by SSHTunnel, closed by runMain when dropAfterMainReply
 }
 
 func newFakeGateway(t *testing.T, root string) *fakeGateway {

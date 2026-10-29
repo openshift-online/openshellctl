@@ -48,14 +48,19 @@ func (c *client) dialSSH(ctx context.Context, workspace, sandbox string) (*ssh.C
 // ClientConfig, and RPC context cancellation tears the tunnel down).
 type tunnelConn struct {
 	io.ReadWriteCloser
-	once sync.Once
+	once sync.Once  // ensures err is written at most once
+	mu   sync.Mutex // guards err on both the write inside once.Do and the read in firstErr
 	err  error
 }
 
 func (tc *tunnelConn) Read(p []byte) (int, error) {
 	n, err := tc.ReadWriteCloser.Read(p)
 	if err != nil {
-		tc.once.Do(func() { tc.err = err })
+		tc.once.Do(func() {
+			tc.mu.Lock()
+			tc.err = err
+			tc.mu.Unlock()
+		})
 	}
 	return n, err
 }
@@ -63,13 +68,21 @@ func (tc *tunnelConn) Read(p []byte) (int, error) {
 func (tc *tunnelConn) Write(p []byte) (int, error) {
 	n, err := tc.ReadWriteCloser.Write(p)
 	if err != nil {
-		tc.once.Do(func() { tc.err = err })
+		tc.once.Do(func() {
+			tc.mu.Lock()
+			tc.err = err
+			tc.mu.Unlock()
+		})
 	}
 	return n, err
 }
 
 // firstErr returns the first transport error recorded by Read or Write, or nil.
-func (tc *tunnelConn) firstErr() error { return tc.err }
+func (tc *tunnelConn) firstErr() error {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	return tc.err
+}
 
 func rwcConn(rwc io.ReadWriteCloser) net.Conn { return &tunnelConn{ReadWriteCloser: rwc} }
 

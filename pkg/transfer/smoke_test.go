@@ -469,7 +469,7 @@ var errSyntheticDrop = errors.New("synthetic transport drop")
 func TestConnectMainProcess_TransportLoss_ReportsTunnelError(t *testing.T) {
 	c, gw := newTestClient(t, t.TempDir(), t.TempDir())
 	gw.mainReply = "some output\n"
-	gw.dropAfterMainReply = true // close raw conn after mainReply → transport dies mid-session
+	gw.dropAfterMainReply = true    // close raw conn after mainReply → transport dies mid-session
 	gw.tunnelErr = errSyntheticDrop // EOF from closed conn becomes this sentinel
 
 	_, err := c.ConnectMainProcess(context.Background(), "default", "sb", false,
