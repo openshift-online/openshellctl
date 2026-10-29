@@ -148,6 +148,60 @@ func TestNotice_AbsentForDevVersion(t *testing.T) {
 	}
 }
 
+// TestNotice_CacheRefreshPreventsRefetch verifies that a fresh on-disk cache
+// written by the first invocation prevents a second network call. The counting
+// fetcher must be called exactly once across two back-to-back executions that
+// share the same cache path.
+func TestNotice_CacheRefreshPreventsRefetch(t *testing.T) {
+	current := selfupdate.ParseCurrent("v0.1.5")
+	env := noticeEnvForTest(current)
+	cachePath := filepath.Join(t.TempDir(), "update-check.json")
+	counting := &countingFetcher{releases: []selfupdate.Release{{TagName: "v0.1.6"}}}
+
+	deps := cliDeps{
+		NoticeEnvOverride: &env,
+		NoticeFetcher:     counting,
+		NoticeCachePath:   cachePath,
+	}
+
+	// First run: cache absent → fetcher called, cache written, notice printed.
+	_, notice1, _ := runCmdCapturingNotice(t, deps, "sandbox", "list")
+	if !strings.Contains(notice1, "v0.1.6") {
+		t.Fatalf("first run: notice missing v0.1.6; got %q", notice1)
+	}
+
+	// Second run: same cache path → fresh cache → notice from cache, fetcher idle.
+	_, notice2, _ := runCmdCapturingNotice(t, deps, "sandbox", "list")
+	if !strings.Contains(notice2, "v0.1.6") {
+		t.Errorf("second run: notice missing v0.1.6; got %q", notice2)
+	}
+	if counting.calls != 1 {
+		t.Errorf("ListReleases called %d times, want 1", counting.calls)
+	}
+}
+
+// countingFetcher records how many times ListReleases was called.
+// It is only safe to read calls after collectNotice returns (channel
+// synchronisation guarantees the goroutine's write is visible).
+type countingFetcher struct {
+	releases []selfupdate.Release
+	calls    int
+}
+
+func (f *countingFetcher) ListReleases(_ context.Context) ([]selfupdate.Release, error) {
+	f.calls++
+	return f.releases, nil
+}
+
+func (f *countingFetcher) GetRelease(_ context.Context, tag string) (selfupdate.Release, error) {
+	for _, r := range f.releases {
+		if r.TagName == tag {
+			return r, nil
+		}
+	}
+	return selfupdate.Release{}, &selfupdate.ErrTagNotFound{Tag: tag}
+}
+
 func TestNotice_DroppedWhenFetcherExceedsGracePeriod(t *testing.T) {
 	current := selfupdate.ParseCurrent("v0.1.5")
 	env := noticeEnvForTest(current)
