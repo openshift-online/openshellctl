@@ -202,6 +202,9 @@ func newSandboxCreateCommand() *cobra.Command {
 				// Attach via connect.
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Attaching to sandbox %s...\n", sb.Name)
 				tc := transfer.New(gw, nil, wallClock{})
+				if d, ok := depsFrom(cmd.Context()); ok && d.Transfer != nil {
+					tc = d.Transfer
+				}
 				useTTY := stdinTTY && stdoutTTY
 				t := &cliTerminal{
 					stdinFd:  int(os.Stdin.Fd()),
