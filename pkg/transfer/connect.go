@@ -117,7 +117,7 @@ func sendSessionRequest(ch ssh.Channel, command []string) error {
 // handler runs the specified command. We drive a raw session channel (rather
 // than ssh.Session) so the exit status is directly observable.
 func (c *client) Connect(ctx context.Context, workspace, sandbox string, tty bool, term Terminal, command ...string) (int, error) {
-	cli, err := c.dialSSH(ctx, workspace, sandbox)
+	cli, _, err := c.dialSSH(ctx, workspace, sandbox)
 	if err != nil {
 		return 0, err
 	}
@@ -267,7 +267,7 @@ func termSize(term Terminal) (cols, rows int) {
 // (double-executing spec.command). The subsystem request targets the process the
 // gateway already launched at boot from OPENSHELL_MAIN_PROCESS_SPEC.
 func (c *client) ConnectMainProcess(ctx context.Context, workspace, sandbox string, tty bool, term Terminal) (int, error) {
-	cli, err := c.dialSSH(ctx, workspace, sandbox)
+	cli, _, err := c.dialSSH(ctx, workspace, sandbox)
 	if err != nil {
 		return 0, err
 	}

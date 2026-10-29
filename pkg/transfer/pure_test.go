@@ -3,11 +3,13 @@ package transfer
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -570,6 +572,68 @@ func TestPumpDetach_ChordSplitAcrossReads(t *testing.T) {
 	}
 	if !bytes.Equal(dst.Bytes(), []byte("data")) {
 		t.Errorf("forwarded = %v, want %q", dst.Bytes(), "data")
+	}
+}
+
+// errRWC is a fake io.ReadWriteCloser that returns sentinel errors on demand.
+type errRWC struct {
+	readErr  error
+	writeErr error
+}
+
+func (e *errRWC) Read(_ []byte) (int, error)  { return 0, e.readErr }
+func (e *errRWC) Write(_ []byte) (int, error) { return 0, e.writeErr }
+func (e *errRWC) Close() error               { return nil }
+
+var errRead1 = errors.New("read error 1")
+var errRead2 = errors.New("read error 2")
+var errWrite1 = errors.New("write error 1")
+
+func TestTunnelConn_RecordsFirstReadError(t *testing.T) {
+	tc := rwcConn(&errRWC{readErr: errRead1}).(*tunnelConn)
+	buf := make([]byte, 4)
+	tc.Read(buf) //nolint:errcheck
+	if tc.firstErr() != errRead1 {
+		t.Errorf("firstErr() = %v, want %v", tc.firstErr(), errRead1)
+	}
+}
+
+func TestTunnelConn_RecordsFirstWriteError(t *testing.T) {
+	tc := rwcConn(&errRWC{readErr: io.EOF, writeErr: errWrite1}).(*tunnelConn)
+	buf := []byte("hi")
+	tc.Write(buf) //nolint:errcheck
+	if tc.firstErr() != errWrite1 {
+		t.Errorf("firstErr() = %v, want %v", tc.firstErr(), errWrite1)
+	}
+}
+
+func TestTunnelConn_FirstErrorWins(t *testing.T) {
+	rwc := &errRWC{readErr: errRead1}
+	tc := rwcConn(rwc).(*tunnelConn)
+	buf := make([]byte, 4)
+	tc.Read(buf) //nolint:errcheck
+	// Swap to a different error; firstErr should still return the first.
+	rwc.readErr = errRead2
+	tc.Read(buf) //nolint:errcheck
+	if tc.firstErr() != errRead1 {
+		t.Errorf("firstErr() = %v, want first error %v", tc.firstErr(), errRead1)
+	}
+}
+
+func TestTunnelConn_ConcurrentSafe(t *testing.T) {
+	tc := rwcConn(&errRWC{readErr: errRead1, writeErr: errWrite1}).(*tunnelConn)
+	var wg sync.WaitGroup
+	buf := make([]byte, 4)
+	for i := 0; i < 100; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); tc.Read(buf) }()  //nolint:errcheck
+		go func() { defer wg.Done(); tc.Write(buf) }() //nolint:errcheck
+	}
+	wg.Wait()
+	// firstErr must be one of the two known errors (not nil, not a data race).
+	err := tc.firstErr()
+	if err != errRead1 && err != errWrite1 {
+		t.Errorf("unexpected firstErr() = %v", err)
 	}
 }
 
