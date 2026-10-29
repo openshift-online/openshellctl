@@ -81,6 +81,21 @@ func TestExtractBinary_MissingEntry(t *testing.T) {
 	}
 }
 
+func TestExtractBinary_SubdirPathRejected(t *testing.T) {
+	// "foo/openshellctl" should not match — only bare "openshellctl" or "./openshellctl"
+	// guard against a crafted archive extracting to an unexpected path.
+	archivePath := makeTar(t, []tarEntry{
+		{name: "foo/openshellctl", content: []byte("binary"), typeFlag: tar.TypeReg},
+	})
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "openshellctl")
+	err := ExtractBinary(archivePath, dst, 1<<20)
+	var missing *ErrBinaryEntryMissing
+	if !errors.As(err, &missing) {
+		t.Errorf("expected ErrBinaryEntryMissing for subdir entry, got %T(%v)", err, err)
+	}
+}
+
 func TestExtractBinary_SizeCap(t *testing.T) {
 	content := make([]byte, 200)
 	archivePath := makeTar(t, []tarEntry{

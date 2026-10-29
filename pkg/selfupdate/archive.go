@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 )
 
 const binaryName = "openshellctl"
@@ -44,13 +43,12 @@ func ExtractBinary(archivePath, dst string, maxSize int64) error {
 		if err != nil {
 			return fmt.Errorf("reading tar: %w", err)
 		}
-		// Accept "openshellctl" or "./openshellctl"
-		base := filepath.Base(filepath.Clean(hdr.Name))
-		if base != binaryName {
+		// Accept exactly "openshellctl" or "./openshellctl"; reject any subdir path.
+		if hdr.Name != binaryName && hdr.Name != "./"+binaryName {
 			continue
 		}
-		// Only regular files; reject symlinks and directories
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		// Only regular files; reject symlinks and directories.
+		if hdr.Typeflag != tar.TypeReg {
 			return &ErrBinaryEntryMissing{}
 		}
 		out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700)
