@@ -119,6 +119,46 @@ func NewRootCommand() *cobra.Command {
 // conditions are met. The result is sent to a buffered channel stored on the
 // command's context so Execute can collect it after the command returns.
 func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
+	// Test-injection path: when cliDeps carries NoticeInputs the caller
+	// controls all gating (TTY, command, version, cache age) without touching
+	// the environment. Production code never sets these fields.
+	if deps, ok := depsFrom(cmd.Context()); ok && deps.NoticeInputs != nil {
+		if !selfupdate.ShouldCheck(*deps.NoticeInputs) {
+			return
+		}
+		if deps.NoticeFetcher == nil {
+			return // no network call without an injected fetcher
+		}
+		current := deps.NoticeInputs.CurrentVersion
+		fetcher := deps.NoticeFetcher
+
+		ch := make(chan noticeResult, 1)
+		root := cmd.Root()
+		ctx := root.Context()
+		root.SetContext(context.WithValue(ctx, noticeChKey{}, ch))
+
+		noticeBudget := 2 * time.Second
+		go func() {
+			noticeCtx, cancel := context.WithTimeout(ctx, noticeBudget)
+			defer cancel()
+
+			rels, err := fetcher.ListReleases(noticeCtx)
+			if err != nil {
+				ch <- noticeResult{}
+				return
+			}
+			rel, ok := selfupdate.SelectRelease(rels, current.IsPrerelease)
+			if !ok {
+				ch <- noticeResult{}
+				return
+			}
+			text := selfupdate.NoticeText(current.Tag, rel.TagName, pf.noColor)
+			ch <- noticeResult{text: text, latestTag: rel.TagName}
+		}()
+		return
+	}
+
+	// Production path.
 	info := version.Get()
 	current := selfupdate.ParseCurrent(info.Version)
 
