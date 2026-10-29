@@ -31,6 +31,13 @@ local terminal is left in a garbled state (invisible cursor, mouse clicks
 producing escape characters in the next command, etc.). The sequences are
 idempotent, so sending them after a clean exit is harmless.
 
+**Caveat**: `\033[?1049l` exits the alternate screen unconditionally. If you
+run `sandbox create` or `sandbox connect` from inside another full-screen
+program (tmux, neovim, another TUI), that outer program's screen will be wiped
+when the attach ends. This is acceptable because openshellctl owns the terminal
+for the duration of the attach; use `--no-tty` to suppress the attach (and the
+reset) entirely when running from inside a TUI.
+
 **Implementation**: `terminalResetSequence()` and `restoreWith()` in
 `internal/cli/sandbox_connect.go`; called from `cliTerminal.MakeRaw`'s
 restore closure only when the local endpoint is a TTY.

@@ -330,7 +330,4 @@ the gateway's side without reporting a reason.
 - If the main process was still running and left data, reconnect with
   `sandbox connect`.
 
-**Caught by**: `exitCodeFor(*transfer.AttachClosedError)` maps this error to
-exit code 1 (generic error). The `errors.Is(err, transfer.ErrNoExitStatus)`
-sentinel is true for this error type, and `errors.As` unwraps the tunnel error.
 

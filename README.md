@@ -708,8 +708,8 @@ openshellctl sandbox connect                   # uses last-used sandbox
 
 Detach from the session with **Ctrl-P Ctrl-Q** (the connection closes cleanly and exits 0).
 
-Large pastes (> 1 byte) are forwarded in 32 KiB chunks, so copying several
-kilobytes of text into the terminal does not stall the session.
+Large pastes are forwarded in up to 32 KiB chunks per read, so copying
+several kilobytes of text into the terminal does not stall the session.
 
 When the session ends (either by exit or detach), openshellctl sends ANSI
 escape sequences to disable mouse reporting, bracketed paste, alternate screen,
