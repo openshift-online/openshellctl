@@ -607,6 +607,31 @@ func TestAttachClosedError_ErrorText(t *testing.T) {
 	})
 }
 
+func TestOutDoneResult_KeepaliveDeadFirst(t *testing.T) {
+	kd := make(chan struct{})
+	close(kd) // keepalive already dead — must take priority over exit-status absence
+	_, err := outDoneResult(false, 0, kd, nil)
+	if err == nil || !strings.Contains(err.Error(), "keepalive timeout") {
+		t.Errorf("expected keepalive timeout error, got %v", err)
+	}
+}
+
+func TestOutDoneResult_ExitSet(t *testing.T) {
+	kd := make(chan struct{}) // keepalive alive
+	code, err := outDoneResult(true, 42, kd, nil)
+	if code != 42 || err != nil {
+		t.Errorf("outDoneResult(exitSet=true, 42, ...) = (%d, %v), want (42, nil)", code, err)
+	}
+}
+
+func TestOutDoneResult_NoExitStatus(t *testing.T) {
+	kd := make(chan struct{}) // keepalive alive
+	_, err := outDoneResult(false, 0, kd, nil)
+	if !errors.Is(err, ErrNoExitStatus) {
+		t.Errorf("outDoneResult(exitSet=false, ...) error %v should be ErrNoExitStatus", err)
+	}
+}
+
 // errRWC is a fake io.ReadWriteCloser that returns sentinel errors on demand.
 type errRWC struct {
 	readErr  error

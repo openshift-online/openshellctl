@@ -399,15 +399,24 @@ func (c *client) ConnectMainProcess(ctx context.Context, workspace, sandbox stri
 		return 0, nil
 	case <-outDone:
 		<-reqsDone
-		if exitSet {
-			return exitCode, nil
-		}
-		// No exit-status: per the supervisor contract, every supervisor-initiated
-		// channel close carries one, so its absence means the transport was lost
-		// while the main process may still be running. Include the tunnel's first
-		// recorded error so callers can distinguish a network drop from a kill.
-		return 0, &AttachClosedError{Tunnel: tc.firstErr()}
+		return outDoneResult(exitSet, exitCode, keepaliveDead, tc.firstErr())
 	}
+}
+
+// outDoneResult decides what to return when the main process output stream ends.
+// keepaliveDead is checked first: the keepalive goroutine closes it before
+// calling cli.Close() which causes outDone to fire, so when both are ready the
+// keepalive timeout is the more specific (and earlier) diagnosis.
+func outDoneResult(exitSet bool, exitCode int, keepaliveDead <-chan struct{}, tunnelErr error) (int, error) {
+	select {
+	case <-keepaliveDead:
+		return 0, fmt.Errorf("ssh keepalive timeout: %d consecutive failures", keepaliveMaxCount)
+	default:
+	}
+	if exitSet {
+		return exitCode, nil
+	}
+	return 0, &AttachClosedError{Tunnel: tunnelErr}
 }
 
 // filterDetach processes one chunk of input data against the Ctrl-P Ctrl-Q
