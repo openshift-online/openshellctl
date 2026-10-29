@@ -6,10 +6,10 @@ import (
 
 func TestParseCurrent(t *testing.T) {
 	tests := []struct {
-		v            string
-		wantTag      string
-		wantUnknown  bool
-		wantPrerel   bool
+		v           string
+		wantTag     string
+		wantUnknown bool
+		wantPrerel  bool
 	}{
 		{"v0.1.5", "v0.1.5", false, false},
 		{"v0.1.5-rc.1", "v0.1.5-rc.1", false, true},

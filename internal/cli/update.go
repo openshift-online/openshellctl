@@ -53,11 +53,11 @@ also consider pre-releases, or --version to install a specific tag.
 			apiTimeout := 15 * time.Second
 			dlTimeout := 120 * time.Second
 			apiClient := &http.Client{
-				Timeout: apiTimeout,
+				Timeout:   apiTimeout,
 				Transport: freshTransport(),
 			}
 			dlClient := &http.Client{
-				Timeout: dlTimeout,
+				Timeout:   dlTimeout,
 				Transport: freshTransport(),
 			}
 

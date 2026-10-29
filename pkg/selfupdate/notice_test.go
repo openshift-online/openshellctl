@@ -245,4 +245,3 @@ func TestSaveCache_AtomicWrite(t *testing.T) {
 		t.Errorf("LatestTag = %q after overwrite, want v0.1.6", got.LatestTag)
 	}
 }
-
