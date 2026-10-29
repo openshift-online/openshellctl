@@ -151,7 +151,10 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 		StderrIsTTY:    isTerminal(os.Stderr),
 		CI:             os.Getenv("CI"),
 		CurrentVersion: current,
-		CacheAge:       selfupdate.NoticeCacheTTL + 1,
+		// CacheAge is fixed above the TTL so ShouldCheck evaluates only the
+		// TTY/CI/command/no-update-check gates; the 24 h network-call gate is
+		// owned by the fresh-cache short-circuit below.
+		CacheAge: selfupdate.NoticeCacheTTL + 1,
 	}
 	// Override only the environment-derived fields so tests can control TTY
 	// state, CI, current version, and cache age without process-level tricks.

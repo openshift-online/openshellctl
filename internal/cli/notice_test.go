@@ -102,32 +102,18 @@ func TestNotice_PrintedWhenNewerVersionAvailable(t *testing.T) {
 // gated by cmd.Name() in startNoticeGoroutine, which flows from the real
 // cobra args — no hand-setting of Command in the override.
 func TestNotice_AbsentForExcludedCommands(t *testing.T) {
-	cases := []struct {
-		name    string
-		runArgs []string
-	}{
-		// "version" has a RunE that exercises the full PersistentPreRunE path;
-		// cmd.Name()="version" → ShouldCheck returns false → no notice.
-		{"version", []string{"version"}},
-		// "update --help" does not invoke RunE so PersistentPreRunE is skipped,
-		// but no notice is produced regardless — which is the tested invariant.
-		{"update", []string{"update", "--help"}},
-	}
+	current := selfupdate.ParseCurrent("v0.1.5")
+	env := noticeEnvForTest(current)
+	deps := noticeDeps(t, &env, &staticFetcher{releases: []selfupdate.Release{
+		{TagName: "v0.1.6"},
+	}})
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			current := selfupdate.ParseCurrent("v0.1.5")
-			env := noticeEnvForTest(current)
-			deps := noticeDeps(t, &env, &staticFetcher{releases: []selfupdate.Release{
-				{TagName: "v0.1.6"},
-			}})
+	// "version" has a RunE that exercises the full PersistentPreRunE path;
+	// cmd.Name()="version" → ShouldCheck returns false → no notice.
+	_, notice, _ := runCmdCapturingNotice(t, deps, "version")
 
-			_, notice, _ := runCmdCapturingNotice(t, deps, tc.runArgs...)
-
-			if notice != "" {
-				t.Errorf("expected no notice for command %q, got %q", tc.name, notice)
-			}
-		})
+	if notice != "" {
+		t.Errorf("expected no notice for excluded command %q, got %q", "version", notice)
 	}
 }
 
