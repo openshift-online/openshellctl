@@ -447,8 +447,11 @@ func filterDetach(data []byte, pending *bool) (forward []byte, detach bool) {
 }
 
 // pumpDetach copies src→dst, returning true if the Ctrl-P Ctrl-Q chord was seen
-// (the chord bytes are not forwarded). Reads in 32 KiB chunks to avoid
-// per-byte write overhead on large pastes.
+// (the chord bytes are not forwarded). Each Read produces at most one Write: the
+// SSH layer turns every Write into one CHANNEL_DATA packet, which the gateway
+// relay turns into one gRPC frame. Coalescing to 32 KiB per Read matches the
+// behaviour of OpenSSH's ssh(1) and avoids queue pressure in the supervisor's
+// 64-slot mpsc input channel on large pastes.
 func pumpDetach(src io.Reader, dst io.Writer) bool {
 	buf := make([]byte, 32*1024)
 	var pending bool

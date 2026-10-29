@@ -88,8 +88,8 @@ func (t *cliTerminal) MakeRaw() (func(), bool) {
 // Deliberately sent even after a clean exit (every sequence is idempotent) to
 // undo any modes the remote program enabled: mouse reporting, focus events,
 // bracketed paste, alternate screen, and hidden cursor.
-// This is an intentional difference from the Rust CLI and `ssh`, which do not
-// send a reset; the rationale is documented in docs/deliberate-differences.md.
+// This is an intentional difference from the Rust CLI and ssh(1), which do not
+// send a reset; see docs/deliberate-differences.md.
 func terminalResetSequence() []byte {
 	return []byte(
 		"\033[?1000l" + // disable X10 mouse button events
