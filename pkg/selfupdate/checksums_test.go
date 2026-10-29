@@ -60,49 +60,65 @@ func TestChecksumAssetName(t *testing.T) {
 	}
 }
 
+// validHex64 is a canonical 64-character lowercase hex string (valid SHA-256 digest).
+const (
+	validHex64a = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	validHex64b = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+)
+
 func TestParseChecksums(t *testing.T) {
 	t.Run("two-space separator", func(t *testing.T) {
-		input := "abc123  openshellctl_Linux_x86_64.tar.gz\ndef456  openshellctl_Darwin_arm64.tar.gz\n"
+		input := validHex64a + "  openshellctl_Linux_x86_64.tar.gz\n" +
+			validHex64b + "  openshellctl_Darwin_arm64.tar.gz\n"
 		got, err := ParseChecksums(strings.NewReader(input))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got["openshellctl_Linux_x86_64.tar.gz"] != "abc123" {
-			t.Errorf("Linux amd64 = %q, want abc123", got["openshellctl_Linux_x86_64.tar.gz"])
+		if got["openshellctl_Linux_x86_64.tar.gz"] != validHex64a {
+			t.Errorf("Linux amd64 = %q, want %q", got["openshellctl_Linux_x86_64.tar.gz"], validHex64a)
 		}
-		if got["openshellctl_Darwin_arm64.tar.gz"] != "def456" {
-			t.Errorf("Darwin arm64 = %q, want def456", got["openshellctl_Darwin_arm64.tar.gz"])
+		if got["openshellctl_Darwin_arm64.tar.gz"] != validHex64b {
+			t.Errorf("Darwin arm64 = %q, want %q", got["openshellctl_Darwin_arm64.tar.gz"], validHex64b)
 		}
 	})
 
 	t.Run("binary-mode star separator", func(t *testing.T) {
 		// shasum -b produces "<hex> *<filename>"
-		input := "abc123 *openshellctl_Linux_x86_64.tar.gz\n"
+		input := validHex64a + " *openshellctl_Linux_x86_64.tar.gz\n"
 		got, err := ParseChecksums(strings.NewReader(input))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got["openshellctl_Linux_x86_64.tar.gz"] != "abc123" {
-			t.Errorf("got %q, want abc123", got["openshellctl_Linux_x86_64.tar.gz"])
+		if got["openshellctl_Linux_x86_64.tar.gz"] != validHex64a {
+			t.Errorf("got %q, want %q", got["openshellctl_Linux_x86_64.tar.gz"], validHex64a)
 		}
 	})
 
 	t.Run("blank lines and CRLF tolerated", func(t *testing.T) {
-		input := "\r\nabc123  foo.tar.gz\r\n\r\n"
+		input := "\r\n" + validHex64a + "  foo.tar.gz\r\n\r\n"
 		got, err := ParseChecksums(strings.NewReader(input))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got["foo.tar.gz"] != "abc123" {
-			t.Errorf("got %q, want abc123", got["foo.tar.gz"])
+		if got["foo.tar.gz"] != validHex64a {
+			t.Errorf("got %q, want %q", got["foo.tar.gz"], validHex64a)
 		}
 	})
 
 	t.Run("malformed hex rejected", func(t *testing.T) {
-		input := "zzzzzz  foo.tar.gz\n"
+		input := "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz  foo.tar.gz\n"
 		_, err := ParseChecksums(strings.NewReader(input))
 		if err == nil {
 			t.Error("expected error for malformed hex, got nil")
+		}
+	})
+
+	t.Run("short hex rejected", func(t *testing.T) {
+		// Valid hex chars but only 62 characters — not a SHA-256 digest.
+		input := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"[:62] + "  foo.tar.gz\n"
+		_, err := ParseChecksums(strings.NewReader(input))
+		if err == nil {
+			t.Error("expected error for short hex (62 chars), got nil")
 		}
 	})
 
@@ -117,7 +133,7 @@ func TestParseChecksums(t *testing.T) {
 	})
 
 	t.Run("missing filename rejected", func(t *testing.T) {
-		input := "abc123\n"
+		input := validHex64a + "\n"
 		_, err := ParseChecksums(strings.NewReader(input))
 		if err == nil {
 			t.Error("expected error for missing filename, got nil")

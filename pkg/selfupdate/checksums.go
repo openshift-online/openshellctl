@@ -39,7 +39,10 @@ func ParseChecksums(r io.Reader) (map[string]string, error) {
 		if filename == "" {
 			return nil, fmt.Errorf("line %d: empty filename", lineNum)
 		}
-		// Validate hex string
+		// Validate hex string: must be valid hex and exactly 64 characters (SHA-256).
+		if len(hexStr) != sha256.Size*2 {
+			return nil, fmt.Errorf("line %d: hex digest must be %d characters, got %d", lineNum, sha256.Size*2, len(hexStr))
+		}
 		if _, err := hex.DecodeString(hexStr); err != nil {
 			return nil, fmt.Errorf("line %d: invalid hex %q: %w", lineNum, hexStr, err)
 		}
