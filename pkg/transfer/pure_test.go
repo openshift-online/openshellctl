@@ -575,6 +575,38 @@ func TestPumpDetach_ChordSplitAcrossReads(t *testing.T) {
 	}
 }
 
+func TestAttachClosedError_IsErrNoExitStatus(t *testing.T) {
+	ace := &AttachClosedError{}
+	if !errors.Is(ace, ErrNoExitStatus) {
+		t.Errorf("errors.Is(&AttachClosedError{}, ErrNoExitStatus) = false, want true")
+	}
+}
+
+func TestAttachClosedError_UnwrapsTunnelError(t *testing.T) {
+	tunnelErr := errors.New("tunnel gone")
+	ace := &AttachClosedError{Tunnel: tunnelErr}
+	if !errors.Is(ace, tunnelErr) {
+		t.Errorf("errors.Is(&AttachClosedError{Tunnel: tunnelErr}, tunnelErr) = false, want true")
+	}
+}
+
+func TestAttachClosedError_ErrorText(t *testing.T) {
+	t.Run("without tunnel error", func(t *testing.T) {
+		got := (&AttachClosedError{}).Error()
+		want := "ssh channel closed without exit-status"
+		if got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+	})
+	t.Run("with tunnel error", func(t *testing.T) {
+		got := (&AttachClosedError{Tunnel: errors.New("network lost")}).Error()
+		want := "ssh channel closed without exit-status; tunnel: network lost"
+		if got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+	})
+}
+
 // errRWC is a fake io.ReadWriteCloser that returns sentinel errors on demand.
 type errRWC struct {
 	readErr  error

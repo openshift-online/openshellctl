@@ -39,8 +39,11 @@ type fakeGateway struct {
 	lastSubsystem   string // last subsystem name requested
 	rejectShell     bool   // when true, the server rejects shell requests (models a broken server)
 	noExitStatus    bool   // when true, the server closes the channel without sending exit-status
-	keepaliveCount  int    // number of keepalive@openssh.com global requests received
-	rejectKeepalive bool   // when true, server replies false to keepalive requests (models unresponsive server)
+	keepaliveCount    int      // number of keepalive@openssh.com global requests received
+	rejectKeepalive   bool     // when true, server replies false to keepalive requests (models unresponsive server)
+	tunnelErr         error    // when non-nil, the client-side tunnel's Read returns this instead of any error (including EOF) from the underlying conn
+	dropAfterMainReply bool   // when true, close the raw server-side conn after sending mainReply (simulates mid-session transport loss)
+	rawServerConn     net.Conn // raw server-side conn; set by SSHTunnel, closed by runMain when dropAfterMainReply
 }
 
 func newFakeGateway(t *testing.T, root string) *fakeGateway {
@@ -59,10 +62,32 @@ func newFakeGateway(t *testing.T, root string) *fakeGateway {
 func (f *fakeGateway) SSHTunnel(_ context.Context, _, _ string) (io.ReadWriteCloser, error) {
 	f.mu.Lock()
 	f.tunnels++
+	tunnelErr := f.tunnelErr
 	f.mu.Unlock()
 	cconn, sconn := bufferedConnPair()
+	f.mu.Lock()
+	f.rawServerConn = sconn
+	f.mu.Unlock()
 	go f.serve(sconn)
+	if tunnelErr != nil {
+		return &subErrConn{ReadWriteCloser: cconn, err: tunnelErr}, nil
+	}
 	return cconn, nil
+}
+
+// subErrConn wraps an io.ReadWriteCloser and substitutes its own err for any
+// error (including io.EOF) returned by Read. Used to simulate transport drops.
+type subErrConn struct {
+	io.ReadWriteCloser
+	err error
+}
+
+func (s *subErrConn) Read(p []byte) (int, error) {
+	n, err := s.ReadWriteCloser.Read(p)
+	if err != nil {
+		return n, s.err
+	}
+	return n, nil
 }
 
 // serve runs a minimal SSH server on the server side of the pipe.
@@ -195,6 +220,17 @@ func (f *fakeGateway) runMain(ch ssh.Channel) {
 	}()
 	if f.mainReply != "" {
 		_, _ = io.WriteString(ch, f.mainReply)
+	}
+	// Simulate a mid-session transport drop after mainReply is buffered.
+	// Closing the raw server-side conn causes the client to read EOF after
+	// the buffered data, which subErrConn then converts to the sentinel error.
+	if f.dropAfterMainReply {
+		f.mu.Lock()
+		rc := f.rawServerConn
+		f.mu.Unlock()
+		if rc != nil {
+			_ = rc.Close()
+		}
 	}
 	if !f.mainHold {
 		_ = ch.CloseWrite()

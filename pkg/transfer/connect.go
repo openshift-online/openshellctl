@@ -12,12 +12,34 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// ErrNoExitStatus is returned by ConnectMainProcess when the SSH channel closes
-// without delivering an exit-status request. The remote process may have been
-// killed by a signal or the gateway may have lost contact with it. Callers
-// that need to distinguish this from a transport-level dial failure can use
-// errors.Is against this sentinel.
-var ErrNoExitStatus = errors.New("ssh channel closed without exit-status: remote process may have been killed")
+// ErrNoExitStatus is the sentinel matched by errors.Is for AttachClosedError.
+// Per the supervisor contract (ssh.rs:1391-1427), every supervisor-initiated
+// channel close carries an exit-status request; absence therefore means the
+// transport underneath the SSH channel was lost while the main process may
+// still be running. Gateway-side ephemeral cleanup does not fire in this case.
+var ErrNoExitStatus = errors.New("ssh channel closed without exit-status")
+
+// AttachClosedError is returned by ConnectMainProcess when the SSH channel
+// closed without delivering an exit-status request. Tunnel holds the first
+// error the gateway tunnel reported (if any), enabling callers to distinguish
+// a killed process from a broken network path.
+type AttachClosedError struct {
+	Tunnel error
+}
+
+func (e *AttachClosedError) Error() string {
+	if e.Tunnel != nil {
+		return "ssh channel closed without exit-status; tunnel: " + e.Tunnel.Error()
+	}
+	return "ssh channel closed without exit-status"
+}
+
+// Is makes errors.Is(e, ErrNoExitStatus) return true so existing callers that
+// check for ErrNoExitStatus continue to work without changes.
+func (e *AttachClosedError) Is(target error) bool { return target == ErrNoExitStatus }
+
+// Unwrap exposes the tunnel error for errors.Is/errors.As traversal.
+func (e *AttachClosedError) Unwrap() error { return e.Tunnel }
 
 // detach chord bytes: Ctrl-P (0x10) then Ctrl-Q (0x11).
 const (
@@ -267,7 +289,7 @@ func termSize(term Terminal) (cols, rows int) {
 // (double-executing spec.command). The subsystem request targets the process the
 // gateway already launched at boot from OPENSHELL_MAIN_PROCESS_SPEC.
 func (c *client) ConnectMainProcess(ctx context.Context, workspace, sandbox string, tty bool, term Terminal) (int, error) {
-	cli, _, err := c.dialSSH(ctx, workspace, sandbox)
+	cli, tc, err := c.dialSSH(ctx, workspace, sandbox)
 	if err != nil {
 		return 0, err
 	}
@@ -380,11 +402,11 @@ func (c *client) ConnectMainProcess(ctx context.Context, workspace, sandbox stri
 		if exitSet {
 			return exitCode, nil
 		}
-		// No exit-status received: the main process was likely killed by a signal
-		// or the gateway lost contact with it. Return a sentinel so callers (crons
-		// in particular) do not record the session as successful.  The returned
-		// code is unspecified when ErrNoExitStatus is non-nil.
-		return 0, ErrNoExitStatus
+		// No exit-status: per the supervisor contract, every supervisor-initiated
+		// channel close carries one, so its absence means the transport was lost
+		// while the main process may still be running. Include the tunnel's first
+		// recorded error so callers can distinguish a network drop from a kill.
+		return 0, &AttachClosedError{Tunnel: tc.firstErr()}
 	}
 }
 
