@@ -1,0 +1,298 @@
+package selfupdate
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// fakeFetcher implements Fetcher for tests.
+type fakeFetcher struct {
+	releases []Release
+	byTag    map[string]Release
+	listErr  error
+	getErr   error
+}
+
+func (f *fakeFetcher) ListReleases(_ context.Context) ([]Release, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.releases, nil
+}
+
+func (f *fakeFetcher) GetRelease(_ context.Context, tag string) (Release, error) {
+	if f.getErr != nil {
+		return Release{}, f.getErr
+	}
+	if rel, ok := f.byTag[tag]; ok {
+		return rel, nil
+	}
+	return Release{}, &ErrNoRelease{}
+}
+
+// testReleaseServer builds a tiny valid release archive and checksum file,
+// serves them via httptest.Server, and returns a Release whose asset URLs
+// point at that server plus the server itself (caller must Close it).
+func testReleaseServer(t *testing.T, tag, goos, goarch string) (Release, *httptest.Server) {
+	t.Helper()
+
+	archiveName, err := AssetName(goos, goarch)
+	if err != nil {
+		t.Fatalf("AssetName: %v", err)
+	}
+	checksumName := ChecksumAssetName(tag)
+
+	// Build a minimal tar.gz containing "openshellctl"
+	var archiveBuf []byte
+	{
+		content := []byte("fake binary " + tag)
+		var buf []byte
+		tmpF, _ := os.CreateTemp(t.TempDir(), "*.tar.gz")
+		gw := gzip.NewWriter(tmpF)
+		tw := tar.NewWriter(gw)
+		hdr := &tar.Header{Name: "openshellctl", Typeflag: tar.TypeReg, Size: int64(len(content)), Mode: 0o755}
+		_ = tw.WriteHeader(hdr)
+		_, _ = tw.Write(content)
+		tw.Close()
+		gw.Close()
+		tmpF.Close()
+		buf, _ = os.ReadFile(tmpF.Name())
+		archiveBuf = buf
+	}
+	h := sha256.Sum256(archiveBuf)
+	digest := hex.EncodeToString(h[:])
+	checksumContent := digest + "  " + archiveName + "\n"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/"+archiveName, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(archiveBuf)
+	})
+	mux.HandleFunc("/"+checksumName, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(checksumContent))
+	})
+	srv := httptest.NewServer(mux)
+
+	rel := Release{
+		TagName:    tag,
+		Draft:      false,
+		Prerelease: false,
+		Assets: []Asset{
+			{Name: archiveName, BrowserDownloadURL: srv.URL + "/" + archiveName},
+			{Name: checksumName, BrowserDownloadURL: srv.URL + "/" + checksumName},
+		},
+	}
+	return rel, srv
+}
+
+func TestRun_HappyPath(t *testing.T) {
+	rel, srv := testReleaseServer(t, "v0.1.6", "linux", "amd64")
+	defer srv.Close()
+
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "openshellctl")
+	_ = os.WriteFile(exePath, []byte("old binary"), 0o755)
+
+	opts := Options{
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		Current:    ParseCurrent("v0.1.5"),
+		Fetcher:    &fakeFetcher{releases: []Release{rel}},
+		WorkDir:    dir,
+		ExePath:    exePath,
+		MaxBytes:   256 << 20,
+		HTTPClient: srv.Client(),
+	}
+	result, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !result.Updated {
+		t.Error("result.Updated = false, want true")
+	}
+	if result.TargetTag != "v0.1.6" {
+		t.Errorf("result.TargetTag = %q, want v0.1.6", result.TargetTag)
+	}
+}
+
+func TestRun_CheckOnlyNoDownload(t *testing.T) {
+	rel, srv := testReleaseServer(t, "v0.1.6", "linux", "amd64")
+	defer srv.Close()
+
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "openshellctl")
+	_ = os.WriteFile(exePath, []byte("old binary"), 0o755)
+
+	opts := Options{
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		Current:    ParseCurrent("v0.1.5"),
+		Fetcher:    &fakeFetcher{releases: []Release{rel}},
+		WorkDir:    dir,
+		ExePath:    exePath,
+		MaxBytes:   256 << 20,
+		CheckOnly:  true,
+		HTTPClient: srv.Client(),
+	}
+	result, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run --check: %v", err)
+	}
+	if result.Updated {
+		t.Error("Updated should be false for --check mode")
+	}
+	if result.TargetTag != "v0.1.6" {
+		t.Errorf("TargetTag = %q, want v0.1.6", result.TargetTag)
+	}
+	got, _ := os.ReadFile(exePath)
+	if string(got) != "old binary" {
+		t.Error("binary should not be replaced in --check mode")
+	}
+}
+
+func TestRun_SameVersionNoOp(t *testing.T) {
+	rel, srv := testReleaseServer(t, "v0.1.5", "linux", "amd64")
+	defer srv.Close()
+
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "openshellctl")
+	_ = os.WriteFile(exePath, []byte("same binary"), 0o755)
+
+	opts := Options{
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		Current:    ParseCurrent("v0.1.5"),
+		Fetcher:    &fakeFetcher{releases: []Release{rel}},
+		WorkDir:    dir,
+		ExePath:    exePath,
+		MaxBytes:   256 << 20,
+		HTTPClient: srv.Client(),
+	}
+	result, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run same version: %v", err)
+	}
+	if result.Updated {
+		t.Error("Updated should be false for same-version")
+	}
+	if !result.AlreadyAtTarget {
+		t.Error("AlreadyAtTarget should be true for same-version")
+	}
+}
+
+func TestRun_DowngradeViaVersionFlag(t *testing.T) {
+	rel, srv := testReleaseServer(t, "v0.1.4", "linux", "amd64")
+	defer srv.Close()
+
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "openshellctl")
+	_ = os.WriteFile(exePath, []byte("newer binary"), 0o755)
+
+	opts := Options{
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		Current:    ParseCurrent("v0.1.5"),
+		Fetcher:    &fakeFetcher{byTag: map[string]Release{"v0.1.4": rel}},
+		WorkDir:    dir,
+		ExePath:    exePath,
+		MaxBytes:   256 << 20,
+		TargetTag:  "v0.1.4",
+		HTTPClient: srv.Client(),
+	}
+	result, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run downgrade: %v", err)
+	}
+	if !result.Updated {
+		t.Error("Updated should be true for downgrade via --version")
+	}
+}
+
+func TestRun_ManagedInstallRefused(t *testing.T) {
+	dir := t.TempDir()
+	opts := Options{
+		GOOS:          "linux",
+		GOARCH:        "amd64",
+		Current:       ParseCurrent("v0.1.5"),
+		Fetcher:       &fakeFetcher{},
+		WorkDir:       dir,
+		ExePath:       filepath.Join(dir, "openshellctl"),
+		MaxBytes:      256 << 20,
+		InstallMethod: "container",
+	}
+	_, err := Run(context.Background(), opts)
+	var managed *ErrManagedInstall
+	if !errors.As(err, &managed) {
+		t.Errorf("Run managed install error = %T(%v), want *ErrManagedInstall", err, err)
+	}
+}
+
+func TestRun_UnknownCurrentWithTargetTag(t *testing.T) {
+	rel, srv := testReleaseServer(t, "v0.1.5", "linux", "amd64")
+	defer srv.Close()
+
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "openshellctl")
+	_ = os.WriteFile(exePath, []byte("dev binary"), 0o755)
+
+	opts := Options{
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		Current:    ParseCurrent("dev"),
+		Fetcher:    &fakeFetcher{byTag: map[string]Release{"v0.1.5": rel}},
+		WorkDir:    dir,
+		ExePath:    exePath,
+		MaxBytes:   256 << 20,
+		TargetTag:  "v0.1.5",
+		HTTPClient: srv.Client(),
+	}
+	result, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run from dev with --version: %v", err)
+	}
+	if !result.Updated {
+		t.Error("should update from dev to explicit --version")
+	}
+}
+
+func TestRun_TempFileCleanup(t *testing.T) {
+	rel, srv := testReleaseServer(t, "v0.1.6", "linux", "amd64")
+	defer srv.Close()
+
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "openshellctl")
+	_ = os.WriteFile(exePath, []byte("old binary"), 0o755)
+
+	opts := Options{
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		Current:    ParseCurrent("v0.1.5"),
+		Fetcher:    &fakeFetcher{releases: []Release{rel}},
+		WorkDir:    dir,
+		ExePath:    exePath,
+		MaxBytes:   256 << 20,
+		HTTPClient: srv.Client(),
+	}
+	_, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries, _ := fs.ReadDir(os.DirFS(dir), ".")
+	for _, e := range entries {
+		if e.Name() != "openshellctl" {
+			t.Errorf("unexpected file left in WorkDir: %q", e.Name())
+		}
+	}
+}
