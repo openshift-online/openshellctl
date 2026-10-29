@@ -91,6 +91,9 @@ also consider pre-releases, or --version to install a specific tag.
 			switch {
 			case result.AlreadyAtTarget:
 				fmt.Fprintf(cmd.ErrOrStderr(), "openshellctl is already at %s\n", result.TargetTag)
+			case result.Ahead:
+				fmt.Fprintf(cmd.ErrOrStderr(), "openshellctl %s is ahead of the latest release (%s)\n",
+					result.CurrentTag, result.TargetTag)
 			case checkOnly:
 				if result.CurrentTag != "" {
 					fmt.Fprintf(cmd.ErrOrStderr(), "openshellctl %s → %s available\n", result.CurrentTag, result.TargetTag)

@@ -69,6 +69,11 @@ type Result struct {
 	Updated bool
 	// AlreadyAtTarget is true if target == current and nothing was done.
 	AlreadyAtTarget bool
+	// Ahead is true when the running binary is newer than the latest available
+	// release under default resolution (no explicit --version). This happens
+	// when a dev build or a pre-release binary is newer than the latest stable
+	// release; the binary is not downgraded and nothing is installed.
+	Ahead bool
 	// Downgrade is true if TargetTag < CurrentTag.
 	Downgrade bool
 }
@@ -139,8 +144,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 				// Explicit --version target: downgrade is intentional.
 				res.Downgrade = true
 			} else {
-				// Default resolution never downgrades (plan §2.5).
-				res.AlreadyAtTarget = true
+				// Default resolution never downgrades (plan §2.5). Signal that
+				// the running binary is already ahead of the latest release so
+				// the caller can print a more accurate message than "already at".
+				res.Ahead = true
 				return res, nil
 			}
 		}

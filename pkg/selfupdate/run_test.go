@@ -230,8 +230,8 @@ func TestRun_DowngradeViaVersionFlag(t *testing.T) {
 }
 
 func TestRun_DefaultResolutionNeverDowngrades(t *testing.T) {
-	// Default resolution (no --version) should return AlreadyAtTarget when the
-	// best available release is older than the running binary (plan §2.5).
+	// Default resolution (no --version) should return Ahead when the best
+	// available release is older than the running binary (plan §2.5).
 	rel, srv := testReleaseServer(t, "v0.1.4", "linux", "amd64")
 	defer srv.Close()
 
@@ -257,8 +257,9 @@ func TestRun_DefaultResolutionNeverDowngrades(t *testing.T) {
 	if result.Updated {
 		t.Error("Updated should be false: default resolution must not downgrade")
 	}
-	if !result.AlreadyAtTarget {
-		t.Errorf("AlreadyAtTarget should be true when best release < current; got Downgrade=%v Updated=%v", result.Downgrade, result.Updated)
+	if !result.Ahead {
+		t.Errorf("Ahead should be true when best release < current; got AlreadyAtTarget=%v Downgrade=%v Updated=%v",
+			result.AlreadyAtTarget, result.Downgrade, result.Updated)
 	}
 }
 
