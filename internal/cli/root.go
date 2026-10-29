@@ -124,16 +124,16 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 
 	cacheDir := selfupdate.CacheDir(os.Getenv)
 	cachePath := filepath.Join(cacheDir, "update-check.json")
+	cache, cacheErr := selfupdate.LoadCache(cachePath)
 	var cacheAge time.Duration
-	if cache, err := selfupdate.LoadCache(cachePath); err == nil {
+	if cacheErr == nil {
 		cacheAge = time.Since(cache.CheckedAt)
-		// If the cache is still fresh and has a newer tag, we can print from cache
-		// without a network call. We still gate on ShouldCheck for TTY/CI etc.
-		_ = cache.LatestTag
 	} else {
-		cacheAge = 25 * time.Hour // treat missing/corrupt as expired
+		cacheAge = selfupdate.NoticeCacheTTL + 1 // treat missing/corrupt as expired
 	}
 
+	// Pass a large cacheAge so ShouldCheck evaluates only the TTY/CI/command/
+	// no-update-check conditions; we handle the 24 h network-call gate ourselves.
 	in := selfupdate.CheckInputs{
 		Command:        cmd.Name(),
 		NoUpdateCheck:  pf.noUpdateCheck || os.Getenv("OPENSHELL_NO_UPDATE_CHECK") != "",
@@ -141,18 +141,28 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 		StderrIsTTY:    isTerminal(os.Stderr),
 		CI:             os.Getenv("CI"),
 		CurrentVersion: current,
-		CacheAge:       cacheAge,
+		CacheAge:       selfupdate.NoticeCacheTTL + 1,
 	}
 	if !selfupdate.ShouldCheck(in) {
 		return
 	}
 
-	// Load the cache to check if we already have a newer tag cached.
-	cache, _ := selfupdate.LoadCache(cachePath)
+	// If cache is fresh and already has a newer tag, send the notice immediately
+	// without a network call — same pattern as the GitHub CLI.
+	if cacheErr == nil && cacheAge < selfupdate.NoticeCacheTTL && cache.LatestTag != "" {
+		text := selfupdate.NoticeText(current.Tag, cache.LatestTag, pf.noColor)
+		if text != "" {
+			ch := make(chan noticeResult, 1)
+			ctx := cmd.Context()
+			cmd.SetContext(context.WithValue(ctx, noticeChKey{}, ch))
+			ch <- noticeResult{text: text, latestTag: cache.LatestTag}
+		}
+		return
+	}
 
+	// Cache is stale — start background goroutine to fetch from the API.
 	ch := make(chan noticeResult, 1)
 	ctx := cmd.Context()
-	// Store the channel on the context so Execute can read it.
 	cmd.SetContext(context.WithValue(ctx, noticeChKey{}, ch))
 
 	noticeBudget := 2 * time.Second
@@ -160,39 +170,33 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 		noticeCtx, cancel := context.WithTimeout(ctx, noticeBudget)
 		defer cancel()
 
-		// If cache is fresh enough (within 24h), read from cache; otherwise fetch.
-		var latestTag string
-		if cacheAge < 24*time.Hour && cache.LatestTag != "" {
-			latestTag = cache.LatestTag
-		} else {
-			fetcher := &selfupdate.GitHubFetcher{
-				Client: &http.Client{
-					Timeout:   noticeBudget,
-					Transport: freshTransport(),
-				},
-				Owner:   "openshift-online",
-				Repo:    "openshellctl",
-				Version: info.Version,
-				// No Token for the notice goroutine.
-			}
-			rels, err := fetcher.ListReleases(noticeCtx)
-			if err != nil {
-				ch <- noticeResult{}
-				return
-			}
-			allowPre := current.IsPrerelease
-			rel, ok := selfupdate.SelectRelease(rels, allowPre)
-			if !ok {
-				ch <- noticeResult{}
-				return
-			}
-			latestTag = rel.TagName
-			// Update cache with the result.
-			_ = selfupdate.SaveCache(cachePath, selfupdate.Cache{
-				CheckedAt: time.Now().UTC(),
-				LatestTag: latestTag,
-			})
+		fetcher := &selfupdate.GitHubFetcher{
+			Client: &http.Client{
+				Timeout:   noticeBudget,
+				Transport: freshTransport(),
+			},
+			Owner:   "openshift-online",
+			Repo:    "openshellctl",
+			Version: info.Version,
+			// No Token for the notice goroutine — must not spend or leak credentials.
 		}
+		rels, err := fetcher.ListReleases(noticeCtx)
+		if err != nil {
+			ch <- noticeResult{}
+			return
+		}
+		allowPre := current.IsPrerelease
+		rel, ok := selfupdate.SelectRelease(rels, allowPre)
+		if !ok {
+			ch <- noticeResult{}
+			return
+		}
+		latestTag := rel.TagName
+		// Update cache so the next invocation doesn't repeat the network call.
+		_ = selfupdate.SaveCache(cachePath, selfupdate.Cache{
+			CheckedAt: time.Now().UTC(),
+			LatestTag: latestTag,
+		})
 
 		text := selfupdate.NoticeText(current.Tag, latestTag, pf.noColor)
 		ch <- noticeResult{text: text, latestTag: latestTag}

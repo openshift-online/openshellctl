@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -19,7 +20,7 @@ const maxChecksumFileSize = 64 << 10
 // hex); a mismatch removes the temp file and returns ErrChecksumMismatch.
 // The download is aborted if more than maxBytes bytes would be written.
 // Returns the path of the verified temp file on success.
-func DownloadAndVerify(client *http.Client, url, dir, wantHex string, maxBytes int64) (string, error) {
+func DownloadAndVerify(ctx context.Context, client *http.Client, url, dir, wantHex string, maxBytes int64) (string, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -35,7 +36,12 @@ func DownloadAndVerify(client *http.Client, url, dir, wantHex string, maxBytes i
 		os.Remove(tmpPath)
 	}
 
-	resp, err := client.Get(url) //nolint:noctx // context is the caller's responsibility via client timeout
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		cleanup()
+		return "", err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		cleanup()
 		return "", err

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -136,7 +137,7 @@ func TestNoticeText_NewVersionAvailable(t *testing.T) {
 		t.Error("NoticeText returned empty string for newer version")
 	}
 	for _, want := range []string{"v0.1.5", "v0.1.6", "openshellctl update"} {
-		if !contains(txt, want) {
+		if !strings.Contains(txt, want) {
 			t.Errorf("NoticeText missing %q: %s", want, txt)
 		}
 	}
@@ -245,15 +246,3 @@ func TestSaveCache_AtomicWrite(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSlow(s, substr))
-}
-
-func containsSlow(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

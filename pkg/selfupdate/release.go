@@ -91,12 +91,12 @@ func SelectRelease(rels []Release, allowPrerelease bool) (Release, bool) {
 // matching the goreleaser name_template in .goreleaser.yaml.
 // Returns ErrUnsupportedPlatform for any pair not built by goreleaser.
 func AssetName(goos, goarch string) (string, error) {
-	var os, arch string
+	var osName, arch string
 	switch goos {
 	case "linux":
-		os = "Linux"
+		osName = "Linux"
 	case "darwin":
-		os = "Darwin"
+		osName = "Darwin"
 	default:
 		return "", &ErrUnsupportedPlatform{GOOS: goos, GOARCH: goarch}
 	}
@@ -108,7 +108,7 @@ func AssetName(goos, goarch string) (string, error) {
 	default:
 		return "", &ErrUnsupportedPlatform{GOOS: goos, GOARCH: goarch}
 	}
-	return fmt.Sprintf("openshellctl_%s_%s.tar.gz", os, arch), nil
+	return fmt.Sprintf("openshellctl_%s_%s.tar.gz", osName, arch), nil
 }
 
 // ChecksumAssetName returns the name of the goreleaser checksum file for a

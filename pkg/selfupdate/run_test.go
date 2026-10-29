@@ -266,6 +266,97 @@ func TestRun_UnknownCurrentWithTargetTag(t *testing.T) {
 	}
 }
 
+func TestRun_AssetMissing(t *testing.T) {
+	// Release exists but has no assets at all.
+	rel := Release{TagName: "v0.1.6", Draft: false}
+
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "openshellctl")
+	_ = os.WriteFile(exePath, []byte("old binary"), 0o755)
+
+	opts := Options{
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		Current:    ParseCurrent("v0.1.5"),
+		Fetcher:    &fakeFetcher{releases: []Release{rel}},
+		WorkDir:    dir,
+		ExePath:    exePath,
+		MaxBytes:   256 << 20,
+		HTTPClient: &http.Client{},
+	}
+	_, err := Run(context.Background(), opts)
+	var missing *ErrAssetMissing
+	if !errors.As(err, &missing) {
+		t.Errorf("Run with no assets: error = %T(%v), want *ErrAssetMissing", err, err)
+	}
+}
+
+func TestRun_ChecksumEntryMissing(t *testing.T) {
+	// Release has the archive asset but the checksum file omits the entry for it.
+	tag := "v0.1.6"
+	archiveName, _ := AssetName("linux", "amd64")
+	checksumName := ChecksumAssetName(tag)
+	archiveContent := []byte("fake archive")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/"+archiveName, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(archiveContent)
+	})
+	// Checksum file intentionally has no entry for the archive.
+	mux.HandleFunc("/"+checksumName, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("aabbccdd  other_file.tar.gz\n"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	rel := Release{
+		TagName: tag,
+		Assets: []Asset{
+			{Name: archiveName, BrowserDownloadURL: srv.URL + "/" + archiveName},
+			{Name: checksumName, BrowserDownloadURL: srv.URL + "/" + checksumName},
+		},
+	}
+
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "openshellctl")
+	_ = os.WriteFile(exePath, []byte("old binary"), 0o755)
+
+	opts := Options{
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		Current:    ParseCurrent("v0.1.5"),
+		Fetcher:    &fakeFetcher{releases: []Release{rel}},
+		WorkDir:    dir,
+		ExePath:    exePath,
+		MaxBytes:   256 << 20,
+		HTTPClient: srv.Client(),
+	}
+	_, err := Run(context.Background(), opts)
+	var missing *ErrChecksumEntryMissing
+	if !errors.As(err, &missing) {
+		t.Errorf("Run with missing checksum entry: error = %T(%v), want *ErrChecksumEntryMissing", err, err)
+	}
+}
+
+func TestRun_UnsupportedPlatform(t *testing.T) {
+	dir := t.TempDir()
+	opts := Options{
+		GOOS:       "windows",
+		GOARCH:     "amd64",
+		Current:    ParseCurrent("v0.1.5"),
+		Fetcher:    &fakeFetcher{releases: []Release{{TagName: "v0.1.6"}}},
+		WorkDir:    dir,
+		ExePath:    filepath.Join(dir, "openshellctl"),
+		MaxBytes:   256 << 20,
+		HTTPClient: &http.Client{},
+	}
+	_, err := Run(context.Background(), opts)
+	var unsupported *ErrUnsupportedPlatform
+	if !errors.As(err, &unsupported) {
+		t.Errorf("Run with windows/amd64: error = %T(%v), want *ErrUnsupportedPlatform", err, err)
+	}
+}
+
 func TestRun_TempFileCleanup(t *testing.T) {
 	rel, srv := testReleaseServer(t, "v0.1.6", "linux", "amd64")
 	defer srv.Close()

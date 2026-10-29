@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -23,7 +24,7 @@ func TestDownloadAndVerify_HappyPath(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	dst, err := DownloadAndVerify(srv.Client(), srv.URL+"/archive.tar.gz", dir, want, 1<<20)
+	dst, err := DownloadAndVerify(context.Background(), srv.Client(), srv.URL+"/archive.tar.gz", dir, want, 1<<20)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestDownloadAndVerify_ChecksumMismatch(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	dst, err := DownloadAndVerify(srv.Client(), srv.URL+"/archive.tar.gz", dir, "deadbeef", 1<<20)
+	dst, err := DownloadAndVerify(context.Background(), srv.Client(), srv.URL+"/archive.tar.gz", dir, "deadbeef", 1<<20)
 	var mm *ErrChecksumMismatch
 	if !errors.As(err, &mm) {
 		t.Errorf("error = %T(%v), want *ErrChecksumMismatch", err, err)
@@ -67,7 +68,7 @@ func TestDownloadAndVerify_SizeCap(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	_, err := DownloadAndVerify(srv.Client(), srv.URL+"/archive.tar.gz", dir, "ignored", 50)
+	_, err := DownloadAndVerify(context.Background(), srv.Client(), srv.URL+"/archive.tar.gz", dir, "ignored", 50)
 	if err == nil {
 		t.Error("expected error for oversize download, got nil")
 	}
@@ -80,7 +81,7 @@ func TestDownloadAndVerify_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	_, err := DownloadAndVerify(srv.Client(), srv.URL+"/archive.tar.gz", dir, "deadbeef", 1<<20)
+	_, err := DownloadAndVerify(context.Background(), srv.Client(), srv.URL+"/archive.tar.gz", dir, "deadbeef", 1<<20)
 	if err == nil {
 		t.Error("expected error for HTTP 5xx, got nil")
 	}

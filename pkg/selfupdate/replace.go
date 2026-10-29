@@ -3,7 +3,6 @@ package selfupdate
 import (
 	"errors"
 	"os"
-	"path/filepath"
 )
 
 // ResolveExecutable resolves the path to the real on-disk binary, following
@@ -30,8 +29,6 @@ func ResolveExecutable(
 // device). Returns ErrReplaceDenied when the rename fails due to a permission
 // error so the caller can produce a human-readable hint.
 func Replace(newFile, exePath string) error {
-	dir := filepath.Dir(exePath)
-
 	// Preserve the existing binary's mode on the replacement file.
 	if info, err := os.Stat(exePath); err == nil {
 		_ = os.Chmod(newFile, info.Mode())
@@ -41,7 +38,6 @@ func Replace(newFile, exePath string) error {
 		if isPermissionError(err) {
 			return &ErrReplaceDenied{Path: exePath}
 		}
-		_ = dir // dir is declared but we may not need it; here for clarity
 		return err
 	}
 	return nil

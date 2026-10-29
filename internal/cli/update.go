@@ -14,6 +14,17 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/selfupdate"
 )
 
+// cleanTransport is captured at package-init time, before PersistentPreRunE
+// can call applyGatewayInsecureTransport and mutate http.DefaultTransport.
+// Update and notice HTTP clients must always verify TLS, regardless of
+// --gateway-insecure.
+var cleanTransport = func() *http.Transport {
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		return base.Clone()
+	}
+	return &http.Transport{Proxy: http.ProxyFromEnvironment}
+}()
+
 func newUpdateCommand() *cobra.Command {
 	var (
 		targetVersion   string
@@ -88,7 +99,7 @@ also consider pre-releases, or --version to install a specific tag.
 				}
 			case result.Downgrade:
 				fmt.Fprintf(cmd.ErrOrStderr(), "downgraded openshellctl %s → %s (%s)\n",
-					result.CurrentTag, result.TargetTag, result.TargetTag)
+					result.CurrentTag, result.TargetTag, opts.ExePath)
 			default:
 				var fromStr string
 				if result.CurrentTag != "" {
@@ -97,6 +108,17 @@ also consider pre-releases, or --version to install a specific tag.
 				fmt.Fprintf(cmd.ErrOrStderr(), "updated openshellctl %s%s (%s)\n",
 					fromStr, result.TargetTag, opts.ExePath)
 				fmt.Fprintf(cmd.ErrOrStderr(), "note: release signatures are not yet verified (checksum only)\n")
+			}
+
+			// Refresh the notice cache so the next command doesn't re-announce
+			// the version we just installed.
+			if result.Updated {
+				cacheDir := selfupdate.CacheDir(os.Getenv)
+				cachePath := filepath.Join(cacheDir, "update-check.json")
+				_ = selfupdate.SaveCache(cachePath, selfupdate.Cache{
+					CheckedAt: time.Now().UTC(),
+					LatestTag: result.TargetTag,
+				})
 			}
 			return nil
 		},
@@ -109,11 +131,8 @@ also consider pre-releases, or --version to install a specific tag.
 	return cmd
 }
 
-// freshTransport returns a clone of the default HTTP transport to avoid
-// sharing any modifications made by --gateway-insecure / applyGatewayInsecureTransport.
+// freshTransport returns a clone of the transport captured before
+// applyGatewayInsecureTransport can modify http.DefaultTransport.
 func freshTransport() http.RoundTripper {
-	if base, ok := http.DefaultTransport.(*http.Transport); ok {
-		return base.Clone()
-	}
-	return &http.Transport{Proxy: http.ProxyFromEnvironment}
+	return cleanTransport.Clone()
 }

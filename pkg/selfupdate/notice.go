@@ -43,8 +43,10 @@ var skipCommands = map[string]bool{
 	"help":       true,
 }
 
-// noticeCacheTTL is how long a cached check result is considered fresh.
-const noticeCacheTTL = 24 * time.Hour
+// NoticeCacheTTL is how long a cached update-check result is considered fresh.
+// Exported so the CLI wiring can use the same constant for the goroutine's
+// cache-read path without duplicating the value.
+const NoticeCacheTTL = 24 * time.Hour
 
 // ShouldCheck reports whether the background update notice goroutine should
 // fire a network request for this invocation. All inputs are pure values;
@@ -65,7 +67,7 @@ func ShouldCheck(in CheckInputs) bool {
 	if in.CurrentVersion.Unknown {
 		return false
 	}
-	if in.CacheAge < noticeCacheTTL {
+	if in.CacheAge < NoticeCacheTTL {
 		return false
 	}
 	return true

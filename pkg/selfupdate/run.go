@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Options configures a single invocation of Run.
@@ -158,6 +160,12 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	// 4. Download checksum file (no digest gate — it IS the gate).
+	if err := validateDownloadURL(checksumAsset.BrowserDownloadURL); err != nil {
+		return Result{}, err
+	}
+	if err := validateDownloadURL(archiveAsset.BrowserDownloadURL); err != nil {
+		return Result{}, err
+	}
 	csPath, err := fetchToTemp(ctx, client, checksumAsset.BrowserDownloadURL, workDir, maxChecksumFileSize)
 	if csPath != "" {
 		defer os.Remove(csPath)
@@ -182,7 +190,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	// 5. Download archive and verify its SHA-256 against the checksum file.
-	archivePath, err := DownloadAndVerify(client, archiveAsset.BrowserDownloadURL, workDir, wantHex, maxBytes)
+	archivePath, err := DownloadAndVerify(ctx, client, archiveAsset.BrowserDownloadURL, workDir, wantHex, maxBytes)
 	if archivePath != "" {
 		defer os.Remove(archivePath)
 	}
@@ -210,6 +218,26 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 
 	res.Updated = true
 	return res, nil
+}
+
+// validateDownloadURL returns an error if rawURL is not an https URL whose
+// host is github.com, objects.githubusercontent.com, or localhost (the last
+// is allowed so httptest.Server URLs work in tests).
+func validateDownloadURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid download URL: %w", err)
+	}
+	host := strings.ToLower(u.Hostname())
+	switch {
+	case host == "github.com",
+		host == "objects.githubusercontent.com",
+		host == "localhost",
+		host == "127.0.0.1",
+		host == "::1":
+		return nil
+	}
+	return fmt.Errorf("download URL has unexpected host %q: must be github.com or objects.githubusercontent.com", host)
 }
 
 // managedInstallHint returns a per-method instruction for the user.
