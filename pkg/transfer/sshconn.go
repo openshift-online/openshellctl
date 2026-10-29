@@ -73,11 +73,11 @@ func (tc *tunnelConn) firstErr() error { return tc.err }
 
 func rwcConn(rwc io.ReadWriteCloser) net.Conn { return &tunnelConn{ReadWriteCloser: rwc} }
 
-func (tunnelConn) LocalAddr() net.Addr                { return tunnelAddr{} }
-func (tunnelConn) RemoteAddr() net.Addr               { return tunnelAddr{} }
-func (tunnelConn) SetDeadline(_ time.Time) error      { return nil }
-func (tunnelConn) SetReadDeadline(_ time.Time) error  { return nil }
-func (tunnelConn) SetWriteDeadline(_ time.Time) error { return nil }
+func (*tunnelConn) LocalAddr() net.Addr                { return tunnelAddr{} }
+func (*tunnelConn) RemoteAddr() net.Addr               { return tunnelAddr{} }
+func (*tunnelConn) SetDeadline(_ time.Time) error      { return nil }
+func (*tunnelConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (*tunnelConn) SetWriteDeadline(_ time.Time) error { return nil }
 
 type tunnelAddr struct{}
 
