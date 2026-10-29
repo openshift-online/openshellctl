@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -31,17 +32,29 @@ func (f *staticFetcher) GetRelease(_ context.Context, tag string) (selfupdate.Re
 	return selfupdate.Release{}, &selfupdate.ErrTagNotFound{Tag: tag}
 }
 
-// noticeInputsForTest returns a CheckInputs that passes every gating condition
-// in ShouldCheck: both TTYs true, no CI, known stable version, stale cache.
-// Callers override fields to test individual gates.
-func noticeInputsForTest(current selfupdate.Current) selfupdate.CheckInputs {
+// noticeEnvForTest returns a CheckInputs whose env-derived fields pass every
+// gating condition in ShouldCheck: both TTYs true, no CI, known stable version,
+// stale cache. Tests override individual fields to exercise specific gates.
+// Command and NoUpdateCheck are NOT set here — they always come from the real
+// cobra invocation via startNoticeGoroutine.
+func noticeEnvForTest(current selfupdate.Current) selfupdate.CheckInputs {
 	return selfupdate.CheckInputs{
-		Command:        "sandbox",
 		StdoutIsTTY:    true,
 		StderrIsTTY:    true,
 		CI:             "",
 		CurrentVersion: current,
 		CacheAge:       selfupdate.NoticeCacheTTL + 1,
+	}
+}
+
+// noticeDeps builds a cliDeps with the given env override and fetcher, pointing
+// the cache at an empty temp directory so on-disk cache never interferes.
+func noticeDeps(t *testing.T, override *selfupdate.CheckInputs, fetcher selfupdate.Fetcher) cliDeps {
+	t.Helper()
+	return cliDeps{
+		NoticeEnvOverride: override,
+		NoticeFetcher:     fetcher,
+		NoticeCachePath:   filepath.Join(t.TempDir(), "update-check.json"),
 	}
 }
 
@@ -69,13 +82,10 @@ func runCmdCapturingNotice(t *testing.T, deps cliDeps, args ...string) (string, 
 
 func TestNotice_PrintedWhenNewerVersionAvailable(t *testing.T) {
 	current := selfupdate.ParseCurrent("v0.1.5")
-	in := noticeInputsForTest(current)
-	deps := cliDeps{
-		NoticeInputs: &in,
-		NoticeFetcher: &staticFetcher{releases: []selfupdate.Release{
-			{TagName: "v0.1.6"},
-		}},
-	}
+	env := noticeEnvForTest(current)
+	deps := noticeDeps(t, &env, &staticFetcher{releases: []selfupdate.Release{
+		{TagName: "v0.1.6"},
+	}})
 
 	_, notice, _ := runCmdCapturingNotice(t, deps, "sandbox", "list")
 
@@ -87,50 +97,51 @@ func TestNotice_PrintedWhenNewerVersionAvailable(t *testing.T) {
 	}
 }
 
+// TestNotice_AbsentForExcludedCommands verifies that no update notice is
+// printed when the user invokes an excluded command. Command exclusion is
+// gated by cmd.Name() in startNoticeGoroutine, which flows from the real
+// cobra args — no hand-setting of Command in the override.
 func TestNotice_AbsentForExcludedCommands(t *testing.T) {
-	excludedCommands := []struct {
-		noticeCmd string
-		runArgs   []string
+	cases := []struct {
+		name    string
+		runArgs []string
 	}{
-		{"update", []string{"update", "--check"}},
+		// "version" has a RunE that exercises the full PersistentPreRunE path;
+		// cmd.Name()="version" → ShouldCheck returns false → no notice.
 		{"version", []string{"version"}},
+		// "update --help" does not invoke RunE so PersistentPreRunE is skipped,
+		// but no notice is produced regardless — which is the tested invariant.
+		{"update", []string{"update", "--help"}},
 	}
 
-	for _, tc := range excludedCommands {
-		t.Run(tc.noticeCmd, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			current := selfupdate.ParseCurrent("v0.1.5")
-			in := noticeInputsForTest(current)
-			in.Command = tc.noticeCmd // ShouldCheck returns false for this command
-
-			deps := cliDeps{
-				NoticeInputs: &in,
-				NoticeFetcher: &staticFetcher{releases: []selfupdate.Release{
-					{TagName: "v0.1.6"},
-				}},
-			}
+			env := noticeEnvForTest(current)
+			deps := noticeDeps(t, &env, &staticFetcher{releases: []selfupdate.Release{
+				{TagName: "v0.1.6"},
+			}})
 
 			_, notice, _ := runCmdCapturingNotice(t, deps, tc.runArgs...)
 
 			if notice != "" {
-				t.Errorf("expected no notice for command %q, got %q", tc.noticeCmd, notice)
+				t.Errorf("expected no notice for command %q, got %q", tc.name, notice)
 			}
 		})
 	}
 }
 
+// TestNotice_AbsentWithNoUpdateCheckFlag verifies that --no-update-check
+// suppresses the notice. The flag is parsed by cobra and flows through
+// pf.noUpdateCheck in startNoticeGoroutine — not set in the env override.
 func TestNotice_AbsentWithNoUpdateCheckFlag(t *testing.T) {
 	current := selfupdate.ParseCurrent("v0.1.5")
-	in := noticeInputsForTest(current)
-	in.NoUpdateCheck = true
+	env := noticeEnvForTest(current)
+	deps := noticeDeps(t, &env, &staticFetcher{releases: []selfupdate.Release{
+		{TagName: "v0.1.6"},
+	}})
 
-	deps := cliDeps{
-		NoticeInputs: &in,
-		NoticeFetcher: &staticFetcher{releases: []selfupdate.Release{
-			{TagName: "v0.1.6"},
-		}},
-	}
-
-	_, notice, _ := runCmdCapturingNotice(t, deps, "sandbox", "list")
+	_, notice, _ := runCmdCapturingNotice(t, deps, "--no-update-check", "sandbox", "list")
 
 	if notice != "" {
 		t.Errorf("expected no notice with --no-update-check, got %q", notice)
@@ -139,14 +150,10 @@ func TestNotice_AbsentWithNoUpdateCheckFlag(t *testing.T) {
 
 func TestNotice_AbsentForDevVersion(t *testing.T) {
 	current := selfupdate.ParseCurrent("dev") // Unknown: true
-	in := noticeInputsForTest(current)
-
-	deps := cliDeps{
-		NoticeInputs: &in,
-		NoticeFetcher: &staticFetcher{releases: []selfupdate.Release{
-			{TagName: "v0.1.6"},
-		}},
-	}
+	env := noticeEnvForTest(current)
+	deps := noticeDeps(t, &env, &staticFetcher{releases: []selfupdate.Release{
+		{TagName: "v0.1.6"},
+	}})
 
 	_, notice, _ := runCmdCapturingNotice(t, deps, "sandbox", "list")
 
@@ -157,16 +164,13 @@ func TestNotice_AbsentForDevVersion(t *testing.T) {
 
 func TestNotice_DroppedWhenFetcherExceedsGracePeriod(t *testing.T) {
 	current := selfupdate.ParseCurrent("v0.1.5")
-	in := noticeInputsForTest(current)
+	env := noticeEnvForTest(current)
 
 	// A fetcher that blocks longer than the grace period so collectNotice times out.
 	blocker := &blockingFetcher{block: make(chan struct{})}
 	t.Cleanup(func() { close(blocker.block) })
 
-	deps := cliDeps{
-		NoticeInputs:  &in,
-		NoticeFetcher: blocker,
-	}
+	deps := noticeDeps(t, &env, blocker)
 
 	start := time.Now()
 	_, notice, _ := runCmdCapturingNotice(t, deps, "sandbox", "list")

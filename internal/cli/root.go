@@ -118,52 +118,21 @@ func NewRootCommand() *cobra.Command {
 // startNoticeGoroutine launches the background update-check if all gating
 // conditions are met. The result is sent to a buffered channel stored on the
 // command's context so Execute can collect it after the command returns.
+//
+// The function has a single shared body. Tests inject an env override and a
+// fetcher via cliDeps; production code leaves both nil and the defaults are
+// used. Command and NoUpdateCheck always come from the real cobra invocation
+// so those code paths remain under test.
 func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
-	// Test-injection path: when cliDeps carries NoticeInputs the caller
-	// controls all gating (TTY, command, version, cache age) without touching
-	// the environment. Production code never sets these fields.
-	if deps, ok := depsFrom(cmd.Context()); ok && deps.NoticeInputs != nil {
-		if !selfupdate.ShouldCheck(*deps.NoticeInputs) {
-			return
-		}
-		if deps.NoticeFetcher == nil {
-			return // no network call without an injected fetcher
-		}
-		current := deps.NoticeInputs.CurrentVersion
-		fetcher := deps.NoticeFetcher
+	deps, _ := depsFrom(cmd.Context())
 
-		ch := make(chan noticeResult, 1)
-		root := cmd.Root()
-		ctx := root.Context()
-		root.SetContext(context.WithValue(ctx, noticeChKey{}, ch))
-
-		noticeBudget := 2 * time.Second
-		go func() {
-			noticeCtx, cancel := context.WithTimeout(ctx, noticeBudget)
-			defer cancel()
-
-			rels, err := fetcher.ListReleases(noticeCtx)
-			if err != nil {
-				ch <- noticeResult{}
-				return
-			}
-			rel, ok := selfupdate.SelectRelease(rels, current.IsPrerelease)
-			if !ok {
-				ch <- noticeResult{}
-				return
-			}
-			text := selfupdate.NoticeText(current.Tag, rel.TagName, pf.noColor)
-			ch <- noticeResult{text: text, latestTag: rel.TagName}
-		}()
-		return
-	}
-
-	// Production path.
 	info := version.Get()
 	current := selfupdate.ParseCurrent(info.Version)
 
-	cacheDir := selfupdate.CacheDir(os.Getenv)
-	cachePath := filepath.Join(cacheDir, "update-check.json")
+	cachePath := filepath.Join(selfupdate.CacheDir(os.Getenv), "update-check.json")
+	if deps.NoticeCachePath != "" {
+		cachePath = deps.NoticeCachePath
+	}
 	cache, cacheErr := selfupdate.LoadCache(cachePath)
 	var cacheAge time.Duration
 	if cacheErr == nil {
@@ -172,8 +141,9 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 		cacheAge = selfupdate.NoticeCacheTTL + 1 // treat missing/corrupt as expired
 	}
 
-	// Pass a large cacheAge so ShouldCheck evaluates only the TTY/CI/command/
-	// no-update-check conditions; we handle the 24 h network-call gate ourselves.
+	// Build inputs from the real cobra invocation. Command comes from cmd.Name()
+	// and NoUpdateCheck from the --no-update-check flag so those gating paths
+	// are always exercised through the actual CLI plumbing.
 	in := selfupdate.CheckInputs{
 		Command:        cmd.Name(),
 		NoUpdateCheck:  pf.noUpdateCheck || os.Getenv("OPENSHELL_NO_UPDATE_CHECK") != "",
@@ -183,6 +153,17 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 		CurrentVersion: current,
 		CacheAge:       selfupdate.NoticeCacheTTL + 1,
 	}
+	// Override only the environment-derived fields so tests can control TTY
+	// state, CI, current version, and cache age without process-level tricks.
+	// Command and NoUpdateCheck are intentionally excluded from the override.
+	if o := deps.NoticeEnvOverride; o != nil {
+		in.StdoutIsTTY = o.StdoutIsTTY
+		in.StderrIsTTY = o.StderrIsTTY
+		in.CI = o.CI
+		in.CurrentVersion = o.CurrentVersion
+		in.CacheAge = o.CacheAge
+	}
+
 	if !selfupdate.ShouldCheck(in) {
 		return
 	}
@@ -190,7 +171,7 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 	// If cache is fresh and already has a newer tag, send the notice immediately
 	// without a network call — same pattern as the GitHub CLI.
 	if cacheErr == nil && cacheAge < selfupdate.NoticeCacheTTL && cache.LatestTag != "" {
-		text := selfupdate.NoticeText(current.Tag, cache.LatestTag, pf.noColor)
+		text := selfupdate.NoticeText(in.CurrentVersion.Tag, cache.LatestTag, pf.noColor)
 		if text != "" {
 			ch := make(chan noticeResult, 1)
 			root := cmd.Root()
@@ -213,23 +194,25 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 		noticeCtx, cancel := context.WithTimeout(ctx, noticeBudget)
 		defer cancel()
 
-		fetcher := &selfupdate.GitHubFetcher{
-			Client: &http.Client{
-				Timeout:   noticeBudget,
-				Transport: freshTransport(),
-			},
-			Owner:   "openshift-online",
-			Repo:    "openshellctl",
-			Version: info.Version,
-			// No Token for the notice goroutine — must not spend or leak credentials.
+		f := deps.NoticeFetcher
+		if f == nil {
+			f = &selfupdate.GitHubFetcher{
+				Client: &http.Client{
+					Timeout:   noticeBudget,
+					Transport: freshTransport(),
+				},
+				Owner:   "openshift-online",
+				Repo:    "openshellctl",
+				Version: info.Version,
+				// No Token — must not spend or leak credentials.
+			}
 		}
-		rels, err := fetcher.ListReleases(noticeCtx)
+		rels, err := f.ListReleases(noticeCtx)
 		if err != nil {
 			ch <- noticeResult{}
 			return
 		}
-		allowPre := current.IsPrerelease
-		rel, ok := selfupdate.SelectRelease(rels, allowPre)
+		rel, ok := selfupdate.SelectRelease(rels, in.CurrentVersion.IsPrerelease)
 		if !ok {
 			ch <- noticeResult{}
 			return
@@ -240,8 +223,7 @@ func startNoticeGoroutine(cmd *cobra.Command, pf *persistentFlags) {
 			CheckedAt: time.Now().UTC(),
 			LatestTag: latestTag,
 		})
-
-		text := selfupdate.NoticeText(current.Tag, latestTag, pf.noColor)
+		text := selfupdate.NoticeText(in.CurrentVersion.Tag, latestTag, pf.noColor)
 		ch <- noticeResult{text: text, latestTag: latestTag}
 	}()
 }
