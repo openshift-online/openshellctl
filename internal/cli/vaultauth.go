@@ -200,15 +200,23 @@ func resolveVaultAuthSource(ctx context.Context, allowPersistedFallback bool) er
 		return err
 	}
 
-	// AC3 (MCS-357): when the user supplied an explicit --gateway/-g and Vault
-	// also resolved a (different) gateway, warn rather than silently dropping
-	// Vault's value. ToViperDefaults still excludes it — the explicit flag wins
-	// — but the discrepancy is surfaced so the user knows the secret may be
-	// scoped to a different gateway.
-	userGW := viper.GetString("gateway")
-	if vaultGW := fields["gateway"]; overrides.Gateway && vaultGW != "" && vaultGW != userGW {
-		fmt.Fprintf(os.Stderr, "Warning: vault secret contains gateway=%q but --gateway=%q was given; vault value ignored\n",
-			vaultGW, userGW)
+	// AC3 (MCS-357): when the user supplied an explicit gateway value (via
+	// --gateway/-g, --gateway-endpoint, or their OPENSHELL_* equivalents)
+	// and Vault's secret contains a DIFFERENT value for the same field, warn
+	// rather than silently dropping Vault's value. ToViperDefaults still
+	// excludes it — the explicit value wins — but the discrepancy is surfaced
+	// so the user knows the secret may be scoped to a different gateway.
+	if userGW := viper.GetString("gateway"); overrides.Gateway {
+		if vaultGW := fields["gateway"]; vaultGW != "" && vaultGW != userGW {
+			fmt.Fprintf(os.Stderr, "Warning: vault secret contains gateway=%q but gateway is already set to %q; vault value ignored\n",
+				vaultGW, userGW)
+		}
+	}
+	if userEP := viper.GetString("gateway-endpoint"); overrides.GatewayEndpoint {
+		if vaultEP := fields["gateway-endpoint"]; vaultEP != "" && vaultEP != userEP {
+			fmt.Fprintf(os.Stderr, "Warning: vault secret contains gateway-endpoint=%q but gateway-endpoint is already set to %q; vault value ignored\n",
+				vaultEP, userEP)
+		}
 	}
 
 	for key, val := range vaultconfig.ToViperDefaults(fields, overrides) {

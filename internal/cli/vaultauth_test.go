@@ -380,6 +380,46 @@ func TestApplyVaultAuthSource_SameGatewayNoWarn(t *testing.T) {
 	}
 }
 
+// TestApplyVaultAuthSource_GatewayEndpointMismatchWarnsToStderr checks the
+// symmetric AC3 path for --gateway-endpoint: when the explicit endpoint
+// differs from Vault's gateway-endpoint field, a warning is printed.
+func TestApplyVaultAuthSource_GatewayEndpointMismatchWarnsToStderr(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("gateway-endpoint", "https://my.gw.example.com") // explicit endpoint
+
+	reader := &fakeVaultReader{data: map[string]any{
+		"gateway-endpoint": "https://vault.gw.example.com", // different value in Vault
+	}}
+
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = origStderr })
+
+	runErr := applyVaultAuthSource(withFakeVaultReader(reader))
+
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("close write end: %v", closeErr)
+	}
+	var buf strings.Builder
+	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
+		t.Fatalf("read stderr: %v", copyErr)
+	}
+
+	if runErr != nil {
+		t.Fatalf("unexpected error: %v", runErr)
+	}
+	stderr := buf.String()
+	if !strings.Contains(stderr, "vault.gw.example.com") || !strings.Contains(stderr, "my.gw.example.com") {
+		t.Errorf("expected warning mentioning both endpoint values, got stderr=%q", stderr)
+	}
+}
+
 func TestApplyVaultAuthSource_ReaderErrorPropagatesWhenNothingOverridden(t *testing.T) {
 	resetVaultTestState(t)
 	viper.Set("vault-kv-mount", "osd-sre")
