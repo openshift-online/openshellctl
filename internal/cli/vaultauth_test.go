@@ -35,6 +35,31 @@ func withFakeVaultReader(reader vaultconfig.VaultReader) context.Context {
 	return withVaultDeps(context.Background(), vaultDeps{Reader: reader})
 }
 
+// captureStderr redirects os.Stderr to an in-memory pipe for the duration of
+// fn, then returns whatever was written. t.Cleanup restores os.Stderr even if
+// fn calls t.Fatalf or panics, so subsequent tests in the binary are not left
+// with a closed or invalid stderr fd.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	t.Cleanup(func() { os.Stderr = orig })
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("captureStderr: os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	fn()
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("captureStderr: close write end: %v", closeErr)
+	}
+	var buf strings.Builder
+	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
+		t.Fatalf("captureStderr: read stderr: %v", copyErr)
+	}
+	return buf.String()
+}
+
 // resetVaultOnce resets applyVaultAuthSource's process-lifetime memoization
 // (vaultAuthOnce/vaultAuthResult). Shared by resetVaultTestState here and by
 // runCmdCtx (sandbox_cmd_test.go), so every test path that can reach
@@ -312,29 +337,14 @@ func TestApplyVaultAuthSource_GatewayMismatchWarnsToStderr(t *testing.T) {
 		"oidc-audience": "aud",
 	}}
 
-	// Capture stderr to verify the warning is printed.
-	origStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stderr = w
-
-	runErr := applyVaultAuthSource(withFakeVaultReader(reader))
-
-	if closeErr := w.Close(); closeErr != nil {
-		t.Fatalf("close write end: %v", closeErr)
-	}
-	var buf strings.Builder
-	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
-		t.Fatalf("read stderr: %v", copyErr)
-	}
-	os.Stderr = origStderr
+	var runErr error
+	stderr := captureStderr(t, func() {
+		runErr = applyVaultAuthSource(withFakeVaultReader(reader))
+	})
 
 	if runErr != nil {
 		t.Fatalf("unexpected error: %v", runErr)
 	}
-	stderr := buf.String()
 	if !strings.Contains(stderr, "vault-gateway") || !strings.Contains(stderr, "my-gateway") {
 		t.Errorf("expected warning mentioning both gateway values, got stderr=%q", stderr)
 	}
@@ -354,28 +364,15 @@ func TestApplyVaultAuthSource_SameGatewayNoWarn(t *testing.T) {
 
 	reader := &fakeVaultReader{data: map[string]any{"gateway": "same-gw"}}
 
-	origStderr := os.Stderr
-	r, w, pipeErr := os.Pipe()
-	if pipeErr != nil {
-		t.Fatalf("os.Pipe: %v", pipeErr)
-	}
-	os.Stderr = w
-
-	runErr := applyVaultAuthSource(withFakeVaultReader(reader))
-
-	if closeErr := w.Close(); closeErr != nil {
-		t.Fatalf("close write end: %v", closeErr)
-	}
-	var buf strings.Builder
-	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
-		t.Fatalf("read stderr: %v", copyErr)
-	}
-	os.Stderr = origStderr
+	var runErr error
+	stderr := captureStderr(t, func() {
+		runErr = applyVaultAuthSource(withFakeVaultReader(reader))
+	})
 
 	if runErr != nil {
 		t.Fatalf("unexpected error: %v", runErr)
 	}
-	if stderr := buf.String(); strings.Contains(stderr, "Warning") {
+	if strings.Contains(stderr, "Warning") {
 		t.Errorf("unexpected warning when gateways match: %q", stderr)
 	}
 }
@@ -393,28 +390,14 @@ func TestApplyVaultAuthSource_GatewayEndpointMismatchWarnsToStderr(t *testing.T)
 		"gateway-endpoint": "https://vault.gw.example.com", // different value in Vault
 	}}
 
-	origStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stderr = w
-	t.Cleanup(func() { os.Stderr = origStderr })
-
-	runErr := applyVaultAuthSource(withFakeVaultReader(reader))
-
-	if closeErr := w.Close(); closeErr != nil {
-		t.Fatalf("close write end: %v", closeErr)
-	}
-	var buf strings.Builder
-	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
-		t.Fatalf("read stderr: %v", copyErr)
-	}
+	var runErr error
+	stderr := captureStderr(t, func() {
+		runErr = applyVaultAuthSource(withFakeVaultReader(reader))
+	})
 
 	if runErr != nil {
 		t.Fatalf("unexpected error: %v", runErr)
 	}
-	stderr := buf.String()
 	if !strings.Contains(stderr, "vault.gw.example.com") || !strings.Contains(stderr, "my.gw.example.com") {
 		t.Errorf("expected warning mentioning both endpoint values, got stderr=%q", stderr)
 	}
@@ -438,7 +421,8 @@ func TestApplyVaultAuthSource_ReaderErrorPropagatesWhenNothingOverridden(t *test
 // TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientIDOverridden pins
 // AC2 of MCS-357: when the user has supplied ALL auth values via flag/env —
 // both the OIDC client-credentials cluster and the gateway cluster — a Vault
-// read failure is demoted to a no-op. Vault has nothing left to contribute.
+// read failure is demoted to a no-op and a warning is emitted. Vault has
+// nothing left to contribute.
 func TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientIDOverridden(t *testing.T) {
 	resetVaultTestState(t)
 	viper.Set("vault-kv-mount", "osd-sre")
@@ -447,15 +431,22 @@ func TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientIDOverridden(t *te
 	viper.Set("gateway", "my-gw")            // explicit gateway — Vault has nothing left
 
 	reader := &fakeVaultReader{err: &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}}
-	err := applyVaultAuthSource(withFakeVaultReader(reader))
+	var err error
+	stderr := captureStderr(t, func() {
+		err = applyVaultAuthSource(withFakeVaultReader(reader))
+	})
 	if err != nil {
 		t.Errorf("expected nil (non-fatal when all clusters overridden), got: %v", err)
+	}
+	if !strings.Contains(stderr, "Warning") {
+		t.Errorf("expected a warning on stderr about the suppressed vault error, got: %q", stderr)
 	}
 }
 
 // TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientSecretFileOverridden
 // covers the --client-secret-file path: it also occupies the ClientSecretSource
-// override slot, so a Vault failure is equally non-fatal when gateway is also set.
+// override slot, so a Vault failure is equally non-fatal when gateway is also set,
+// and a warning is emitted.
 func TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientSecretFileOverridden(t *testing.T) {
 	resetVaultTestState(t)
 	viper.Set("vault-kv-mount", "osd-sre")
@@ -464,9 +455,15 @@ func TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientSecretFileOverridd
 	viper.Set("gateway", "my-gw")                            // explicit gateway
 
 	reader := &fakeVaultReader{err: &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}}
-	err := applyVaultAuthSource(withFakeVaultReader(reader))
+	var err error
+	stderr := captureStderr(t, func() {
+		err = applyVaultAuthSource(withFakeVaultReader(reader))
+	})
 	if err != nil {
 		t.Errorf("expected nil (non-fatal when all clusters overridden), got: %v", err)
+	}
+	if !strings.Contains(stderr, "Warning") {
+		t.Errorf("expected a warning on stderr about the suppressed vault error, got: %q", stderr)
 	}
 }
 
@@ -536,10 +533,17 @@ func TestApplyVaultAuthSource_ReaderBuildErrorNonFatalWhenAllClustersOverridden(
 	t.Setenv("VAULT_TOKEN", "")
 
 	// No fake reader: forces the real vaultReaderFor path, which fails with
-	// ErrVaultAddrNotSet. With both clusters overridden this must be non-fatal.
-	err := applyVaultAuthSource(context.Background())
+	// ErrVaultAddrNotSet. With both clusters overridden this must be non-fatal
+	// and emit a warning.
+	var err error
+	stderr := captureStderr(t, func() {
+		err = applyVaultAuthSource(context.Background())
+	})
 	if err != nil {
 		t.Errorf("expected nil (reader build error non-fatal when all clusters overridden), got: %v", err)
+	}
+	if !strings.Contains(stderr, "Warning") {
+		t.Errorf("expected a warning on stderr about the suppressed vault error, got: %q", stderr)
 	}
 }
 
