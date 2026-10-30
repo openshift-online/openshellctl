@@ -184,6 +184,38 @@ func TestApplyVaultAuthSource_ClientSecretFileBeatsVaultSecret(t *testing.T) {
 	}
 }
 
+// TestApplyVaultAuthSource_ClientSecretFileAlsoExcludesIssuerAndAudience is an
+// end-to-end pin of AC1 for the --client-secret-file path: a Vault secret with
+// oidc-issuer and oidc-audience must not pollute viper when ClientSecretSource
+// is already occupied.
+func TestApplyVaultAuthSource_ClientSecretFileAlsoExcludesIssuerAndAudience(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("client-secret-file", "/run/secrets/my-secret") // ClientSecretSource
+
+	reader := &fakeVaultReader{data: map[string]any{
+		"oidc-client-id":     "vault-client",
+		"oidc-client-secret": "vault-secret",
+		"oidc-issuer":        "https://prod.issuer.example.com",
+		"oidc-audience":      "prod-audience",
+		"oidc-scopes":        "openid profile email",
+	}}
+	if err := applyVaultAuthSource(withFakeVaultReader(reader)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The client pair (including issuer and audience) must be entirely blocked.
+	for _, key := range []string{"oidc-client-id", "oidc.client_secret", "oidc-issuer", "oidc-audience"} {
+		if got := viper.GetString(key); got != "" {
+			t.Errorf("%s = %q, want empty (client-secret-file activates cluster rule)", key, got)
+		}
+	}
+	// oidc-scopes is NOT part of the cluster and must still come from Vault.
+	if got := viper.GetString("oidc-scopes"); got != "openid profile email" {
+		t.Errorf("oidc-scopes = %q, want vault value (scopes not blocked by cluster rule)", got)
+	}
+}
+
 func TestApplyVaultAuthSource_GatewayOverrideAloneDoesNotExcludeIssuerOrAudience(t *testing.T) {
 	resetVaultTestState(t)
 	viper.Set("vault-kv-mount", "osd-sre")
@@ -286,18 +318,25 @@ func TestApplyVaultAuthSource_GatewayMismatchWarnsToStderr(t *testing.T) {
 
 	// Capture stderr to verify the warning is printed.
 	origStderr := os.Stderr
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
 	os.Stderr = w
 
-	err := applyVaultAuthSource(withFakeVaultReader(reader))
+	runErr := applyVaultAuthSource(withFakeVaultReader(reader))
 
-	_ = w.Close()
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("close write end: %v", closeErr)
+	}
 	var buf strings.Builder
-	_, _ = io.Copy(&buf, r)
+	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
+		t.Fatalf("read stderr: %v", copyErr)
+	}
 	os.Stderr = origStderr
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if runErr != nil {
+		t.Fatalf("unexpected error: %v", runErr)
 	}
 	stderr := buf.String()
 	if !strings.Contains(stderr, "vault-gateway") || !strings.Contains(stderr, "my-gateway") {
@@ -320,18 +359,25 @@ func TestApplyVaultAuthSource_SameGatewayNoWarn(t *testing.T) {
 	reader := &fakeVaultReader{data: map[string]any{"gateway": "same-gw"}}
 
 	origStderr := os.Stderr
-	r, w, _ := os.Pipe()
+	r, w, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatalf("os.Pipe: %v", pipeErr)
+	}
 	os.Stderr = w
 
-	err := applyVaultAuthSource(withFakeVaultReader(reader))
+	runErr := applyVaultAuthSource(withFakeVaultReader(reader))
 
-	_ = w.Close()
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("close write end: %v", closeErr)
+	}
 	var buf strings.Builder
-	_, _ = io.Copy(&buf, r)
+	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
+		t.Fatalf("read stderr: %v", copyErr)
+	}
 	os.Stderr = origStderr
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if runErr != nil {
+		t.Fatalf("unexpected error: %v", runErr)
 	}
 	if stderr := buf.String(); strings.Contains(stderr, "Warning") {
 		t.Errorf("unexpected warning when gateways match: %q", stderr)
@@ -476,7 +522,7 @@ func TestApplyVaultAuthSource_MemoizedErrorIsAlsoCached(t *testing.T) {
 // fake reader records a call that must never happen.
 func TestVersionCommand_NeverTouchesVaultEvenWhenConfigured(t *testing.T) {
 	reader := &fakeVaultReader{err: errors.New("must not be called")}
-	ctx := withVaultDeps(context.Background(), vaultDeps{Reader: reader})
+	ctx := withFakeVaultReader(reader)
 
 	out, err := runCmdCtx(t, ctx, "--vault-kv-mount", "osd-sre", "--vault-kv-path", "rosa-agent", "version")
 	if err != nil {
@@ -498,7 +544,7 @@ func TestGatewayLogout_PicksUpVaultSuppliedGatewayName(t *testing.T) {
 	setupLogoutGatewayTree(t)
 
 	reader := &fakeVaultReader{data: map[string]any{"gateway": "rosa"}}
-	ctx := withVaultDeps(context.Background(), vaultDeps{Reader: reader})
+	ctx := withFakeVaultReader(reader)
 	out, err := runCmdCtx(t, ctx, "--vault-kv-mount", "osd-sre", "--vault-kv-path", "rosa-agent", "gateway", "logout")
 	if err != nil {
 		t.Fatalf("gateway logout: %v\noutput:\n%s", err, out)

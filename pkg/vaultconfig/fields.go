@@ -102,7 +102,7 @@ func ExtractFields(data map[string]any, prefix string) (map[string]string, error
 //     "unset" key to another kind of "unset");
 //   - pairing: the gateway pair (gateway/gateway-endpoint) is atomic — if
 //     either is overridden, both are excluded from Vault defaults;
-//   - clustering: when the client-credentials pair (oidc-client-id or
+//   - clustering: when the client-credentials cluster (oidc-client-id or
 //     oidc-client-secret) is explicitly set, oidc-issuer and oidc-audience
 //     are also excluded — Vault must not supply a production issuer/audience
 //     for a non-production client identity (MCS-357);

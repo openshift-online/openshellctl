@@ -188,11 +188,10 @@ func resolveVaultAuthSource(ctx context.Context, allowPersistedFallback bool) er
 	// Vault's value. ToViperDefaults still excludes it — the explicit flag wins
 	// — but the discrepancy is surfaced so the user knows the secret may be
 	// scoped to a different gateway.
-	if overrides.Gateway {
-		if vaultGW := fields["gateway"]; vaultGW != "" && vaultGW != viper.GetString("gateway") {
-			fmt.Fprintf(os.Stderr, "Warning: vault secret contains gateway=%q but --gateway=%q was given; vault value ignored\n",
-				vaultGW, viper.GetString("gateway"))
-		}
+	userGW := viper.GetString("gateway")
+	if vaultGW := fields["gateway"]; overrides.Gateway && vaultGW != "" && vaultGW != userGW {
+		fmt.Fprintf(os.Stderr, "Warning: vault secret contains gateway=%q but --gateway=%q was given; vault value ignored\n",
+			vaultGW, userGW)
 	}
 
 	for key, val := range vaultconfig.ToViperDefaults(fields, overrides) {
