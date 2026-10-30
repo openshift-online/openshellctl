@@ -216,6 +216,12 @@ func Run(ctx context.Context, d Deps) []CheckResult {
 		if !gwDialed {
 			// Roles used the token-claims fallback (dial failed or deps not
 			// wired); attempt a fresh dial now for Providers specifically.
+			// Close any closer the failed Roles dial may have returned before
+			// overwriting gwCloser with the new one.
+			if gwCloser != nil {
+				_ = gwCloser.Close()
+				gwCloser = nil
+			}
 			var err error
 			gw, gwCloser, err = d.Dial(ctx, target, src)
 			if err != nil {

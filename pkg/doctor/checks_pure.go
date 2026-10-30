@@ -15,8 +15,9 @@ import (
 
 // gatewayRoles mirrors auth.PreflightWarnings' role check (the gateway
 // accepts either; see pkg/auth/preflight.go) — duplicated here, not
-// imported, because CheckRoles needs its own independent pass/fail/NextStep
-// shape rather than PreflightWarnings' combined-string-slice return.
+// imported, because CheckRolesGateway/CheckRolesToken need their own
+// independent pass/fail/skip/NextStep shape rather than PreflightWarnings'
+// combined-string-slice return.
 var gatewayRoles = []string{"openshell-user", "openshell-admin"}
 
 // CheckEndpointURL confirms the resolved gateway endpoint normalizes
