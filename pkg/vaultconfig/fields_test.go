@@ -244,51 +244,45 @@ func TestToViperDefaults(t *testing.T) {
 			},
 		},
 		{
-			name:   "oidc client id override excludes client-id, client-secret, issuer, and audience",
+			name:   "oidc client id override excludes all cluster fields including scopes",
 			fields: allFields,
 			ov:     Overrides{OIDCClientID: true},
 			want: map[string]string{
 				"gateway":          "rosa",
 				"gateway-endpoint": "https://gw.example.com",
-				"oidc-scopes":      "openid profile",
 			},
 		},
 		{
-			name:   "client secret source override excludes client-id, client-secret, issuer, and audience",
+			name:   "client secret source override excludes all cluster fields including scopes",
 			fields: allFields,
 			ov:     Overrides{ClientSecretSource: true},
 			want: map[string]string{
 				"gateway":          "rosa",
 				"gateway-endpoint": "https://gw.example.com",
-				"oidc-scopes":      "openid profile",
 			},
 		},
 		{
-			name:   "both pairs overridden leaves only oidc-scopes (issuer/audience excluded with client pair)",
+			name:   "both pairs overridden leaves nothing (all cluster fields blocked, gateway pair blocked)",
 			fields: allFields,
 			ov:     Overrides{Gateway: true, OIDCClientID: true},
-			want: map[string]string{
-				"oidc-scopes": "openid profile",
-			},
+			want:   map[string]string{},
 		},
 		{
-			name:   "client pair override also excludes oidc-issuer and oidc-audience",
+			name:   "client pair override also excludes oidc-issuer, oidc-audience, and oidc-scopes",
 			fields: allFields,
 			ov:     Overrides{OIDCClientID: true},
 			want: map[string]string{
 				"gateway":          "rosa",
 				"gateway-endpoint": "https://gw.example.com",
-				"oidc-scopes":      "openid profile",
 			},
 		},
 		{
-			name:   "client secret source override also excludes oidc-issuer and oidc-audience",
+			name:   "client secret source override also excludes oidc-issuer, oidc-audience, and oidc-scopes",
 			fields: allFields,
 			ov:     Overrides{ClientSecretSource: true},
 			want: map[string]string{
 				"gateway":          "rosa",
 				"gateway-endpoint": "https://gw.example.com",
-				"oidc-scopes":      "openid profile",
 			},
 		},
 		{

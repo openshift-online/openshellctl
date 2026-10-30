@@ -204,15 +204,11 @@ func TestApplyVaultAuthSource_ClientSecretFileAlsoExcludesIssuerAndAudience(t *t
 	if err := applyVaultAuthSource(withFakeVaultReader(reader)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// The client pair (including issuer and audience) must be entirely blocked.
-	for _, key := range []string{"oidc-client-id", "oidc.client_secret", "oidc-issuer", "oidc-audience"} {
+	// The entire cluster (including issuer, audience, and scopes) must be blocked.
+	for _, key := range []string{"oidc-client-id", "oidc.client_secret", "oidc-issuer", "oidc-audience", "oidc-scopes"} {
 		if got := viper.GetString(key); got != "" {
-			t.Errorf("%s = %q, want empty (client-secret-file activates cluster rule)", key, got)
+			t.Errorf("%s = %q, want empty (client-secret-file activates cluster block)", key, got)
 		}
-	}
-	// oidc-scopes is NOT part of the cluster and must still come from Vault.
-	if got := viper.GetString("oidc-scopes"); got != "openid profile email" {
-		t.Errorf("oidc-scopes = %q, want vault value (scopes not blocked by cluster rule)", got)
 	}
 }
 
@@ -460,6 +456,27 @@ func TestApplyVaultAuthSource_NoInjectedReaderBuildsRealOneAndFailsFastWithoutVa
 	var addrErr *vaultconfig.ErrVaultAddrNotSet
 	if !errors.As(err, &addrErr) {
 		t.Fatalf("expected *vaultconfig.ErrVaultAddrNotSet, got %T: %v", err, err)
+	}
+}
+
+// TestApplyVaultAuthSource_ReaderBuildErrorNonFatalWhenClientIDOverridden covers
+// MCS-357 AC2 for the vaultReaderFor failure path (not just ReadSecret). When
+// VAULT_ADDR is unset the real reader cannot be built, but if the user already
+// supplied --oidc-client-id that error should be demoted to a no-op — the same
+// guarantee that ReadSecret errors receive.
+func TestApplyVaultAuthSource_ReaderBuildErrorNonFatalWhenClientIDOverridden(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("oidc-client-id", "my-client")
+	t.Setenv("VAULT_ADDR", "")
+	t.Setenv("VAULT_TOKEN", "")
+
+	// No fake reader: forces the real vaultReaderFor path, which fails with
+	// ErrVaultAddrNotSet. With oidc-client-id set this must be non-fatal.
+	err := applyVaultAuthSource(context.Background())
+	if err != nil {
+		t.Errorf("expected nil (reader build error non-fatal when client pair overridden), got: %v", err)
 	}
 }
 

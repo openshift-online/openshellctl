@@ -55,9 +55,13 @@ func ViperKey(suffix string) string {
 // Vault silently fill one half of a pair while the other half comes from
 // somewhere else.
 //
-// The gateway pair (Gateway+GatewayEndpoint) and the client-credentials cluster
-// (OIDCClientID+ClientSecretSource+OIDCIssuer+OIDCAudience) are treated atomically:
-// setting any member of a group blocks Vault from filling any other member.
+// The gateway pair (Gateway+GatewayEndpoint) is fully atomic: either member
+// blocks Vault from filling both. The client-credentials cluster
+// (OIDCClientID+ClientSecretSource) triggers a wider block: when either is set,
+// Vault is prevented from filling oidc-issuer, oidc-audience, and oidc-scopes
+// as well — Vault must not supply credentials from a different environment into
+// an explicitly configured auth session (MCS-357). OIDCIssuer and OIDCAudience
+// each independently block only their own field from Vault.
 type Overrides struct {
 	// Gateway is true when --gateway/OPENSHELL_GATEWAY is set.
 	Gateway bool
@@ -103,9 +107,10 @@ func ExtractFields(data map[string]any, prefix string) (map[string]string, error
 //   - pairing: the gateway pair (gateway/gateway-endpoint) is atomic — if
 //     either is overridden, both are excluded from Vault defaults;
 //   - clustering: when the client-credentials cluster (oidc-client-id or
-//     oidc-client-secret) is explicitly set, oidc-issuer and oidc-audience
-//     are also excluded — Vault must not supply a production issuer/audience
-//     for a non-production client identity (MCS-357);
+//     oidc-client-secret) is explicitly set, oidc-issuer, oidc-audience,
+//     and oidc-scopes are also excluded — Vault must not supply any of these
+//     for a non-production client identity that targets a different provider
+//     (MCS-357);
 //   - individual: an explicit oidc-issuer or oidc-audience override blocks
 //     only that specific field from Vault.
 func ToViperDefaults(fields map[string]string, ov Overrides) map[string]string {
@@ -132,6 +137,10 @@ func ToViperDefaults(fields map[string]string, ov Overrides) map[string]string {
 			}
 		case "oidc-audience":
 			if clientPairOverridden || ov.OIDCAudience {
+				continue
+			}
+		case "oidc-scopes":
+			if clientPairOverridden {
 				continue
 			}
 		}
