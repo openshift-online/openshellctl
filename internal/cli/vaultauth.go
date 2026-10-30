@@ -173,6 +173,7 @@ func resolveVaultAuthSource(ctx context.Context, allowPersistedFallback bool) er
 		// Demote the read failure to a no-op: an expired Vault token must not block
 		// a user who has all their own credentials set (MCS-357 AC2).
 		if overrides.OIDCClientID || overrides.ClientSecretSource {
+			fmt.Fprintf(os.Stderr, "Warning: vault read failed (%v); continuing because client credentials are set via flag/env\n", err)
 			return nil
 		}
 		return err
