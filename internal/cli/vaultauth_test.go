@@ -307,8 +307,8 @@ func TestApplyVaultAuthSource_GatewayMismatchWarnsToStderr(t *testing.T) {
 	viper.Set("gateway", "my-gateway") // explicit -g flag
 
 	reader := &fakeVaultReader{data: map[string]any{
-		"gateway":      "vault-gateway", // different value in Vault
-		"oidc-issuer":  "https://issuer",
+		"gateway":       "vault-gateway", // different value in Vault
+		"oidc-issuer":   "https://issuer",
 		"oidc-audience": "aud",
 	}}
 
