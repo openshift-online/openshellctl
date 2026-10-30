@@ -162,13 +162,21 @@ func resolveVaultAuthSource(ctx context.Context, allowPersistedFallback bool) er
 	}
 
 	clientOverridden := overrides.OIDCClientID || overrides.ClientSecretSource
+	gatewayOverridden := overrides.Gateway || overrides.GatewayEndpoint
+	// vaultNonFatal is true only when Vault has nothing left to contribute:
+	// the caller has explicitly set both the OIDC client-credentials cluster
+	// AND the gateway cluster, so every field ToViperDefaults would set from
+	// Vault is already blocked by an override. Requiring both — not just one —
+	// prevents a spurious non-fatal when Vault is still the gateway source
+	// (MCS-357 AC2 review finding).
+	vaultNonFatal := clientOverridden && gatewayOverridden
 
 	reader, err := vaultReaderFor(ctx)
 	if err != nil {
 		// vaultReaderFor fails before any network I/O (e.g. VAULT_ADDR unset,
 		// token not resolvable). Apply the same AC2 demotion as ReadSecret errors.
-		if clientOverridden {
-			fmt.Fprintf(os.Stderr, "Warning: vault setup failed (%v); continuing because client credentials are set via flag/env\n", err)
+		if vaultNonFatal {
+			fmt.Fprintf(os.Stderr, "Warning: vault setup failed (%v); continuing because all auth values are set via flag/env\n", err)
 			return nil
 		}
 		return err
@@ -176,12 +184,12 @@ func resolveVaultAuthSource(ctx context.Context, allowPersistedFallback bool) er
 
 	data, err := reader.ReadSecret(ctx, mount, path)
 	if err != nil {
-		// When the client-credentials cluster is already fully supplied by flag/env,
-		// Vault cannot contribute any auth values the caller doesn't already have.
-		// Demote the read failure to a no-op: an expired Vault token must not block
-		// a user who has all their own credentials set (MCS-357 AC2).
-		if clientOverridden {
-			fmt.Fprintf(os.Stderr, "Warning: vault read failed (%v); continuing because client credentials are set via flag/env\n", err)
+		// When both auth clusters are already fully supplied by flag/env, Vault
+		// cannot contribute any auth values the caller doesn't already have.
+		// Demote the read failure to a no-op: an expired Vault token must not
+		// block a user who has all their own auth values set (MCS-357 AC2).
+		if vaultNonFatal {
+			fmt.Fprintf(os.Stderr, "Warning: vault read failed (%v); continuing because all auth values are set via flag/env\n", err)
 			return nil
 		}
 		return err

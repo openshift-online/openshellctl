@@ -396,36 +396,57 @@ func TestApplyVaultAuthSource_ReaderErrorPropagatesWhenNothingOverridden(t *test
 }
 
 // TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientIDOverridden pins
-// AC2 of MCS-357: when the user has explicitly set their own client credentials
-// via flag/env, a Vault read failure must not block them — the error is demoted
-// to a no-op. An expired Vault token should not prevent a user who already has
-// all their auth values from running their command.
+// AC2 of MCS-357: when the user has supplied ALL auth values via flag/env —
+// both the OIDC client-credentials cluster and the gateway cluster — a Vault
+// read failure is demoted to a no-op. Vault has nothing left to contribute.
 func TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientIDOverridden(t *testing.T) {
 	resetVaultTestState(t)
 	viper.Set("vault-kv-mount", "osd-sre")
 	viper.Set("vault-kv-path", "rosa-agent")
 	viper.Set("oidc-client-id", "my-client") // explicit client credentials
+	viper.Set("gateway", "my-gw")            // explicit gateway — Vault has nothing left
 
 	reader := &fakeVaultReader{err: &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}}
 	err := applyVaultAuthSource(withFakeVaultReader(reader))
 	if err != nil {
-		t.Errorf("expected nil (non-fatal when client pair overridden), got: %v", err)
+		t.Errorf("expected nil (non-fatal when all clusters overridden), got: %v", err)
 	}
 }
 
 // TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientSecretFileOverridden
 // covers the --client-secret-file path: it also occupies the ClientSecretSource
-// override slot, so a Vault failure is equally non-fatal.
+// override slot, so a Vault failure is equally non-fatal when gateway is also set.
 func TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientSecretFileOverridden(t *testing.T) {
 	resetVaultTestState(t)
 	viper.Set("vault-kv-mount", "osd-sre")
 	viper.Set("vault-kv-path", "rosa-agent")
 	viper.Set("client-secret-file", "/run/secrets/my-secret") // explicit secret file
+	viper.Set("gateway", "my-gw")                            // explicit gateway
 
 	reader := &fakeVaultReader{err: &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}}
 	err := applyVaultAuthSource(withFakeVaultReader(reader))
 	if err != nil {
-		t.Errorf("expected nil (non-fatal when client-secret-file set), got: %v", err)
+		t.Errorf("expected nil (non-fatal when all clusters overridden), got: %v", err)
+	}
+}
+
+// TestApplyVaultAuthSource_VaultReadErrorFatalWhenGatewayNotOverridden checks
+// that a Vault read failure is still fatal when the client-credentials cluster
+// is explicitly set but the gateway cluster is not — Vault may still be the
+// source of the gateway value and silently swallowing the error would surface
+// later as a confusing "no gateway" failure instead of the real root cause.
+func TestApplyVaultAuthSource_VaultReadErrorFatalWhenGatewayNotOverridden(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("oidc-client-id", "my-client") // client creds set, but no gateway override
+
+	wantErr := &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}
+	reader := &fakeVaultReader{err: wantErr}
+	err := applyVaultAuthSource(withFakeVaultReader(reader))
+	var forbidden *vaultconfig.ErrForbidden
+	if !errors.As(err, &forbidden) {
+		t.Errorf("expected fatal *vaultconfig.ErrForbidden when gateway not overridden, got: %v", err)
 	}
 }
 
@@ -459,24 +480,26 @@ func TestApplyVaultAuthSource_NoInjectedReaderBuildsRealOneAndFailsFastWithoutVa
 	}
 }
 
-// TestApplyVaultAuthSource_ReaderBuildErrorNonFatalWhenClientIDOverridden covers
-// MCS-357 AC2 for the vaultReaderFor failure path (not just ReadSecret). When
-// VAULT_ADDR is unset the real reader cannot be built, but if the user already
-// supplied --oidc-client-id that error should be demoted to a no-op — the same
-// guarantee that ReadSecret errors receive.
-func TestApplyVaultAuthSource_ReaderBuildErrorNonFatalWhenClientIDOverridden(t *testing.T) {
+// TestApplyVaultAuthSource_ReaderBuildErrorNonFatalWhenAllClustersOverridden
+// covers MCS-357 AC2 for the vaultReaderFor failure path (not just ReadSecret).
+// When VAULT_ADDR is unset the real reader cannot be built; if the user has
+// already supplied both the OIDC client-credentials cluster AND the gateway
+// cluster, that error is demoted to a no-op — Vault has nothing left to
+// contribute to the invocation.
+func TestApplyVaultAuthSource_ReaderBuildErrorNonFatalWhenAllClustersOverridden(t *testing.T) {
 	resetVaultTestState(t)
 	viper.Set("vault-kv-mount", "osd-sre")
 	viper.Set("vault-kv-path", "rosa-agent")
 	viper.Set("oidc-client-id", "my-client")
+	viper.Set("gateway", "my-gw") // gateway also overridden — Vault has nothing left
 	t.Setenv("VAULT_ADDR", "")
 	t.Setenv("VAULT_TOKEN", "")
 
 	// No fake reader: forces the real vaultReaderFor path, which fails with
-	// ErrVaultAddrNotSet. With oidc-client-id set this must be non-fatal.
+	// ErrVaultAddrNotSet. With both clusters overridden this must be non-fatal.
 	err := applyVaultAuthSource(context.Background())
 	if err != nil {
-		t.Errorf("expected nil (reader build error non-fatal when client pair overridden), got: %v", err)
+		t.Errorf("expected nil (reader build error non-fatal when all clusters overridden), got: %v", err)
 	}
 }
 
