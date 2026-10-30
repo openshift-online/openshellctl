@@ -149,6 +149,18 @@ func resolveVaultAuthSource(ctx context.Context, allowPersistedFallback bool) er
 		return &UsageError{Err: fmt.Errorf("--vault-kv-mount and --vault-kv-path must be set together")}
 	}
 
+	// Compute overrides before the Vault read: this lets us decide whether a
+	// Vault failure is recoverable — if the caller already has client credentials
+	// from flags/env, a failed read won't leave them missing any auth value.
+	overrides := vaultconfig.Overrides{
+		Gateway:            viper.GetString("gateway") != "",
+		GatewayEndpoint:    viper.GetString("gateway-endpoint") != "",
+		OIDCClientID:       viper.GetString("oidc-client-id") != "",
+		ClientSecretSource: viper.GetString("oidc.client_secret") != "" || viper.GetString("client-secret-file") != "",
+		OIDCIssuer:         viper.GetString("oidc-issuer") != "",
+		OIDCAudience:       viper.GetString("oidc-audience") != "",
+	}
+
 	reader, err := vaultReaderFor(ctx)
 	if err != nil {
 		return err
@@ -156,6 +168,13 @@ func resolveVaultAuthSource(ctx context.Context, allowPersistedFallback bool) er
 
 	data, err := reader.ReadSecret(ctx, mount, path)
 	if err != nil {
+		// When the client-credentials cluster is already fully supplied by flag/env,
+		// Vault cannot contribute any auth values the caller doesn't already have.
+		// Demote the read failure to a no-op: an expired Vault token must not block
+		// a user who has all their own credentials set (MCS-357 AC2).
+		if overrides.OIDCClientID || overrides.ClientSecretSource {
+			return nil
+		}
 		return err
 	}
 
@@ -164,12 +183,18 @@ func resolveVaultAuthSource(ctx context.Context, allowPersistedFallback bool) er
 		return err
 	}
 
-	overrides := vaultconfig.Overrides{
-		Gateway:            viper.GetString("gateway") != "",
-		GatewayEndpoint:    viper.GetString("gateway-endpoint") != "",
-		OIDCClientID:       viper.GetString("oidc-client-id") != "",
-		ClientSecretSource: viper.GetString("oidc.client_secret") != "" || viper.GetString("client-secret-file") != "",
+	// AC3 (MCS-357): when the user supplied an explicit --gateway/-g and Vault
+	// also resolved a (different) gateway, warn rather than silently dropping
+	// Vault's value. ToViperDefaults still excludes it — the explicit flag wins
+	// — but the discrepancy is surfaced so the user knows the secret may be
+	// scoped to a different gateway.
+	if overrides.Gateway {
+		if vaultGW := fields["gateway"]; vaultGW != "" && vaultGW != viper.GetString("gateway") {
+			fmt.Fprintf(os.Stderr, "Warning: vault secret contains gateway=%q but --gateway=%q was given; vault value ignored\n",
+				vaultGW, viper.GetString("gateway"))
+		}
 	}
+
 	for key, val := range vaultconfig.ToViperDefaults(fields, overrides) {
 		viper.SetDefault(key, val)
 	}

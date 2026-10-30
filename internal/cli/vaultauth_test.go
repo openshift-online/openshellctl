@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,11 +184,11 @@ func TestApplyVaultAuthSource_ClientSecretFileBeatsVaultSecret(t *testing.T) {
 	}
 }
 
-func TestApplyVaultAuthSource_UnrelatedFieldsStillFillWhenPairIsOverridden(t *testing.T) {
+func TestApplyVaultAuthSource_GatewayOverrideAloneDoesNotExcludeIssuerOrAudience(t *testing.T) {
 	resetVaultTestState(t)
 	viper.Set("vault-kv-mount", "osd-sre")
 	viper.Set("vault-kv-path", "rosa-agent")
-	viper.Set("gateway", "mine")
+	viper.Set("gateway", "mine") // only the gateway pair is overridden
 
 	reader := &fakeVaultReader{data: map[string]any{
 		"gateway":       "vault-gw",
@@ -197,6 +198,7 @@ func TestApplyVaultAuthSource_UnrelatedFieldsStillFillWhenPairIsOverridden(t *te
 	if err := applyVaultAuthSource(withFakeVaultReader(reader)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// gateway override only blocks the gateway pair — oidc-issuer/audience should still fill
 	if got := viper.GetString("oidc-issuer"); got != "https://issuer" {
 		t.Errorf("oidc-issuer = %q, want %q", got, "https://issuer")
 	}
@@ -205,10 +207,142 @@ func TestApplyVaultAuthSource_UnrelatedFieldsStillFillWhenPairIsOverridden(t *te
 	}
 }
 
-func TestApplyVaultAuthSource_ReaderErrorPropagates(t *testing.T) {
+// TestApplyVaultAuthSource_ClientPairOverrideAlsoExcludesIssuerAndAudience pins
+// AC1 of MCS-357: when the user supplies explicit client credentials via flag or
+// env, Vault must NOT fill oidc-issuer or oidc-audience either — mixing an
+// explicit client-id with a Vault-sourced issuer from a different environment
+// produces a confusing 401 at the gateway.
+func TestApplyVaultAuthSource_ClientPairOverrideAlsoExcludesIssuerAndAudience(t *testing.T) {
 	resetVaultTestState(t)
 	viper.Set("vault-kv-mount", "osd-sre")
 	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("oidc-client-id", "my-client") // explicit client-id — activates the cluster rule
+
+	reader := &fakeVaultReader{data: map[string]any{
+		"oidc-client-id":     "vault-client",
+		"oidc-client-secret": "vault-secret",
+		"oidc-issuer":        "https://prod.issuer.example.com",
+		"oidc-audience":      "prod-audience",
+	}}
+	if err := applyVaultAuthSource(withFakeVaultReader(reader)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// client-id from viper wins (it was set explicitly before vault ran)
+	if got := viper.GetString("oidc-client-id"); got != "my-client" {
+		t.Errorf("oidc-client-id = %q, want %q (explicit value must win)", got, "my-client")
+	}
+	// vault secret must NOT contaminate oidc-issuer or oidc-audience
+	if got := viper.GetString("oidc-issuer"); got != "" {
+		t.Errorf("oidc-issuer = %q, want empty (vault must not fill when client pair is overridden)", got)
+	}
+	if got := viper.GetString("oidc-audience"); got != "" {
+		t.Errorf("oidc-audience = %q, want empty (vault must not fill when client pair is overridden)", got)
+	}
+	// vault secret must NOT fill client-secret either (client pair excluded)
+	if got := viper.GetString("oidc.client_secret"); got != "" {
+		t.Errorf("oidc.client_secret = %q, want empty (client pair excluded)", got)
+	}
+}
+
+// TestApplyVaultAuthSource_ExplicitIssuerFlagBeatsVaultIssuer pins that an
+// explicit --oidc-issuer flag prevents Vault from overwriting it with a default.
+func TestApplyVaultAuthSource_ExplicitIssuerFlagBeatsVaultIssuer(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("oidc-issuer", "https://my.issuer.example.com")
+
+	reader := &fakeVaultReader{data: map[string]any{
+		"oidc-issuer":   "https://vault.issuer.example.com",
+		"oidc-audience": "vault-audience",
+	}}
+	if err := applyVaultAuthSource(withFakeVaultReader(reader)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := viper.GetString("oidc-issuer"); got != "https://my.issuer.example.com" {
+		t.Errorf("oidc-issuer = %q, want explicit value %q", got, "https://my.issuer.example.com")
+	}
+	// oidc-audience should still fill (only oidc-issuer was overridden, not the client pair)
+	if got := viper.GetString("oidc-audience"); got != "vault-audience" {
+		t.Errorf("oidc-audience = %q, want %q from vault", got, "vault-audience")
+	}
+}
+
+// TestApplyVaultAuthSource_GatewayMismatchWarnsToStderr pins AC3 of MCS-357:
+// when the user supplies --gateway/-g and Vault's secret also carries a
+// gateway field with a DIFFERENT value, a warning is printed to stderr so
+// the user knows the mismatch — the explicit flag still wins (no error).
+func TestApplyVaultAuthSource_GatewayMismatchWarnsToStderr(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("gateway", "my-gateway") // explicit -g flag
+
+	reader := &fakeVaultReader{data: map[string]any{
+		"gateway":      "vault-gateway", // different value in Vault
+		"oidc-issuer":  "https://issuer",
+		"oidc-audience": "aud",
+	}}
+
+	// Capture stderr to verify the warning is printed.
+	origStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	err := applyVaultAuthSource(withFakeVaultReader(reader))
+
+	_ = w.Close()
+	var buf strings.Builder
+	_, _ = io.Copy(&buf, r)
+	os.Stderr = origStderr
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stderr := buf.String()
+	if !strings.Contains(stderr, "vault-gateway") || !strings.Contains(stderr, "my-gateway") {
+		t.Errorf("expected warning mentioning both gateway values, got stderr=%q", stderr)
+	}
+	// Explicit --gateway must win: vault's value must not become the default.
+	if got := viper.GetString("gateway"); got != "my-gateway" {
+		t.Errorf("gateway = %q, want explicit value %q", got, "my-gateway")
+	}
+}
+
+// TestApplyVaultAuthSource_SameGatewayNoWarn checks that no spurious warning
+// is printed when Vault's gateway matches the user's explicit --gateway.
+func TestApplyVaultAuthSource_SameGatewayNoWarn(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("gateway", "same-gw")
+
+	reader := &fakeVaultReader{data: map[string]any{"gateway": "same-gw"}}
+
+	origStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	err := applyVaultAuthSource(withFakeVaultReader(reader))
+
+	_ = w.Close()
+	var buf strings.Builder
+	_, _ = io.Copy(&buf, r)
+	os.Stderr = origStderr
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stderr := buf.String(); strings.Contains(stderr, "Warning") {
+		t.Errorf("unexpected warning when gateways match: %q", stderr)
+	}
+}
+
+func TestApplyVaultAuthSource_ReaderErrorPropagatesWhenNothingOverridden(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	// No oidc-client-id or client-secret-file set — user is relying on Vault for credentials.
 
 	wantErr := &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}
 	reader := &fakeVaultReader{err: wantErr}
@@ -216,6 +350,40 @@ func TestApplyVaultAuthSource_ReaderErrorPropagates(t *testing.T) {
 	var forbidden *vaultconfig.ErrForbidden
 	if !errors.As(err, &forbidden) {
 		t.Fatalf("expected *vaultconfig.ErrForbidden, got %T: %v", err, err)
+	}
+}
+
+// TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientIDOverridden pins
+// AC2 of MCS-357: when the user has explicitly set their own client credentials
+// via flag/env, a Vault read failure must not block them — the error is demoted
+// to a no-op. An expired Vault token should not prevent a user who already has
+// all their auth values from running their command.
+func TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientIDOverridden(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("oidc-client-id", "my-client") // explicit client credentials
+
+	reader := &fakeVaultReader{err: &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}}
+	err := applyVaultAuthSource(withFakeVaultReader(reader))
+	if err != nil {
+		t.Errorf("expected nil (non-fatal when client pair overridden), got: %v", err)
+	}
+}
+
+// TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientSecretFileOverridden
+// covers the --client-secret-file path: it also occupies the ClientSecretSource
+// override slot, so a Vault failure is equally non-fatal.
+func TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientSecretFileOverridden(t *testing.T) {
+	resetVaultTestState(t)
+	viper.Set("vault-kv-mount", "osd-sre")
+	viper.Set("vault-kv-path", "rosa-agent")
+	viper.Set("client-secret-file", "/run/secrets/my-secret") // explicit secret file
+
+	reader := &fakeVaultReader{err: &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}}
+	err := applyVaultAuthSource(withFakeVaultReader(reader))
+	if err != nil {
+		t.Errorf("expected nil (non-fatal when client-secret-file set), got: %v", err)
 	}
 }
 
