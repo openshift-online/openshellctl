@@ -452,7 +452,7 @@ func TestApplyVaultAuthSource_VaultReadErrorNonFatalWhenClientSecretFileOverridd
 	viper.Set("vault-kv-mount", "osd-sre")
 	viper.Set("vault-kv-path", "rosa-agent")
 	viper.Set("client-secret-file", "/run/secrets/my-secret") // explicit secret file
-	viper.Set("gateway", "my-gw")                            // explicit gateway
+	viper.Set("gateway", "my-gw")                             // explicit gateway
 
 	reader := &fakeVaultReader{err: &vaultconfig.ErrForbidden{Mount: "osd-sre", Path: "rosa-agent"}}
 	var err error
