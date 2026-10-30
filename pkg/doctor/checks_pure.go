@@ -89,7 +89,7 @@ func CheckRolesGateway(user *types.CurrentUser) CheckResult {
 	if user == nil {
 		return CheckResult{
 			Name: "Roles", Status: StatusFail, Detail: "no current user returned by gateway",
-			NextStep: "resolve the Credentials check's failure first",
+			NextStep: "this is unexpected — the gateway accepted the call but returned no user profile; contact the gateway administrator",
 		}
 	}
 	if slices.ContainsFunc(gatewayRoles, func(r string) bool { return slices.Contains(user.Roles, r) }) {
