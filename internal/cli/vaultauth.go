@@ -206,23 +206,27 @@ func resolveVaultAuthSource(ctx context.Context, allowPersistedFallback bool) er
 	// rather than silently dropping Vault's value. ToViperDefaults still
 	// excludes it — the explicit value wins — but the discrepancy is surfaced
 	// so the user knows the secret may be scoped to a different gateway.
-	if userGW := viper.GetString("gateway"); overrides.Gateway {
-		if vaultGW := fields["gateway"]; vaultGW != "" && vaultGW != userGW {
-			fmt.Fprintf(os.Stderr, "Warning: vault secret contains gateway=%q but gateway is already set to %q; vault value ignored\n",
-				vaultGW, userGW)
-		}
+	if overrides.Gateway {
+		warnIfVaultMismatch("gateway", viper.GetString("gateway"), fields)
 	}
-	if userEP := viper.GetString("gateway-endpoint"); overrides.GatewayEndpoint {
-		if vaultEP := fields["gateway-endpoint"]; vaultEP != "" && vaultEP != userEP {
-			fmt.Fprintf(os.Stderr, "Warning: vault secret contains gateway-endpoint=%q but gateway-endpoint is already set to %q; vault value ignored\n",
-				vaultEP, userEP)
-		}
+	if overrides.GatewayEndpoint {
+		warnIfVaultMismatch("gateway-endpoint", viper.GetString("gateway-endpoint"), fields)
 	}
 
 	for key, val := range vaultconfig.ToViperDefaults(fields, overrides) {
 		viper.SetDefault(key, val)
 	}
 	return nil
+}
+
+// warnIfVaultMismatch emits an AC3 warning when a Vault secret carries a value
+// for field that conflicts with the already-set userVal. A no-op when fields
+// has no entry for field or when the values agree.
+func warnIfVaultMismatch(field, userVal string, fields map[string]string) {
+	if vaultVal := fields[field]; vaultVal != "" && vaultVal != userVal {
+		fmt.Fprintf(os.Stderr, "Warning: vault secret contains %s=%q but %s is already set to %q; vault value ignored\n",
+			field, vaultVal, field, userVal)
+	}
 }
 
 // persistedVaultAuthConfig looks up a previously-persisted Vault mount/path/
