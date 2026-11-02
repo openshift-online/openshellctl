@@ -93,6 +93,9 @@ func NewRootCommand() *cobra.Command {
 
 	// Runs once, after flags are parsed but before any subcommand's RunE.
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if w := insecureWarning(viper.GetBool("gateway-insecure")); w != "" {
+			cmd.PrintErrln(w)
+		}
 		applyGatewayInsecureTransport()
 		startNoticeGoroutine(cmd, pf)
 		return nil

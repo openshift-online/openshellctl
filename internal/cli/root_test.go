@@ -147,6 +147,58 @@ func TestGatewayInsecureFlag_OverridesDefaultTransport(t *testing.T) {
 }
 
 // TestGatewayInsecureFlag_NotSetLeavesTransportAlone confirms the common case
+// TestGatewayInsecureFlag_PrintsWarning confirms that PersistentPreRunE prints
+// the insecure warning to stderr (via cmd.ErrOrStderr()) when --gateway-insecure
+// is active, and that the env-var form triggers the same warning.
+func TestGatewayInsecureFlag_PrintsWarning(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		envKey  string
+		envVal  string
+		wantSub string
+	}{
+		{
+			name:    "flag form prints warning",
+			args:    []string{"--gateway-insecure", "version"},
+			wantSub: "verification is disabled",
+		},
+		{
+			name:    "env var form prints warning",
+			args:    []string{"version"},
+			envKey:  "OPENSHELL_GATEWAY_INSECURE",
+			envVal:  "1",
+			wantSub: "verification is disabled",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			original := http.DefaultTransport
+			t.Cleanup(func() { http.DefaultTransport = original })
+
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			if tc.envKey != "" {
+				t.Setenv(tc.envKey, tc.envVal)
+			}
+
+			var buf strings.Builder
+			root := NewRootCommand()
+			root.SetArgs(tc.args)
+			root.SetErr(&buf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+
+			if got := buf.String(); !strings.Contains(got, tc.wantSub) {
+				t.Errorf("stderr = %q, want substring %q", got, tc.wantSub)
+			}
+		})
+	}
+}
+
 // (no --gateway-insecure) never touches the global transport.
 func TestGatewayInsecureFlag_NotSetLeavesTransportAlone(t *testing.T) {
 	viper.Reset()
@@ -157,12 +209,18 @@ func TestGatewayInsecureFlag_NotSetLeavesTransportAlone(t *testing.T) {
 	root := NewRootCommand()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	var buf strings.Builder
 	root.SetArgs([]string{"version"})
+	root.SetErr(&buf)
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
 	if http.DefaultTransport != original {
 		t.Error("DefaultTransport should be untouched when --gateway-insecure is not set")
+	}
+	if got := buf.String(); got != "" {
+		t.Errorf("stderr should be empty when --gateway-insecure is not set, got %q", got)
 	}
 }
