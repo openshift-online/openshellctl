@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
@@ -100,5 +101,49 @@ func TestPerRPC_NilSource(t *testing.T) {
 	}
 	if p.RequireTransportSecurity() {
 		t.Error("nil source should not require transport security")
+	}
+}
+
+// countingExchanger counts Exchange calls without doing real OIDC.
+type countingExchanger struct{ calls int32 }
+
+func (e *countingExchanger) Exchange(context.Context, auth.ClientCredentialsConfig) (string, time.Duration, error) {
+	e.calls++
+	return "t", time.Hour, nil
+}
+
+func TestDial_PlaintextClientCredentials_NoExchange(t *testing.T) {
+	ex := &countingExchanger{}
+	_, err := Dial(DialConfig{
+		Endpoint: "http://gw.example:8080",
+		Auth: auth.NewClientCredentialsSource(auth.ClientCredentialsConfig{
+			Issuer:   "https://issuer",
+			ClientID: "c",
+			Secret:   func(context.Context) (string, error) { return "s", nil },
+		}, ex),
+	})
+	if !errors.Is(err, ErrPlaintextWithAuth) {
+		t.Fatalf("err = %v, want ErrPlaintextWithAuth", err)
+	}
+	if ex.calls != 0 {
+		t.Errorf("exchanger called %d times, want 0 (decision must be static)", ex.calls)
+	}
+}
+
+// fatalSource calls t.Fatal if Token is ever invoked. It verifies that
+// RequireTransportSecurity decides statically, without fetching a token.
+type fatalSource struct{ t *testing.T }
+
+func (s *fatalSource) Token(context.Context) (*auth.Token, error) {
+	s.t.Fatal("Token() must not be called by RequireTransportSecurity")
+	return nil, nil
+}
+func (*fatalSource) Invalidate()      {}
+func (*fatalSource) Describe() string { return "fatal" }
+
+func TestPerRPC_RequireTransportSecurity_NoTokenFetch(t *testing.T) {
+	p := &perRPCCredentials{src: &fatalSource{t: t}}
+	if !p.RequireTransportSecurity() {
+		t.Error("non-NoAuth source should require transport security")
 	}
 }

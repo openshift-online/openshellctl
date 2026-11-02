@@ -71,3 +71,27 @@ type TokenSource interface {
 	// (e.g. "client_credentials via metadata.json (gateway=rosa)").
 	Describe() string
 }
+
+// bearerClassifier is an optional interface a TokenSource can implement to
+// declare whether it ever produces a bearer token. Types that embed
+// *NoAuthSource inherit its implementation (false) automatically. Types that
+// do not implement this interface are assumed to require bearer auth (safe
+// default). This is deliberately unexported so it does not widen the
+// TokenSource contract or break existing test fakes.
+type bearerClassifier interface {
+	requiresBearer() bool
+}
+
+// RequiresBearer reports whether src will ever produce a bearer token.
+// It returns false for nil and for any source that declares itself as
+// non-bearer (via the unexported bearerClassifier interface — currently
+// *NoAuthSource and any type embedding it); true for all other sources.
+func RequiresBearer(src TokenSource) bool {
+	if src == nil {
+		return false
+	}
+	if bc, ok := src.(bearerClassifier); ok {
+		return bc.requiresBearer()
+	}
+	return true
+}
