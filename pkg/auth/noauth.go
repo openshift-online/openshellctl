@@ -18,6 +18,10 @@ func (s *NoAuthSource) Token(context.Context) (*Token, error) {
 // Invalidate is a no-op.
 func (s *NoAuthSource) Invalidate() {}
 
+// requiresBearer implements bearerClassifier. Wrappers that embed
+// *NoAuthSource inherit this and are correctly classified as non-bearer.
+func (*NoAuthSource) requiresBearer() bool { return false }
+
 // Describe implements TokenSource.
 func (s *NoAuthSource) Describe() string {
 	if s.reason != "" {

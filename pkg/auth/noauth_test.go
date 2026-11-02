@@ -23,6 +23,15 @@ func TestRequiresBearer(t *testing.T) {
 		{name: "DiskBundleSource", src: NewDiskBundleSource(fstest.MapFS{}, nil), want: true},
 	}
 
+	// Wrapper that embeds *NoAuthSource — must inherit requiresBearer() and
+	// be classified as non-bearer, not silently treated as bearer.
+	type wrappedNoAuth struct{ *NoAuthSource }
+	tests = append(tests, struct {
+		name string
+		src  TokenSource
+		want bool
+	}{name: "embedded NoAuthSource wrapper", src: wrappedNoAuth{NewNoAuthSource("wrapped")}, want: false})
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := RequiresBearer(tt.src)
