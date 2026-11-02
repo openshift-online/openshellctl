@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -60,6 +61,47 @@ func TestFlagParseErrorIsUsage(t *testing.T) {
 	}
 	if got := exitCodeFor(err); got != ExitUsage {
 		t.Errorf("unknown flag exit code = %d, want %d (usage)", got, ExitUsage)
+	}
+}
+
+// TestInsecureWarning confirms the pure function returns "" when insecure is
+// false and a non-empty string containing the expected substrings when true.
+func TestInsecureWarning(t *testing.T) {
+	tests := []struct {
+		name            string
+		insecure        bool
+		wantEmpty       bool
+		wantSubstrings  []string
+	}{
+		{
+			name:      "false returns empty string",
+			insecure:  false,
+			wantEmpty: true,
+		},
+		{
+			name:     "true returns warning containing required phrases",
+			insecure: true,
+			wantSubstrings: []string{
+				"verification is disabled",
+				"OIDC issuer",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := insecureWarning(tc.insecure)
+			if tc.wantEmpty {
+				if got != "" {
+					t.Errorf("insecureWarning(false) = %q, want empty string", got)
+				}
+				return
+			}
+			for _, sub := range tc.wantSubstrings {
+				if !strings.Contains(got, sub) {
+					t.Errorf("insecureWarning(true) = %q, missing %q", got, sub)
+				}
+			}
+		})
 	}
 }
 
