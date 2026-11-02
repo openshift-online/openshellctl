@@ -60,3 +60,26 @@ attach ends. To avoid this, use `--detach` to skip the attach entirely.
 **Implementation**: `terminalResetSequence()` and `restoreWith()` in
 `internal/cli/sandbox_connect.go`; called from `cliTerminal.MakeRaw`'s
 restore closure only when the local endpoint is a TTY.
+
+## stderr warning when `--gateway-insecure` is active
+
+**Difference**: When `--gateway-insecure` or `OPENSHELL_GATEWAY_INSECURE` is
+set, openshellctl prints a fixed warning to stderr before any network I/O. The
+upstream Rust CLI applies the flag silently.
+
+**Rationale**: The flag overrides `http.DefaultTransport` process-wide, which
+means TLS certificate verification is disabled for **every HTTPS call in the
+process** — including the OIDC issuer's discovery and token endpoints where
+bearer tokens and client secrets are sent — not only the gRPC dial as the flag
+name implies. A silent opt-in leaves users unaware that credential traffic may
+reach an impersonated server. The warning makes the scope explicit. The warning
+goes to stderr so that `-o json` stdout output remains parseable.
+
+`OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc` or
+CI environment variable can enable this flag without any explicit flag
+invocation, which is another reason to surface it.
+
+**Implementation**: `insecureWarnText` const and `insecureWarning(bool) string`
+in `internal/cli/root.go`; called from `PersistentPreRunE` in `NewRootCommand`
+before `applyGatewayInsecureTransport()`. `TestNoPersistentPreRunEOverrideWithoutChaining`
+guards against future subcommands silently dropping the hook.

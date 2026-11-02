@@ -201,7 +201,8 @@ func TestGatewayInsecureFlag_PrintsWarning(t *testing.T) {
 	}
 }
 
-// (no --gateway-insecure) never touches the global transport.
+// TestGatewayInsecureFlag_NotSetLeavesTransportAlone confirms the common case
+// (no --gateway-insecure) never touches the global transport or prints to stderr.
 func TestGatewayInsecureFlag_NotSetLeavesTransportAlone(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
