@@ -18,16 +18,6 @@ func (s *NoAuthSource) Token(context.Context) (*Token, error) {
 // Invalidate is a no-op.
 func (s *NoAuthSource) Invalidate() {}
 
-// RequiresBearer reports whether src will ever produce a bearer token.
-// It returns false for nil and for *NoAuthSource; true for all other sources.
-func RequiresBearer(src TokenSource) bool {
-	if src == nil {
-		return false
-	}
-	_, ok := src.(*NoAuthSource)
-	return !ok
-}
-
 // Describe implements TokenSource.
 func (s *NoAuthSource) Describe() string {
 	if s.reason != "" {

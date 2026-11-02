@@ -4,10 +4,11 @@ import (
 	"context"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 func TestRequiresBearer(t *testing.T) {
-	countingEx := &fakeExchanger{token: "tok", expiresIn: 3600}
+	countingEx := &fakeExchanger{token: "tok", expiresIn: time.Hour}
 
 	tests := []struct {
 		name string

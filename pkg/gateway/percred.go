@@ -7,10 +7,10 @@ import (
 )
 
 // perRPCCredentials adapts an auth.TokenSource to grpc/credentials.PerRPCCredentials
-// (and the SDK's types.AuthProvider, which is the same shape). It sends
-// "authorization: Bearer <jwt>" unless the token is a no-auth (SourceNone)
-// token, in which case it sends no header and does not require transport
-// security.
+// (and the SDK's types.AuthProvider, which is the same shape). Transport security
+// is decided statically from the source type (not by fetching a token). It sends
+// "authorization: Bearer <jwt>" unless the source is a no-auth source, in which
+// case it sends no header.
 type perRPCCredentials struct{ src auth.TokenSource }
 
 // GetRequestMetadata implements credentials.PerRPCCredentials / types.AuthProvider.

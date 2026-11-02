@@ -71,3 +71,13 @@ type TokenSource interface {
 	// (e.g. "client_credentials via metadata.json (gateway=rosa)").
 	Describe() string
 }
+
+// RequiresBearer reports whether src will ever produce a bearer token.
+// It returns false for nil and for *NoAuthSource; true for all other sources.
+func RequiresBearer(src TokenSource) bool {
+	if src == nil {
+		return false
+	}
+	_, ok := src.(*NoAuthSource)
+	return !ok
+}
