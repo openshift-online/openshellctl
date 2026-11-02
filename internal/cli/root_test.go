@@ -68,10 +68,10 @@ func TestFlagParseErrorIsUsage(t *testing.T) {
 // false and a non-empty string containing the expected substrings when true.
 func TestInsecureWarning(t *testing.T) {
 	tests := []struct {
-		name            string
-		insecure        bool
-		wantEmpty       bool
-		wantSubstrings  []string
+		name           string
+		insecure       bool
+		wantEmpty      bool
+		wantSubstrings []string
 	}{
 		{
 			name:      "false returns empty string",
