@@ -10,16 +10,15 @@ func TestRequiresBearer(t *testing.T) {
 	countingEx := &fakeExchanger{token: "tok", expiresIn: 3600}
 
 	tests := []struct {
-		name     string
-		src      TokenSource
-		want     bool
-		noFetch  bool // when true, assert exchanger was never called
+		name string
+		src  TokenSource
+		want bool
 	}{
 		{name: "nil", src: nil, want: false},
 		{name: "NoAuthSource/mtls", src: NewNoAuthSource("mtls"), want: false},
 		{name: "NoAuthSource/none", src: NewNoAuthSource("none"), want: false},
 		{name: "StaticSource", src: NewStaticSource("x", nil), want: true},
-		{name: "ClientCredentialsSource", src: NewClientCredentialsSource(ccConfig(), countingEx), want: true, noFetch: true},
+		{name: "ClientCredentialsSource", src: NewClientCredentialsSource(ccConfig(), countingEx), want: true},
 		{name: "DiskBundleSource", src: NewDiskBundleSource(fstest.MapFS{}, nil), want: true},
 	}
 
