@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
@@ -111,6 +112,8 @@ func TestInsecureWarning(t *testing.T) {
 // discovery/token HTTP client (an unexported package-level *http.Client with
 // no Transport override, hence http.DefaultTransport) respect the flag — the
 // SDK exposes no option to inject a custom client or skip verification.
+// Stderr is intentionally uncaptured here; the warning output path is covered
+// by TestGatewayInsecureFlag_PrintsWarning.
 func TestGatewayInsecureFlag_OverridesDefaultTransport(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
@@ -146,7 +149,6 @@ func TestGatewayInsecureFlag_OverridesDefaultTransport(t *testing.T) {
 	}
 }
 
-// TestGatewayInsecureFlag_NotSetLeavesTransportAlone confirms the common case
 // TestGatewayInsecureFlag_PrintsWarning confirms that PersistentPreRunE prints
 // the insecure warning to stderr (via cmd.ErrOrStderr()) when --gateway-insecure
 // is active, and that the env-var form triggers the same warning.
@@ -223,4 +225,28 @@ func TestGatewayInsecureFlag_NotSetLeavesTransportAlone(t *testing.T) {
 	if got := buf.String(); got != "" {
 		t.Errorf("stderr should be empty when --gateway-insecure is not set, got %q", got)
 	}
+}
+
+// TestNoPersistentPreRunEOverrideWithoutChaining walks the cobra command tree
+// and fails if any non-root command defines PersistentPreRunE. Root's
+// PersistentPreRunE emits the --gateway-insecure warning and calls
+// applyGatewayInsecureTransport(); cobra silently skips root's hook for any
+// subcommand that defines its own — so new subcommands must either not define
+// PersistentPreRunE, or explicitly chain the parent's. This test makes that
+// constraint visible before it bites in production.
+func TestNoPersistentPreRunEOverrideWithoutChaining(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	root := NewRootCommand()
+
+	var check func(cmd *cobra.Command, depth int)
+	check = func(cmd *cobra.Command, depth int) {
+		if depth > 0 && cmd.PersistentPreRunE != nil {
+			t.Errorf("command %q defines PersistentPreRunE without chaining root's hook; --gateway-insecure warning and transport override would be skipped for this subtree", cmd.CommandPath())
+		}
+		for _, child := range cmd.Commands() {
+			check(child, depth+1)
+		}
+	}
+	check(root, 0)
 }

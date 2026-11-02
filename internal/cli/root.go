@@ -270,16 +270,23 @@ func bindViper(root *cobra.Command) {
 	_ = viper.BindPFlags(root.PersistentFlags())
 }
 
-// insecureWarning returns the fixed warning message when insecure is true, or
-// "" when false. The scope note ("AND the OIDC issuer") is essential: the flag
-// name says "gateway" but the process-wide transport override means the SDK's
-// OIDC discovery/token HTTP client — which holds the client secret — is also
+// insecureWarnText is the fixed stderr warning emitted whenever
+// --gateway-insecure/OPENSHELL_GATEWAY_INSECURE is in effect.
+const insecureWarnText = "warning: TLS certificate verification is disabled" +
+	" (--gateway-insecure/OPENSHELL_GATEWAY_INSECURE)" +
+	" for the gateway AND the OIDC issuer;" +
+	" bearer tokens and client secrets may be sent to an impersonated server"
+
+// insecureWarning returns insecureWarnText when insecure is true, or "" when
+// false. The scope note ("AND the OIDC issuer") is essential: the flag name
+// says "gateway" but the process-wide transport override means the SDK's OIDC
+// discovery/token HTTP client — which holds the client secret — is also
 // affected.
 func insecureWarning(insecure bool) string {
 	if !insecure {
 		return ""
 	}
-	return "warning: TLS certificate verification is disabled (--gateway-insecure/OPENSHELL_GATEWAY_INSECURE) for the gateway AND the OIDC issuer; bearer tokens and client secrets may be sent to an impersonated server"
+	return insecureWarnText
 }
 
 // applyGatewayInsecureTransport overrides the process-wide http.DefaultTransport
