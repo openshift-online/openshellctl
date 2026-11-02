@@ -33,18 +33,10 @@ func (p *perRPCCredentials) RequireTransportSecurity() bool {
 	return p.requiresTransportSecurity()
 }
 
-// requiresTransportSecurity reports whether per-RPC creds demand TLS. It is
-// false when there is no source, or when the resolved token is a no-auth token.
-// A resolution error is treated as "requires security" (fail safe).
+// requiresTransportSecurity reports whether per-RPC creds demand TLS. Decided
+// statically from the source type, never by fetching a token.
 func (p *perRPCCredentials) requiresTransportSecurity() bool {
-	if p.src == nil {
-		return false
-	}
-	tok, err := p.src.Token(context.Background())
-	if err != nil {
-		return true
-	}
-	return tok.Source != auth.SourceNone
+	return auth.RequiresBearer(p.src)
 }
 
 // hasAuth reports whether a non-no-auth token source is present (used to decide
