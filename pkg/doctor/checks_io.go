@@ -69,7 +69,7 @@ func CheckHTTP(ctx context.Context, endpoint string, get HTTPGetFunc) (CheckResu
 			Name:     "HTTP reachability",
 			Status:   StatusFail,
 			Detail:   fmt.Sprintf("GET %s: %v", u, err),
-			NextStep: fmt.Sprintf("check the gateway is reachable (try: curl -v %s), or pass --oidc-issuer to skip discovery for a gateway with an internal CA", u),
+			NextStep: fmt.Sprintf("check the gateway is reachable (try: curl -v %s), or pass --oidc-issuer --oidc-audience to skip discovery for a gateway with an internal CA", u),
 		}, OIDCConfig{}
 	}
 	defer func() { _ = resp.Body.Close() }()

@@ -97,9 +97,9 @@ func TestBuildFetcherTransport_NilTLS_ClearsInsecureSkipVerify(t *testing.T) {
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
 	tr := buildFetcherTransport(nil)
-	// After the design fix, buildFetcherTransport clones cleanTransport (captured
-	// at package-init, before DefaultTransport was swapped), so the result has
-	// TLSClientConfig == nil — it is unaffected by DefaultTransport mutations.
+	// buildFetcherTransport clones cleanTransport, which has no TLSClientConfig set,
+	// so mutations to http.DefaultTransport cannot reach it; the result must have
+	// TLSClientConfig == nil.
 	if tr.TLSClientConfig != nil && tr.TLSClientConfig.InsecureSkipVerify {
 		t.Error("buildFetcherTransport(nil) must not propagate InsecureSkipVerify")
 	}

@@ -129,11 +129,11 @@ func oidcConfigURL(endpoint string) (string, error) {
 }
 
 // buildFetcherTransport returns a transport suitable for OIDC-config discovery.
-// It clones cleanTransport (update.go), which is captured at package-init time
-// before applyGatewayInsecureTransport can mutate http.DefaultTransport, so
-// --gateway-insecure never affects the discovery probe regardless of when this
-// function is called. tlsCfg, when non-nil, pins the trust roots and optional
-// client certificate for the probe (typically the gateway's registered CA cert).
+// It clones cleanTransport (transport.go), which is captured at package-init
+// time before applyGatewayInsecureTransport can mutate http.DefaultTransport,
+// so --gateway-insecure never affects the discovery probe regardless of when
+// this function is called. tlsCfg, when non-nil, pins the trust roots and
+// optional client certificate for the probe (typically the gateway's CA cert).
 func buildFetcherTransport(tlsCfg *tls.Config) *http.Transport {
 	tr := cleanTransport.Clone()
 	if tlsCfg != nil {
@@ -145,8 +145,8 @@ func buildFetcherTransport(tlsCfg *tls.Config) *http.Transport {
 // newOIDCConfigFetcher builds a fetcher that validates the endpoint via
 // oidcConfigURL (https or loopback http only), does not follow redirects,
 // and trusts tlsCfg for TLS. The transport is built by buildFetcherTransport,
-// which clones cleanTransport (captured before --gateway-insecure can mutate
-// http.DefaultTransport) so the discovery probe always verifies TLS.
+// which clones cleanTransport (transport.go, captured before --gateway-insecure
+// can mutate http.DefaultTransport) so the discovery probe always verifies TLS.
 func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint string) (string, string, error) {
 	client := &http.Client{
 		Timeout:   10 * time.Second,

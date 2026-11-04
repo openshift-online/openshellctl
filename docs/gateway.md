@@ -119,10 +119,12 @@ from the upstream Rust CLI" below.
   gRPC dial, `-f` manifest URL fetches, and the OpenShell SDK's own OIDC
   discovery and token-POST calls (the SDK provides no way to inject a custom
   transport, so the process-global override is the only lever available). It
-  does **not** apply to `gateway add`'s `/auth/oidc-config` discovery probe,
-  which uses a clean transport (system roots, or the registered CA cert) so a
-  fake issuer cannot be trusted during registration. For a staging gateway with
-  an internal CA, pass `--oidc-issuer` plus `--oidc-audience` to skip discovery
+  does **not** apply to `/auth/oidc-config` discovery probes — neither
+  `gateway add`'s registration probe nor the client-credentials fallback fetch
+  in `resolveTokenSource` (used by `token`, `whoami`, and every command that
+  resolves auth). Both use a clean transport (system roots, or the registered CA
+  cert) so a fake issuer cannot be trusted. For a staging gateway with an
+  internal CA, pass `--oidc-issuer` plus `--oidc-audience` to skip discovery
   entirely, or place `ca.crt` under `gateways/<name>/mtls/` by hand and then
   re-run `gateway add`.
 
