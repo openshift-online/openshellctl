@@ -61,7 +61,7 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	// failed login shouldn't also discard a correctly-configured Vault
 	// pointer the user may fix the real problem (e.g. network) and retry.
 	if target.Resolved != nil {
-		if perr := persistVaultAuthConfig(target.Name); perr != nil {
+		if perr := persistVaultAuthConfig(target.Resolved.Name); perr != nil {
 			cmd.PrintErrf("warning: could not persist vault auth config: %v\n", perr)
 		}
 	}
