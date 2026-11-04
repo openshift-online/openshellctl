@@ -105,6 +105,9 @@ func (e *ErrOIDCConfigMissing) Error() string {
 		}
 		msg += ")"
 	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
 	return msg
 }
 
