@@ -367,7 +367,7 @@ These flags apply to every command:
 |------|---------|-------------|
 | `--gateway`, `-g` | `OPENSHELL_GATEWAY` | Gateway name (selects config directory) |
 | `--gateway-endpoint` | `OPENSHELL_GATEWAY_ENDPOINT` | Gateway gRPC endpoint URL |
-| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification (gRPC dial, `gateway add`'s OIDC-discovery probe, and `-f` manifest URL fetches — the flag name says "gateway", but a `-f` manifest host is not the gateway; this is a consequence of sharing `http.DefaultTransport`, not a separate opt-in) |
+| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for ALL HTTPS in the process (gRPC dial, OIDC issuer discovery and token endpoint, `-f` manifest URL fetches), except the self-update and notice check client which always verifies. Prints a warning to stderr on every use. |
 | `--workspace` | `OPENSHELL_WORKSPACE` | Workspace name (default: `default`) |
 | `--token` | `OPENSHELL_TOKEN` | Bearer token (overrides OIDC) |
 | `--config` | — | Config file path |
@@ -1004,7 +1004,7 @@ See [`docs/troubleshooting.md`](docs/troubleshooting.md) for the common onboardi
 |----------|-------------|
 | `OPENSHELL_GATEWAY` | Default gateway name |
 | `OPENSHELL_GATEWAY_ENDPOINT` | Gateway endpoint URL |
-| `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification (`true`/`1`) |
+| `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for ALL HTTPS in the process (`true`/`1`), except the self-update and notice check client which always verifies. Prints a warning to stderr on every use. `OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc`/CI env can enable this. |
 | `OPENSHELL_WORKSPACE` | Default workspace |
 | `OPENSHELL_TOKEN` | Bearer token (overrides all other auth) |
 | `OPENSHELL_OIDC_CLIENT_SECRET` | OIDC client secret (enables service account auth) |
@@ -1029,6 +1029,7 @@ openshellctl is a compatible reimplementation with these intentional differences
 - **`gateway add` registers OIDC gateways only**: no mTLS or non-OIDC ("edge") gateway registration. When a client secret is absent and `OPENSHELL_NO_BROWSER` is set, `gateway add` registers the gateway and prints a hint instead of opening a browser (upstream always opens one). See [`docs/gateway.md`](docs/gateway.md).
 - **Endpoint matching tolerates formatting differences**: upstream only trims a trailing slash. openshellctl also ignores scheme/host case and an explicit default port (`:443`/`:80`), so `https://host:443` (as `gateway add` writes it) still matches `https://host/` (as an exported env var commonly reads). A different port, or a different path/query/fragment, is still a different gateway. See [`docs/gateway.md`](docs/gateway.md).
 - **`openshellctl update` (self-update)**: downloads, verifies (SHA-256), and atomically replaces the running binary. The upstream Rust CLI has no equivalent (checked at v0.1.5). See [Updating](#updating).
+- **`--gateway-insecure` prints a stderr warning on every use**: upstream's Rust CLI applies the flag silently. openshellctl emits a fixed warning that names both the gateway and the OIDC issuer, because the process-wide `http.DefaultTransport` override means bearer tokens and client secrets may be sent to an impersonated server, not just the gateway gRPC dial. The self-update and notice check client capture a clean transport at init time and always verify TLS regardless. `OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc`/CI env can enable this.
 
 ## License
 

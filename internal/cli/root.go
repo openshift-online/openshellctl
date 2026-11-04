@@ -93,6 +93,9 @@ func NewRootCommand() *cobra.Command {
 
 	// Runs once, after flags are parsed but before any subcommand's RunE.
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if w := insecureWarning(viper.GetBool("gateway-insecure")); w != "" {
+			cmd.PrintErrln(w)
+		}
 		applyGatewayInsecureTransport()
 		startNoticeGoroutine(cmd, pf)
 		return nil
@@ -267,6 +270,27 @@ func bindViper(root *cobra.Command) {
 	_ = viper.BindPFlags(root.PersistentFlags())
 }
 
+// insecureWarnText is the fixed stderr warning emitted whenever
+// --gateway-insecure/OPENSHELL_GATEWAY_INSECURE is in effect.
+const insecureWarnText = "warning: TLS certificate verification is disabled" +
+	" (--gateway-insecure/OPENSHELL_GATEWAY_INSECURE)" +
+	" for ALL HTTPS in the process — the gateway, the OIDC issuer," +
+	" and every other HTTPS call; bearer tokens and client secrets" +
+	" may be sent to an impersonated server"
+
+// insecureWarning returns insecureWarnText when insecure is true, or "" when
+// false. The scope note ("AND the OIDC issuer") is essential: the flag name
+// says "gateway" but the process-wide transport override means the SDK's OIDC
+// discovery/token HTTP client — which holds the client secret — is also
+// affected. The self-update and notice clients capture cleanTransport at init
+// time (before PersistentPreRunE runs) and are therefore unaffected.
+func insecureWarning(insecure bool) string {
+	if !insecure {
+		return ""
+	}
+	return insecureWarnText
+}
+
 // applyGatewayInsecureTransport overrides the process-wide http.DefaultTransport
 // to skip TLS certificate verification when --gateway-insecure/
 // OPENSHELL_GATEWAY_INSECURE is set. This is a deliberately broad,
@@ -285,6 +309,10 @@ func bindViper(root *cobra.Command) {
 // upstream's own gateway_insecure handling, which applies to its OIDC HTTP
 // client too (oidc_auth.rs: danger_accept_invalid_certs) — parity, not an
 // extension.
+//
+// Exception: the self-update and background notice HTTP clients (update.go,
+// startNoticeGoroutine) capture cleanTransport at package-init time, before
+// this function runs, so they always verify TLS regardless of the flag.
 //
 // Clones the real default transport rather than replacing it with a bare
 // &http.Transport{}: a bare one silently drops proxy support (HTTPS_PROXY/
