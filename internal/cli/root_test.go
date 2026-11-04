@@ -229,12 +229,13 @@ func TestGatewayInsecureFlag_NotSetLeavesTransportAlone(t *testing.T) {
 }
 
 // TestNoPersistentPreRunEOverrideWithoutChaining walks the cobra command tree
-// and fails if any non-root command defines PersistentPreRunE. Root's
-// PersistentPreRunE emits the --gateway-insecure warning and calls
-// applyGatewayInsecureTransport(); cobra silently skips root's hook for any
-// subcommand that defines its own — so new subcommands must either not define
-// PersistentPreRunE, or explicitly chain the parent's. This test makes that
-// constraint visible before it bites in production.
+// and fails if any non-root command defines PersistentPreRunE or
+// PersistentPreRun. Root's PersistentPreRunE emits the --gateway-insecure
+// warning and calls applyGatewayInsecureTransport(); cobra silently skips
+// root's hook for any subcommand that defines its own PersistentPreRun*
+// — so new subcommands must either not define either hook, or explicitly
+// chain the parent's. This test makes that constraint visible before it bites
+// in production.
 func TestNoPersistentPreRunEOverrideWithoutChaining(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
@@ -242,8 +243,8 @@ func TestNoPersistentPreRunEOverrideWithoutChaining(t *testing.T) {
 
 	var check func(cmd *cobra.Command, depth int)
 	check = func(cmd *cobra.Command, depth int) {
-		if depth > 0 && cmd.PersistentPreRunE != nil {
-			t.Errorf("command %q defines PersistentPreRunE without chaining root's hook; --gateway-insecure warning and transport override would be skipped for this subtree", cmd.CommandPath())
+		if depth > 0 && (cmd.PersistentPreRun != nil || cmd.PersistentPreRunE != nil) {
+			t.Errorf("command %q defines PersistentPreRun/PersistentPreRunE without chaining root's hook; --gateway-insecure warning and transport override would be skipped for this subtree", cmd.CommandPath())
 		}
 		for _, child := range cmd.Commands() {
 			check(child, depth+1)
