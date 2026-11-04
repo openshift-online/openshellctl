@@ -239,6 +239,7 @@ func Resolve(env Env, in ResolveInput) (*Target, error) {
 			t.Name = in.Endpoint // upstream falls back to the raw endpoint string
 		} else if r, err := Load(env, name); err == nil {
 			t.Resolved = r
+			t.Name = r.Metadata.Name // display name, consistent with the name-based path
 		}
 		return t, nil
 	}
