@@ -154,8 +154,15 @@ func (in ResolveInput) resolveClientCredentials(ctx context.Context, ex Exchange
 	}
 
 	// /auth/oidc-config fallback for issuer/audience when still missing.
+	var fetchErr error
 	if (cfg.Issuer == "" || cfg.Audience == "") && in.OIDCConfigFetcher != nil && in.GatewayEndpoint != "" {
-		if iss, aud, err := in.OIDCConfigFetcher(ctx, in.GatewayEndpoint); err == nil {
+		iss, aud, err := in.OIDCConfigFetcher(ctx, in.GatewayEndpoint)
+		if err != nil {
+			// Capture the error; it surfaces as Cause of ErrOIDCConfigMissing
+			// only when the issuer remains unresolved.  When the issuer is
+			// already set but audience is not, the fetch failure is tolerated.
+			fetchErr = err
+		} else {
 			if cfg.Issuer == "" {
 				cfg.Issuer = iss
 			}
@@ -166,9 +173,10 @@ func (in ResolveInput) resolveClientCredentials(ctx context.Context, ex Exchange
 	}
 
 	if cfg.Issuer == "" {
-		return nil, &ErrOIDCConfigMissing{Checked: []string{
-			"--oidc-issuer", "metadata.oidc_issuer", "/auth/oidc-config",
-		}}
+		return nil, &ErrOIDCConfigMissing{
+			Checked: []string{"--oidc-issuer", "metadata.oidc_issuer", "/auth/oidc-config"},
+			Cause:   fetchErr,
+		}
 	}
 
 	gwName := ""

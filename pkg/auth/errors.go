@@ -86,8 +86,12 @@ func (e *ExchangeError) Error() string { return "token exchange failed: " + e.Ca
 func (e *ExchangeError) Unwrap() error { return e.Cause }
 
 // ErrOIDCConfigMissing reports that no OIDC issuer could be resolved. Checked
-// lists the sources that were consulted, for a helpful message.
-type ErrOIDCConfigMissing struct{ Checked []string }
+// lists the sources that were consulted, for a helpful message. Cause is the
+// underlying fetch error when the /auth/oidc-config call failed.
+type ErrOIDCConfigMissing struct {
+	Checked []string
+	Cause   error
+}
 
 func (e *ErrOIDCConfigMissing) Error() string {
 	msg := "OIDC issuer could not be resolved"
@@ -103,6 +107,8 @@ func (e *ErrOIDCConfigMissing) Error() string {
 	}
 	return msg
 }
+
+func (e *ErrOIDCConfigMissing) Unwrap() error { return e.Cause }
 
 // ErrMTLSMaterialMissing reports that an mTLS gateway lacks the full cert triple.
 type ErrMTLSMaterialMissing struct{ Gateway string }
