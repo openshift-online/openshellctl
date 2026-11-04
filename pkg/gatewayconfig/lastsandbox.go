@@ -17,9 +17,14 @@ type Writer interface {
 }
 
 // lastSandboxRel is the path (relative to the user config root) of a gateway's
-// last_sandbox file.
-func lastSandboxRel(gatewayName string) string {
-	return path.Join(GatewayDir(gatewayName), "last_sandbox")
+// last_sandbox file. It validates gatewayName so every caller — Load, Save, and
+// Clear — goes through a single choke point, mirroring upstream's
+// last_sandbox_path() / validated_gateway_name() pairing.
+func lastSandboxRel(gatewayName string) (string, error) {
+	if err := ValidateGatewayName(gatewayName); err != nil {
+		return "", err
+	}
+	return path.Join(GatewayDir(gatewayName), "last_sandbox"), nil
 }
 
 // parseLastSandbox parses the two-line last_sandbox file content and returns
@@ -53,10 +58,11 @@ func LoadLastSandbox(userFS fs.FS, gatewayName, workspace string) (string, bool)
 	if userFS == nil {
 		return "", false
 	}
-	if ValidateGatewayName(gatewayName) != nil {
+	rel, err := lastSandboxRel(gatewayName)
+	if err != nil {
 		return "", false
 	}
-	b, err := fs.ReadFile(userFS, lastSandboxRel(gatewayName))
+	b, err := fs.ReadFile(userFS, rel)
 	if err != nil {
 		return "", false
 	}
@@ -76,6 +82,10 @@ func validateLastSandboxField(field, v string) error {
 // Returns *InvalidLastSandboxError when workspace or name is empty or contains
 // a newline or carriage return.
 func SaveLastSandbox(w Writer, gatewayName, workspace, name string) error {
+	rel, err := lastSandboxRel(gatewayName)
+	if err != nil {
+		return err
+	}
 	if err := validateLastSandboxField("workspace", workspace); err != nil {
 		return err
 	}
@@ -83,14 +93,17 @@ func SaveLastSandbox(w Writer, gatewayName, workspace, name string) error {
 		return err
 	}
 	content := workspace + "\n" + name
-	return w.WriteFile(lastSandboxRel(gatewayName), []byte(content), 0o600)
+	return w.WriteFile(rel, []byte(content), 0o600)
 }
 
 // ClearLastSandboxIfMatches removes the last_sandbox file when it currently
 // records the given workspace/name (so deleting an unrelated sandbox does not
 // clear the pointer). A missing file is a no-op.
 func ClearLastSandboxIfMatches(w Writer, gatewayName, workspace, name string) error {
-	rel := lastSandboxRel(gatewayName)
+	rel, err := lastSandboxRel(gatewayName)
+	if err != nil {
+		return err
+	}
 	b, err := w.ReadFile(rel)
 	if err != nil {
 		return nil // nothing to clear

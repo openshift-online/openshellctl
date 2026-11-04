@@ -105,6 +105,41 @@ func TestSaveLastSandbox_RejectsNewlines(t *testing.T) {
 	}
 }
 
+// TestLastSandboxOps_RejectsInvalidGatewayName verifies that SaveLastSandbox and
+// ClearLastSandboxIfMatches both reject gateway names that would escape the
+// config tree (path traversal, URLs, etc.) via the shared lastSandboxRel choke
+// point.
+func TestLastSandboxOps_RejectsInvalidGatewayName(t *testing.T) {
+	rows := []struct {
+		name        string
+		gatewayName string
+	}{
+		{name: "path_traversal", gatewayName: "../x"},
+		{name: "url_with_scheme", gatewayName: "https://gw:443"},
+		{name: "slash_component", gatewayName: "a/b"},
+		{name: "empty", gatewayName: ""},
+	}
+	for _, row := range rows {
+		t.Run(row.name+"/save", func(t *testing.T) {
+			w := newMemWriter()
+			err := SaveLastSandbox(w, row.gatewayName, "ws", "sb")
+			if err == nil {
+				t.Fatalf("SaveLastSandbox(%q): want error, got nil", row.gatewayName)
+			}
+			if len(w.files) != 0 {
+				t.Errorf("memWriter should be empty on rejection, got %v", w.files)
+			}
+		})
+		t.Run(row.name+"/clear", func(t *testing.T) {
+			w := newMemWriter()
+			err := ClearLastSandboxIfMatches(w, row.gatewayName, "ws", "sb")
+			if err == nil {
+				t.Fatalf("ClearLastSandboxIfMatches(%q): want error, got nil", row.gatewayName)
+			}
+		})
+	}
+}
+
 // TestLastSandbox_SystemGatewayRoundTrip verifies that SaveLastSandbox +
 // LoadLastSandbox round-trip through the USER tree even when the gateway lives
 // in the system tree. The old code read from r.FS (the gateway's sub-FS in

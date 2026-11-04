@@ -31,7 +31,7 @@ type Resolved struct {
 	Dir      string // absolute dir on the source tree (best-effort; "" if unknown)
 	Source   Source
 	Metadata Metadata
-	FS       fs.FS // sub-FS rooted at the gateway dir (oidc_token.json, mtls/, last_sandbox)
+	FS       fs.FS // sub-FS rooted at the gateway dir (oidc_token.json, mtls/)
 }
 
 // Info summarises a gateway for List.
