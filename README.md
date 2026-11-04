@@ -170,7 +170,7 @@ $ openshellctl doctor --gateway-endpoint https://gw.example.com
 ✓ Endpoint URL       https://gw.example.com (normalized: https://gw.example.com)
 ✓ DNS                gw.example.com -> [10.0.0.1]
 ✗ HTTP reachability  GET https://gw.example.com/auth/oidc-config: dial tcp: connect: connection refused
-  Hint: check the gateway is reachable (try: curl -v https://gw.example.com/auth/oidc-config), or pass --gateway-insecure for an internal CA
+  Hint: check the gateway is reachable (try: curl -v https://gw.example.com/auth/oidc-config), or pass --oidc-issuer to skip discovery for a gateway with an internal CA
 ✗ Credentials        no credentials configured for gateway "https://gw.example.com" (checked: --token / OPENSHELL_TOKEN, OPENSHELL_OIDC_CLIENT_SECRET (or --client-secret-file), gateways/<name>/metadata.json, gateways/<name>/mtls/)
   Hint: for a service account, export OPENSHELL_OIDC_CLIENT_SECRET (or pass --client-secret-file); for a human, run `openshellctl login`
 - Audience           skipped: Credentials check failed
@@ -367,13 +367,13 @@ These flags apply to every command:
 |------|---------|-------------|
 | `--gateway`, `-g` | `OPENSHELL_GATEWAY` | Gateway name (selects config directory) |
 | `--gateway-endpoint` | `OPENSHELL_GATEWAY_ENDPOINT` | Gateway gRPC endpoint URL |
-| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for ALL HTTPS in the process (gRPC dial, OIDC issuer discovery and token endpoint, `-f` manifest URL fetches), except the self-update and notice check client which always verifies. Prints a warning to stderr on every use. |
+| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for gRPC dial and `-f` manifest URL fetches. **Does not apply to the OIDC-config discovery probe** in `gateway add` or `token`/`whoami`: the discovery HTTP client uses only the gateway's registered CA cert. For a staging gateway with an internal CA, pass `--oidc-issuer` to skip discovery, or register the gateway first (which persists the CA) and then re-run the command. |
 | `--workspace` | `OPENSHELL_WORKSPACE` | Workspace name (default: `default`) |
 | `--token` | `OPENSHELL_TOKEN` | Bearer token (overrides OIDC) |
 | `--config` | — | Config file path |
 | `--verbose`, `-v` | — | Increase verbosity (repeat for more) |
 | `--no-color` | `NO_COLOR` | Disable coloured output |
-| `--oidc-issuer` | — | OIDC issuer URL override |
+| `--oidc-issuer` | — | OIDC issuer URL override — when this differs from the issuer already recorded in the gateway's metadata, a warning is printed to stderr |
 | `--oidc-client-id` | — | OIDC client ID override |
 | `--oidc-audience` | — | OIDC audience override |
 | `--oidc-scopes` | — | OIDC scopes (space-separated) |
