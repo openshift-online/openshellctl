@@ -53,9 +53,25 @@ func LoadLastSandbox(r *Resolved, workspace string) (string, bool) {
 	return sandbox, true
 }
 
+// validateLastSandboxField returns an error when v is empty or contains \n or \r.
+func validateLastSandboxField(field, v string) error {
+	if v == "" || strings.ContainsAny(v, "\n\r") {
+		return &InvalidLastSandboxError{Field: field, Value: v}
+	}
+	return nil
+}
+
 // SaveLastSandbox writes "<workspace>\n<sandbox>" (no trailing newline) to the
 // USER tree. The Writer is responsible for the 0700 parent dir and 0600 file.
+// Returns *InvalidLastSandboxError when workspace or name is empty or contains
+// a newline or carriage return.
 func SaveLastSandbox(w Writer, gatewayName, workspace, name string) error {
+	if err := validateLastSandboxField("workspace", workspace); err != nil {
+		return err
+	}
+	if err := validateLastSandboxField("name", name); err != nil {
+		return err
+	}
 	content := workspace + "\n" + name
 	return w.WriteFile(lastSandboxRel(gatewayName), []byte(content), 0o600)
 }

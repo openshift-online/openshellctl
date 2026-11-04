@@ -1,6 +1,7 @@
 package gatewayconfig
 
 import (
+	"errors"
 	"io/fs"
 	"testing"
 	"testing/fstest"
@@ -68,6 +69,37 @@ func TestSaveLastSandbox_Format(t *testing.T) {
 	got := string(w.files["gateways/rosa/last_sandbox"])
 	if got != "default\nsb-9" {
 		t.Errorf("saved content = %q, want %q (no trailing newline)", got, "default\nsb-9")
+	}
+}
+
+func TestSaveLastSandbox_RejectsNewlines(t *testing.T) {
+	rows := []struct {
+		name      string
+		workspace string
+		sbName    string
+	}{
+		{name: "name_newline", workspace: "w", sbName: "a\nb"},
+		{name: "workspace_newline", workspace: "w\nx", sbName: "sb"},
+		{name: "name_empty", workspace: "w", sbName: ""},
+		{name: "name_cr", workspace: "w", sbName: "\r"},
+		{name: "workspace_cr", workspace: "w\r", sbName: "sb"},
+		{name: "workspace_empty", workspace: "", sbName: "sb"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			w := newMemWriter()
+			err := SaveLastSandbox(w, "gw", row.workspace, row.sbName)
+			if err == nil {
+				t.Fatal("want error, got nil")
+			}
+			var e *InvalidLastSandboxError
+			if !errors.As(err, &e) {
+				t.Fatalf("want *InvalidLastSandboxError, got %T: %v", err, err)
+			}
+			if len(w.files) != 0 {
+				t.Errorf("memWriter should be empty on rejection, got %v", w.files)
+			}
+		})
 	}
 }
 
