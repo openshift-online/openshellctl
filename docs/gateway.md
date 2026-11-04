@@ -116,8 +116,8 @@ from the upstream Rust CLI" below.
   normalized form, only `EnsureScheme`'s scheme-defaulted, otherwise verbatim
   result (see the schema table above).
 - **`--gateway-insecure` disables TLS verification for ALL HTTPS in the
-  process, except the self-update and notice check client which always
-  verifies**, not just the gRPC dial. The flag overrides
+  process, not just the gRPC dial.** The only exception is the self-update
+  and notice-check client, which always verifies. The flag overrides
   `http.DefaultTransport` process-wide, which means the OIDC issuer's
   discovery and token endpoints are also affected — bearer tokens and client
   secrets may be sent to an impersonated server. The self-update (`update`)
