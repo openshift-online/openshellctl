@@ -135,6 +135,8 @@ func TestLastSandboxOps_RejectsInvalidGatewayName(t *testing.T) {
 		})
 		t.Run(row.name+"/clear", func(t *testing.T) {
 			w := newMemWriter()
+			// Pre-seed a valid entry to confirm it is not removed on failure.
+			w.files["gateways/valid/last_sandbox"] = []byte("ws\nsb")
 			err := ClearLastSandboxIfMatches(w, row.gatewayName, "ws", "sb")
 			if err == nil {
 				t.Fatalf("ClearLastSandboxIfMatches(%q): want error, got nil", row.gatewayName)
@@ -142,8 +144,8 @@ func TestLastSandboxOps_RejectsInvalidGatewayName(t *testing.T) {
 			if !errors.Is(err, ErrInvalidGatewayName) {
 				t.Errorf("ClearLastSandboxIfMatches(%q): want ErrInvalidGatewayName, got %T: %v", row.gatewayName, err, err)
 			}
-			if len(w.files) != 0 {
-				t.Errorf("memWriter should be empty on rejection, got %v", w.files)
+			if _, ok := w.files["gateways/valid/last_sandbox"]; !ok {
+				t.Errorf("ClearLastSandboxIfMatches(%q): pre-existing entry was removed despite error", row.gatewayName)
 			}
 		})
 	}
@@ -206,59 +208,3 @@ func TestClearLastSandboxIfMatches(t *testing.T) {
 	}
 }
 
-// TestSaveLastSandbox_RejectsInvalidGatewayName confirms SaveLastSandbox returns
-// *InvalidGatewayNameError and writes nothing when the gatewayName is invalid.
-func TestSaveLastSandbox_RejectsInvalidGatewayName(t *testing.T) {
-	cases := []struct{ name, gatewayName string }{
-		{"dotdot-slash", "../x"},
-		{"slash-in-name", "a/b"},
-		{"empty", ""},
-		{"url", "https://gw"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := newMemWriter()
-			err := SaveLastSandbox(w, tc.gatewayName, "default", "sb-1")
-			if err == nil {
-				t.Fatalf("SaveLastSandbox(%q): expected error, got nil", tc.gatewayName)
-			}
-			var inv *InvalidGatewayNameError
-			if !errors.As(err, &inv) {
-				t.Fatalf("SaveLastSandbox(%q): err = %T(%v), want *InvalidGatewayNameError", tc.gatewayName, err, err)
-			}
-			if len(w.files) != 0 {
-				t.Errorf("SaveLastSandbox(%q): expected no writes, got %v", tc.gatewayName, w.files)
-			}
-		})
-	}
-}
-
-// TestClearLastSandboxIfMatches_RejectsInvalidGatewayName confirms
-// ClearLastSandboxIfMatches returns *InvalidGatewayNameError for invalid names
-// and does not mutate any pre-existing entry.
-func TestClearLastSandboxIfMatches_RejectsInvalidGatewayName(t *testing.T) {
-	cases := []struct{ name, gatewayName string }{
-		{"dotdot-slash", "../x"},
-		{"slash-in-name", "a/b"},
-		{"empty", ""},
-		{"url", "https://gw"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := newMemWriter()
-			// Pre-seed a valid entry to confirm it is not removed on failure.
-			w.files["gateways/valid/last_sandbox"] = []byte("default\nsb-1")
-			err := ClearLastSandboxIfMatches(w, tc.gatewayName, "default", "sb-1")
-			if err == nil {
-				t.Fatalf("ClearLastSandboxIfMatches(%q): expected error, got nil", tc.gatewayName)
-			}
-			var inv *InvalidGatewayNameError
-			if !errors.As(err, &inv) {
-				t.Fatalf("ClearLastSandboxIfMatches(%q): err = %T(%v), want *InvalidGatewayNameError", tc.gatewayName, err, err)
-			}
-			if _, ok := w.files["gateways/valid/last_sandbox"]; !ok {
-				t.Errorf("ClearLastSandboxIfMatches(%q): pre-existing entry was removed despite error", tc.gatewayName)
-			}
-		})
-	}
-}
