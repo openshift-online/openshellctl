@@ -126,6 +126,9 @@ func TestLastSandboxOps_RejectsInvalidGatewayName(t *testing.T) {
 			if err == nil {
 				t.Fatalf("SaveLastSandbox(%q): want error, got nil", row.gatewayName)
 			}
+			if !errors.Is(err, ErrInvalidGatewayName) {
+				t.Errorf("SaveLastSandbox(%q): want ErrInvalidGatewayName, got %T: %v", row.gatewayName, err, err)
+			}
 			if len(w.files) != 0 {
 				t.Errorf("memWriter should be empty on rejection, got %v", w.files)
 			}
@@ -135,6 +138,12 @@ func TestLastSandboxOps_RejectsInvalidGatewayName(t *testing.T) {
 			err := ClearLastSandboxIfMatches(w, row.gatewayName, "ws", "sb")
 			if err == nil {
 				t.Fatalf("ClearLastSandboxIfMatches(%q): want error, got nil", row.gatewayName)
+			}
+			if !errors.Is(err, ErrInvalidGatewayName) {
+				t.Errorf("ClearLastSandboxIfMatches(%q): want ErrInvalidGatewayName, got %T: %v", row.gatewayName, err, err)
+			}
+			if len(w.files) != 0 {
+				t.Errorf("memWriter should be empty on rejection, got %v", w.files)
 			}
 		})
 	}
