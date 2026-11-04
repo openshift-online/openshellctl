@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/pem"
 	"errors"
 	"net/http"
@@ -81,6 +82,25 @@ func TestOIDCConfigFetcher_Non200(t *testing.T) {
 	fetcher := newOIDCConfigFetcher(nil)
 	if _, _, err := fetcher(context.Background(), srv.URL); err == nil {
 		t.Error("expected an error for non-200")
+	}
+}
+
+// TestBuildFetcherTransport_NilTLS_ClearsInsecureSkipVerify verifies that
+// buildFetcherTransport clears InsecureSkipVerify from the cloned transport
+// config without aliasing the original config struct.
+func TestBuildFetcherTransport_NilTLS_ClearsInsecureSkipVerify(t *testing.T) {
+	origCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	customT := &http.Transport{TLSClientConfig: origCfg}
+	orig := http.DefaultTransport
+	http.DefaultTransport = customT
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	tr := buildFetcherTransport(nil)
+	if tr.TLSClientConfig.InsecureSkipVerify {
+		t.Error("buildFetcherTransport(nil) must clear InsecureSkipVerify")
+	}
+	if tr.TLSClientConfig == origCfg {
+		t.Error("buildFetcherTransport(nil) must not return a transport aliasing the original TLSClientConfig")
 	}
 }
 

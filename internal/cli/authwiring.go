@@ -128,17 +128,12 @@ func oidcConfigURL(endpoint string) (string, error) {
 	return base + "/auth/oidc-config", nil
 }
 
-// newOIDCConfigFetcher builds a fetcher that validates the endpoint via
-// oidcConfigURL (https or loopback http only), does not follow redirects,
-// and trusts tlsCfg for TLS. The transport is cloned from http.DefaultTransport
-// at construction time to preserve proxy settings.
-//
-// When tlsCfg is non-nil (gateway CA supplied), TLSClientConfig is set to it
-// directly. When nil, only InsecureSkipVerify is cleared on the cloned config
-// to prevent applyGatewayInsecureTransport's global override from leaking in,
-// while still preserving any custom CA pools set for test isolation via
-// trustTestServerTLS.
-func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint string) (string, string, error) {
+// buildFetcherTransport clones http.DefaultTransport (preserving proxy settings)
+// and applies tlsCfg as the TLS configuration. When tlsCfg is nil, only
+// InsecureSkipVerify is cleared on a fresh struct copy of the cloned config to
+// prevent applyGatewayInsecureTransport's global override from leaking in, while
+// still preserving any custom CA pools set for test isolation via trustTestServerTLS.
+func buildFetcherTransport(tlsCfg *tls.Config) *http.Transport {
 	var tr *http.Transport
 	if base, ok := http.DefaultTransport.(*http.Transport); ok {
 		tr = base.Clone()
@@ -148,13 +143,26 @@ func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint
 	if tlsCfg != nil {
 		tr.TLSClientConfig = tlsCfg
 	} else if tr.TLSClientConfig != nil {
-		// Block the InsecureSkipVerify global flag without discarding custom CAs.
-		tr.TLSClientConfig.InsecureSkipVerify = false //nolint:gosec
+		// Struct copy so tr.TLSClientConfig is an independent allocation;
+		// pointer fields (RootCAs, etc.) still share backing data with the
+		// clone, but scalar fields — including InsecureSkipVerify — are
+		// fully independent.
+		copied := *tr.TLSClientConfig
+		copied.InsecureSkipVerify = false //nolint:gosec
+		tr.TLSClientConfig = &copied
 	}
+	return tr
+}
 
+// newOIDCConfigFetcher builds a fetcher that validates the endpoint via
+// oidcConfigURL (https or loopback http only), does not follow redirects,
+// and trusts tlsCfg for TLS. The transport is built by buildFetcherTransport,
+// which clones http.DefaultTransport at construction time to preserve proxy
+// settings and isolates the fetcher from the global insecure-transport override.
+func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint string) (string, string, error) {
 	client := &http.Client{
 		Timeout:   10 * time.Second,
-		Transport: tr,
+		Transport: buildFetcherTransport(tlsCfg),
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -233,10 +241,12 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 	var fetcherTLS *tls.Config
 	if target.Resolved != nil {
 		mat := gatewayconfig.TLSMaterialFor(target.Resolved)
+		// The OIDC-config fetcher never honours --gateway-insecure: TLS
+		// must be verified for the trust-anchor fetch. Use only the
+		// gateway's CA cert (Insecure is left at the default false).
 		dc := gateway.DialConfig{
-			TLS:      mat,
-			TLSRoot:  target.Resolved.Dir,
-			Insecure: viper.GetBool("gateway-insecure"),
+			TLS:     mat,
+			TLSRoot: target.Resolved.Dir,
 		}
 		fetcherTLS, err = gateway.ClientTLSConfig(dc)
 		if err != nil {
