@@ -429,7 +429,7 @@ func TestFindByEndpoint_ReturnsSlug(t *testing.T) {
 	env := Env{
 		UserFS: fstest.MapFS{
 			"gateways/rosa-agentic-devx/metadata.json": {Data: []byte(md(displayName, "https://gw.example.com"))},
-			"active_gateway":                           {Data: []byte(slug)},
+			"active_gateway": {Data: []byte(slug)},
 		},
 	}
 	name, ok, err := FindByEndpoint(env, "https://gw.example.com")
