@@ -192,6 +192,7 @@ func TestAuthWriterAdapter_RejectsTraversal(t *testing.T) {
 // the directory slug (Resolved.Name), not the display name in Target.Name.
 func TestTokenWriterFor_UsesSlug(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	target := &gatewayconfig.Target{
 		Name:     "ROSA Agentic Devx",

@@ -181,9 +181,6 @@ func newGatewayLogoutCommand() *cobra.Command {
 			if !ok {
 				return &gatewayconfig.GatewayNotFoundError{Name: target.Name}
 			}
-			if _, err := gatewayconfig.Load(env, slug); err != nil {
-				return err
-			}
 			w, err := gatewayconfig.NewOSWriter()
 			if err != nil {
 				return err
