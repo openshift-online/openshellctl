@@ -88,6 +88,18 @@ func newResolved(root fs.FS, name string, src Source, m Metadata, rootDir string
 	}
 }
 
+// DirName returns the validated directory slug (t.Resolved.Name) and true when
+// t is non-nil and t.Resolved is non-nil; otherwise returns ("", false). Use
+// this for every write-path that constructs a gateways/<slug>/... path so that
+// display names (which may contain spaces or other invalid characters) never
+// reach the filesystem.
+func (t *Target) DirName() (string, bool) {
+	if t == nil || t.Resolved == nil {
+		return "", false
+	}
+	return t.Resolved.Name, true
+}
+
 // ActiveGateway reads the active_gateway file (config-root level, not under
 // gateways/), user tree then system tree; content is trimmed and validated; an
 // empty or invalid value yields ErrNoActiveGateway (metadata.rs:243-276).
@@ -175,7 +187,7 @@ func FindByEndpoint(env Env, endpoint string) (string, bool, error) {
 	if active, aerr := ActiveGateway(env); aerr == nil {
 		if r, lerr := Load(env, active); lerr == nil {
 			if norm, nerr := NormalizeEndpoint(r.Metadata.GatewayEndpoint); nerr == nil && norm == target {
-				return r.Metadata.Name, true, nil
+				return r.Name, true, nil
 			}
 		}
 	}
@@ -191,7 +203,7 @@ func FindByEndpoint(env Env, endpoint string) (string, bool, error) {
 			continue
 		}
 		if norm == target {
-			return r.Metadata.Name, true, nil
+			return r.Name, true, nil
 		}
 	}
 	return "", false, nil
