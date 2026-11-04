@@ -29,7 +29,6 @@ func (f fakeTokenSource) Token(context.Context) (*auth.Token, error) { return f.
 func (f fakeTokenSource) Invalidate()                                {}
 func (f fakeTokenSource) Describe() string                           { return "fake" }
 
-
 // oidcDiscoveryServer starts a TLS test server that serves a fake
 // /auth/oidc-config response. It returns both the server and a *tls.Config
 // that trusts its self-signed certificate, so callers can pass the config via
