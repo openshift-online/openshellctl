@@ -14,11 +14,11 @@ import (
 )
 
 func targetWithLastSandbox(ws, name string) *gatewayconfig.Target {
+	content := ws + "\n" + name
 	return &gatewayconfig.Target{
 		Name: "ci",
-		Resolved: &gatewayconfig.Resolved{
-			Name: "ci",
-			FS:   fstest.MapFS{"last_sandbox": {Data: []byte(ws + "\n" + name)}},
+		UserFS: fstest.MapFS{
+			gatewayconfig.GatewayDir("ci") + "/last_sandbox": {Data: []byte(content)},
 		},
 	}
 }
@@ -56,23 +56,12 @@ func TestSaveLastSandboxRoundTrip(t *testing.T) {
 	target := &gatewayconfig.Target{Name: "ci"}
 	saveLastSandbox(target, "default", "my-sb")
 
-	// Read it back via the gatewayconfig loader against the written tree.
+	// Read it back via LoadLastSandbox against the written user tree.
 	env, err := gatewayconfig.NewOSEnv()
 	if err != nil {
 		t.Fatalf("env: %v", err)
 	}
-	// Write the minimal metadata the loader needs, then reload.
-	got, err := gatewayconfig.NewOSWriter()
-	if err != nil {
-		t.Fatalf("writer: %v", err)
-	}
-	_ = got.WriteFile(gatewayconfig.GatewayDir("ci")+"/metadata.json", []byte(`{"endpoint":"http://x"}`), 0o600)
-
-	resolved, err := gatewayconfig.Load(env, "ci")
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	name, ok := gatewayconfig.LoadLastSandbox(resolved, "default")
+	name, ok := gatewayconfig.LoadLastSandbox(env.UserFS, "ci", "default")
 	if !ok || name != "my-sb" {
 		t.Errorf("round-trip last_sandbox = %q ok=%v, want my-sb", name, ok)
 	}

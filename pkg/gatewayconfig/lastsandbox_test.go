@@ -3,6 +3,7 @@ package gatewayconfig
 import (
 	"errors"
 	"io/fs"
+	"os"
 	"testing"
 	"testing/fstest"
 )
@@ -25,38 +26,39 @@ func (w *memWriter) ReadFile(rel string) ([]byte, error) {
 	return b, nil
 }
 
-func resolvedWithLastSandbox(content string) *Resolved {
-	return &Resolved{
-		Name: "rosa",
-		FS:   fstest.MapFS{"last_sandbox": {Data: []byte(content)}},
+// userFSWithLastSandbox builds a MapFS whose last_sandbox sits under the
+// gateway directory, matching the layout LoadLastSandbox now expects.
+func userFSWithLastSandbox(gatewayName, content string) fs.FS {
+	return fstest.MapFS{
+		GatewayDir(gatewayName) + "/last_sandbox": {Data: []byte(content)},
 	}
 }
 
 func TestLoadLastSandbox_Match(t *testing.T) {
-	r := resolvedWithLastSandbox("default\nsb-123")
-	name, ok := LoadLastSandbox(r, "default")
+	userFS := userFSWithLastSandbox("rosa", "default\nsb-123")
+	name, ok := LoadLastSandbox(userFS, "rosa", "default")
 	if !ok || name != "sb-123" {
 		t.Errorf("got (%q,%v), want (sb-123,true)", name, ok)
 	}
 }
 
 func TestLoadLastSandbox_WorkspaceMismatch(t *testing.T) {
-	r := resolvedWithLastSandbox("other\nsb-123")
-	if _, ok := LoadLastSandbox(r, "default"); ok {
+	userFS := userFSWithLastSandbox("rosa", "other\nsb-123")
+	if _, ok := LoadLastSandbox(userFS, "rosa", "default"); ok {
 		t.Errorf("expected miss on workspace mismatch")
 	}
 }
 
 func TestLoadLastSandbox_LegacySingleLine(t *testing.T) {
-	r := resolvedWithLastSandbox("sb-123")
-	if _, ok := LoadLastSandbox(r, "default"); ok {
+	userFS := userFSWithLastSandbox("rosa", "sb-123")
+	if _, ok := LoadLastSandbox(userFS, "rosa", "default"); ok {
 		t.Errorf("legacy single-line should miss")
 	}
 }
 
 func TestLoadLastSandbox_Empty(t *testing.T) {
-	r := resolvedWithLastSandbox("   \n")
-	if _, ok := LoadLastSandbox(r, "default"); ok {
+	userFS := userFSWithLastSandbox("rosa", "   \n")
+	if _, ok := LoadLastSandbox(userFS, "rosa", "default"); ok {
 		t.Errorf("empty file should miss")
 	}
 }
@@ -100,6 +102,33 @@ func TestSaveLastSandbox_RejectsNewlines(t *testing.T) {
 				t.Errorf("memWriter should be empty on rejection, got %v", w.files)
 			}
 		})
+	}
+}
+
+// TestLastSandbox_SystemGatewayRoundTrip verifies that SaveLastSandbox +
+// LoadLastSandbox round-trip through the USER tree even when the gateway lives
+// in the system tree. The old code read from r.FS (the gateway's sub-FS in
+// SysFS), which missed files written by SaveLastSandbox into UserFS.
+func TestLastSandbox_SystemGatewayRoundTrip(t *testing.T) {
+	userDir := t.TempDir()
+	userFS := os.DirFS(userDir)
+
+	env := Env{
+		SysFS: fstest.MapFS{
+			"gateways/sys/metadata.json": {Data: []byte(`{"endpoint":"http://sys"}`)},
+		},
+		UserFS: userFS,
+	}
+
+	w := &OSWriter{Root: userDir}
+	if err := SaveLastSandbox(w, "sys", "default", "sb"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// LoadLastSandbox must read from the user tree, not the system tree.
+	name, ok := LoadLastSandbox(env.UserFS, "sys", "default")
+	if !ok || name != "sb" {
+		t.Errorf("round-trip: got (%q,%v), want (sb,true)", name, ok)
 	}
 }
 

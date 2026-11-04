@@ -205,6 +205,7 @@ type Target struct {
 	Name     string    // "" when endpoint given and no metadata matched (falls back to endpoint)
 	Endpoint string    // the user's original string, verbatim — never NormalizeEndpoint's canonical form
 	Resolved *Resolved // nil when endpoint-only
+	UserFS   fs.FS     // user config tree; set by Resolve so LoadLastSandbox always reads the user tree
 }
 
 // Resolve mirrors resolve_gateway (main.rs:78-126). Precedence:
@@ -221,7 +222,7 @@ func Resolve(env Env, in ResolveInput) (*Target, error) {
 				name = found
 			}
 		}
-		t := &Target{Name: name, Endpoint: in.Endpoint}
+		t := &Target{Name: name, Endpoint: in.Endpoint, UserFS: env.UserFS}
 		if name == "" {
 			t.Name = in.Endpoint // upstream falls back to the raw endpoint string
 		} else if r, err := Load(env, name); err == nil {
@@ -247,5 +248,6 @@ func Resolve(env Env, in ResolveInput) (*Target, error) {
 		Name:     r.Metadata.Name,
 		Endpoint: r.Metadata.GatewayEndpoint,
 		Resolved: r,
+		UserFS:   env.UserFS,
 	}, nil
 }

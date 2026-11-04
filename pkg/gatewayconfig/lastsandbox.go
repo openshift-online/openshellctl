@@ -22,15 +22,19 @@ func lastSandboxRel(gatewayName string) string {
 	return path.Join(GatewayDir(gatewayName), "last_sandbox")
 }
 
-// LoadLastSandbox returns the last-used sandbox name for a workspace, reading
-// gateways/<name>/last_sandbox from the gateway's sub-FS. The file is
-// "<workspace>\n<sandbox>"; the name is returned only when the stored workspace
-// matches. Legacy single-line files yield ("", false) (metadata.rs:282-324).
-func LoadLastSandbox(r *Resolved, workspace string) (string, bool) {
-	if r == nil || r.FS == nil {
+// LoadLastSandbox returns the last-used sandbox name for a workspace. It reads
+// gateways/<gatewayDirName>/last_sandbox from userFS (the USER config tree),
+// matching the tree that SaveLastSandbox writes to. Using userFS unconditionally
+// — rather than the gateway's resolved FS — means system-tree gateways (whose
+// resolved FS is under /etc/openshell) correctly pick up pointers written by
+// SaveLastSandbox into the user tree. The file format is "<workspace>\n<sandbox>";
+// the name is returned only when the stored workspace matches. Legacy single-line
+// files yield ("", false) (metadata.rs:282-324).
+func LoadLastSandbox(userFS fs.FS, gatewayDirName, workspace string) (string, bool) {
+	if userFS == nil {
 		return "", false
 	}
-	b, err := fs.ReadFile(r.FS, "last_sandbox")
+	b, err := fs.ReadFile(userFS, GatewayDir(gatewayDirName)+"/last_sandbox")
 	if err != nil {
 		return "", false
 	}
