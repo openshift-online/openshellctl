@@ -15,6 +15,44 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 )
 
+func TestOIDCConfigURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		endpoint  string
+		wantURL   string
+		wantErr   bool
+		wantInsec bool
+	}{
+		{"https ok", "https://gw", "https://gw/auth/oidc-config", false, false},
+		{"http loopback IPv4 ok", "http://127.0.0.1:8080", "http://127.0.0.1:8080/auth/oidc-config", false, false},
+		{"http localhost ok", "http://localhost", "http://localhost/auth/oidc-config", false, false},
+		{"http loopback IPv6 ok", "http://[::1]:80", "http://[::1]:80/auth/oidc-config", false, false},
+		{"http non-loopback rejected", "http://gw.example.com", "", true, true},
+		{"ftp scheme rejected", "ftp://gw", "", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := oidcConfigURL(tt.endpoint)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("oidcConfigURL(%q) = %q, nil; want error", tt.endpoint, got)
+				}
+				var insec *InsecureOIDCConfigURLError
+				if tt.wantInsec && !errors.As(err, &insec) {
+					t.Errorf("oidcConfigURL(%q): err = %v, want *InsecureOIDCConfigURLError", tt.endpoint, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("oidcConfigURL(%q): unexpected error: %v", tt.endpoint, err)
+			}
+			if got != tt.wantURL {
+				t.Errorf("oidcConfigURL(%q) = %q, want %q", tt.endpoint, got, tt.wantURL)
+			}
+		})
+	}
+}
+
 func TestOIDCConfigFetcher(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/auth/oidc-config" {

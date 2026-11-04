@@ -89,8 +89,8 @@ func TestIsLoopbackGatewayEndpoint(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isLoopbackGatewayEndpoint(tt.endpoint); got != tt.want {
-				t.Errorf("isLoopbackGatewayEndpoint(%q) = %v, want %v", tt.endpoint, got, tt.want)
+			if got := IsLoopbackEndpoint(tt.endpoint); got != tt.want {
+				t.Errorf("IsLoopbackEndpoint(%q) = %v, want %v", tt.endpoint, got, tt.want)
 			}
 		})
 	}

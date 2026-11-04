@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -86,6 +88,95 @@ func requireTokenWriter(target *gatewayconfig.Target) (auth.Writer, error) {
 				"openshellctl gateway add <endpoint> --name <name>")}
 	}
 	return w, nil
+}
+
+// InsecureOIDCConfigURLError is returned by oidcConfigURL when the endpoint
+// is http:// and its host is not a loopback address — a non-loopback http://
+// endpoint is not permitted for OIDC config discovery (use --oidc-issuer).
+type InsecureOIDCConfigURLError struct {
+	Endpoint string
+}
+
+func (e *InsecureOIDCConfigURLError) Error() string {
+	return fmt.Sprintf(
+		"OIDC config endpoint %q must use https:// or a loopback http:// address; "+
+			"pass --oidc-issuer to skip discovery",
+		e.Endpoint,
+	)
+}
+
+// oidcConfigURL validates endpoint and returns the full URL for GET
+// /auth/oidc-config. It returns *InsecureOIDCConfigURLError when the
+// endpoint is http:// but the host is not loopback, and a plain error for
+// unsupported schemes (ftp://, etc.).
+func oidcConfigURL(endpoint string) (string, error) {
+	base := strings.TrimSuffix(endpoint, "/")
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	switch u.Scheme {
+	case "https":
+		// secure — allowed
+	case "http":
+		if !gatewayconfig.IsLoopbackEndpoint(endpoint) {
+			return "", &InsecureOIDCConfigURLError{Endpoint: endpoint}
+		}
+	default:
+		return "", fmt.Errorf("unsupported scheme %q for oidc-config endpoint", u.Scheme)
+	}
+	return base + "/auth/oidc-config", nil
+}
+
+// newOIDCConfigFetcher builds a fetcher that validates the endpoint via
+// oidcConfigURL (https or loopback http only), does not follow redirects,
+// and trusts tlsCfg for TLS (nil = system roots). The transport is cloned
+// from http.DefaultTransport at construction time (preserving proxy settings),
+// then TLSClientConfig is set explicitly so behaviour does not depend on the
+// process-wide transport override (applyGatewayInsecureTransport).
+func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint string) (string, string, error) {
+	var tr *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = base.Clone()
+	} else {
+		tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	tr.TLSClientConfig = tlsCfg
+
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: tr,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	return func(ctx context.Context, endpoint string) (string, string, error) {
+		rawURL, err := oidcConfigURL(endpoint)
+		if err != nil {
+			return "", "", err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return "", "", err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", "", err
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return "", "", fmt.Errorf("/auth/oidc-config returned %s", resp.Status)
+		}
+		var body struct {
+			Issuer   string `json:"issuer"`
+			Audience string `json:"audience"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			return "", "", err
+		}
+		return body.Issuer, body.Audience, nil
+	}
 }
 
 // oidcConfigFetcher fetches {issuer, audience} from GET <endpoint>/auth/oidc-config.
