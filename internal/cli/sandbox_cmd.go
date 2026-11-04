@@ -92,14 +92,15 @@ func resolveNameFromFileOrArgs(cmd *cobra.Command, file string, args []string, t
 // saveLastSandbox best-effort records the workspace/name as the gateway's
 // last_sandbox. Failures are ignored (matching the CLI's `let _ = ...`).
 func saveLastSandbox(target *gatewayconfig.Target, ws, name string) {
-	if target == nil || target.Name == "" {
+	slug, ok := target.DirName()
+	if !ok {
 		return
 	}
 	w, err := gatewayconfig.NewOSWriter()
 	if err != nil {
 		return
 	}
-	_ = gatewayconfig.SaveLastSandbox(w, target.Name, ws, name)
+	_ = gatewayconfig.SaveLastSandbox(w, slug, ws, name)
 }
 
 // workspace returns the effective workspace (flag/env via viper, default "default").
