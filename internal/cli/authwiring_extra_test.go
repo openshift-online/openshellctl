@@ -369,6 +369,7 @@ func TestIssuerOverrideWarning(t *testing.T) {
 		{"no override", "", pstr("https://issuer"), true},
 		{"same value", "https://issuer", pstr("https://issuer"), true},
 		{"same with trailing slash on override", "https://issuer/", pstr("https://issuer"), true},
+		{"same with trailing slash on metadata", "https://issuer", pstr("https://issuer/"), true},
 		{"differing issuers", "https://other", pstr("https://issuer"), false},
 		{"nil metadata issuer", "https://issuer", nil, true},
 	}
