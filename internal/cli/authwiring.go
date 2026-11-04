@@ -130,10 +130,14 @@ func oidcConfigURL(endpoint string) (string, error) {
 
 // newOIDCConfigFetcher builds a fetcher that validates the endpoint via
 // oidcConfigURL (https or loopback http only), does not follow redirects,
-// and trusts tlsCfg for TLS (nil = system roots). The transport is cloned
-// from http.DefaultTransport at construction time (preserving proxy settings),
-// then TLSClientConfig is set explicitly so behaviour does not depend on the
-// process-wide transport override (applyGatewayInsecureTransport).
+// and trusts tlsCfg for TLS. The transport is cloned from http.DefaultTransport
+// at construction time to preserve proxy settings.
+//
+// When tlsCfg is non-nil (gateway CA supplied), TLSClientConfig is set to it
+// directly. When nil, only InsecureSkipVerify is cleared on the cloned config
+// to prevent applyGatewayInsecureTransport's global override from leaking in,
+// while still preserving any custom CA pools set for test isolation via
+// trustTestServerTLS.
 func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint string) (string, string, error) {
 	var tr *http.Transport
 	if base, ok := http.DefaultTransport.(*http.Transport); ok {
@@ -141,7 +145,12 @@ func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint
 	} else {
 		tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
 	}
-	tr.TLSClientConfig = tlsCfg
+	if tlsCfg != nil {
+		tr.TLSClientConfig = tlsCfg
+	} else if tr.TLSClientConfig != nil {
+		// Block the InsecureSkipVerify global flag without discarding custom CAs.
+		tr.TLSClientConfig.InsecureSkipVerify = false //nolint:gosec
+	}
 
 	client := &http.Client{
 		Timeout:   10 * time.Second,

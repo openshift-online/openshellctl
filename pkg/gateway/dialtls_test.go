@@ -94,9 +94,9 @@ func TestBuildTLSConfig_FullTriple(t *testing.T) {
 	resolved := &gatewayconfig.Resolved{FS: os.DirFS(dir)}
 	mat := gatewayconfig.TLSMaterialFor(resolved)
 
-	cfg, err := buildTLSConfig(DialConfig{TLS: mat, TLSRoot: dir})
+	cfg, err := ClientTLSConfig(DialConfig{TLS: mat, TLSRoot: dir})
 	if err != nil {
-		t.Fatalf("buildTLSConfig: %v", err)
+		t.Fatalf("ClientTLSConfig: %v", err)
 	}
 	if cfg.RootCAs == nil {
 		t.Error("RootCAs should be set from ca.crt")
@@ -111,13 +111,13 @@ func TestBuildTLSConfig_FullTriple(t *testing.T) {
 
 func TestBuildTLSConfig_BadCAErrors(t *testing.T) {
 	mat := gatewayconfig.TLSMaterial{Present: true, CAFile: "/nonexistent/ca.crt"}
-	if _, err := buildTLSConfig(DialConfig{TLS: mat}); err == nil {
+	if _, err := ClientTLSConfig(DialConfig{TLS: mat}); err == nil {
 		t.Error("expected an error reading a missing CA file")
 	}
 }
 
 func TestBuildTLSConfig_Insecure(t *testing.T) {
-	cfg, err := buildTLSConfig(DialConfig{Insecure: true})
+	cfg, err := ClientTLSConfig(DialConfig{Insecure: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,9 +148,9 @@ func TestBuildTLSConfig_ReadsFromConfigTree_NotCWD(t *testing.T) {
 	elsewhere := t.TempDir()
 	t.Chdir(elsewhere)
 
-	cfg, err := buildTLSConfig(DialConfig{TLS: mat, TLSRoot: resolved.Dir})
+	cfg, err := ClientTLSConfig(DialConfig{TLS: mat, TLSRoot: resolved.Dir})
 	if err != nil {
-		t.Fatalf("buildTLSConfig from config tree: %v", err)
+		t.Fatalf("ClientTLSConfig from config tree: %v", err)
 	}
 	if cfg.RootCAs == nil {
 		t.Error("RootCAs should be populated from the config tree CA")
@@ -170,9 +170,9 @@ func TestBuildTLSConfig_CWD_MTLS_NotConsulted(t *testing.T) {
 	writeSelfSigned(t, cwd)
 	t.Chdir(cwd)
 
-	cfg, err := buildTLSConfig(DialConfig{TLS: mat, TLSRoot: resolved.Dir})
+	cfg, err := ClientTLSConfig(DialConfig{TLS: mat, TLSRoot: resolved.Dir})
 	if err != nil {
-		t.Fatalf("buildTLSConfig: %v", err)
+		t.Fatalf("ClientTLSConfig: %v", err)
 	}
 	if cfg.RootCAs == nil {
 		t.Fatal("RootCAs should be set from config tree")
@@ -180,7 +180,7 @@ func TestBuildTLSConfig_CWD_MTLS_NotConsulted(t *testing.T) {
 
 	// Verify the CA was loaded from configDir, not CWD: the CWD's
 	// self-signed cert (different key) must fail verification against
-	// the pool that buildTLSConfig built from the config tree.
+	// the pool that ClientTLSConfig built from the config tree.
 	cwdCA, err := os.ReadFile(filepath.Join(cwd, "mtls", "ca.crt"))
 	if err != nil {
 		t.Fatal(err)
@@ -225,9 +225,9 @@ func TestBuildTLSConfig_CAOnly(t *testing.T) {
 		t.Fatal("CA-only: Present should be true")
 	}
 
-	cfg, err := buildTLSConfig(DialConfig{TLS: mat, TLSRoot: dir})
+	cfg, err := ClientTLSConfig(DialConfig{TLS: mat, TLSRoot: dir})
 	if err != nil {
-		t.Fatalf("buildTLSConfig CA-only: %v", err)
+		t.Fatalf("ClientTLSConfig CA-only: %v", err)
 	}
 	if cfg.RootCAs == nil {
 		t.Error("RootCAs should be set from ca.crt")
