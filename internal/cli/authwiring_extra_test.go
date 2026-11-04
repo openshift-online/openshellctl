@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,8 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/viper"
-
+	"github.com/openshift-online/openshellctl/pkg/gateway"
 	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 )
 
@@ -63,7 +63,8 @@ func TestOIDCConfigFetcher(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	iss, aud, err := oidcConfigFetcher(context.Background(), srv.URL)
+	fetcher := newOIDCConfigFetcher(nil)
+	iss, aud, err := fetcher(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -77,24 +78,24 @@ func TestOIDCConfigFetcher_Non200(t *testing.T) {
 		http.Error(w, "nope", http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
-	if _, _, err := oidcConfigFetcher(context.Background(), srv.URL); err == nil {
+	fetcher := newOIDCConfigFetcher(nil)
+	if _, _, err := fetcher(context.Background(), srv.URL); err == nil {
 		t.Error("expected an error for non-200")
 	}
 }
 
-// TestOIDCConfigFetcher_UntrustedCertFailsByDefault confirms the discovery
-// probe performs real TLS verification by default — a self-signed/
-// internal-CA cert (common for staging gateways) is rejected, just like any
-// other HTTPS client, unless --gateway-insecure opts out of it.
+// TestOIDCConfigFetcher_UntrustedCertFailsByDefault confirms that the fetcher
+// (with nil TLS config — system roots) rejects a self-signed cert, so
+// discovery against a staging gateway without an explicit CA fails fast and
+// tells the user to pass --oidc-issuer.
 func TestOIDCConfigFetcher_UntrustedCertFailsByDefault(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"issuer":"https://issuer","audience":"openshell-cli"}`))
 	}))
 	defer srv.Close()
 
-	_, _, err := oidcConfigFetcher(context.Background(), srv.URL)
+	fetcher := newOIDCConfigFetcher(nil)
+	_, _, err := fetcher(context.Background(), srv.URL)
 	if err == nil {
 		t.Fatal("expected a certificate verification error against an untrusted self-signed cert")
 	}
@@ -103,29 +104,78 @@ func TestOIDCConfigFetcher_UntrustedCertFailsByDefault(t *testing.T) {
 	}
 }
 
-// TestOIDCConfigFetcher_GatewayInsecureSkipsVerification confirms
-// oidcConfigFetcher inherits the global --gateway-insecure transport
-// override (applyGatewayInsecureTransport, root.go) rather than keeping its
-// own separate per-call override — one place decides "skip verification,"
-// not two that could drift (the SDK's own OIDC HTTP client needs the global
-// override regardless, since it has no per-call injection point at all; see
-// root.go's applyGatewayInsecureTransport doc comment).
-func TestOIDCConfigFetcher_GatewayInsecureSkipsVerification(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	original := http.DefaultTransport
-	t.Cleanup(func() { http.DefaultTransport = original })
+// TestOIDCConfigFetcher_PlainHTTPNonLoopbackRejected confirms that the
+// fetcher rejects a non-loopback http:// endpoint before making any request.
+func TestOIDCConfigFetcher_PlainHTTPNonLoopbackRejected(t *testing.T) {
+	fetcher := newOIDCConfigFetcher(nil)
+	_, _, err := fetcher(context.Background(), "http://gw.example.com:8080")
+	if err == nil {
+		t.Fatal("expected error for non-loopback http endpoint")
+	}
+	var insec *InsecureOIDCConfigURLError
+	if !errors.As(err, &insec) {
+		t.Errorf("expected *InsecureOIDCConfigURLError, got %T: %v", err, err)
+	}
+}
 
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+// TestOIDCConfigFetcher_DoesNotFollowRedirect confirms that a 302 response is
+// not followed — the client returns an error for the non-200 status and
+// never contacts the redirect target.
+func TestOIDCConfigFetcher_DoesNotFollowRedirect(t *testing.T) {
+	second := 0
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		second++
+		_, _ = w.Write([]byte(`{"issuer":"https://issuer","audience":"openshell-cli"}`))
+	}))
+	defer dest.Close()
+
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dest.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer redir.Close()
+
+	fetcher := newOIDCConfigFetcher(nil)
+	_, _, err := fetcher(context.Background(), redir.URL)
+	if err == nil {
+		t.Fatal("expected error (302 not followed → non-200)")
+	}
+	if second != 0 {
+		t.Errorf("redirect target was contacted %d times, want 0", second)
+	}
+}
+
+// TestOIDCConfigFetcher_UsesGatewayCA confirms that the fetcher trusts the
+// gateway's CA certificate (via gateway.ClientTLSConfig) and succeeds against
+// an https server whose cert is signed by that CA.
+func TestOIDCConfigFetcher_UsesGatewayCA(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/oidc-config" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		_, _ = w.Write([]byte(`{"issuer":"https://issuer","audience":"openshell-cli"}`))
 	}))
 	defer srv.Close()
 
-	viper.Set("gateway-insecure", true)
-	applyGatewayInsecureTransport()
-	iss, aud, err := oidcConfigFetcher(context.Background(), srv.URL)
+	caDir := t.TempDir()
+	caFile := filepath.Join(caDir, "ca.crt")
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	if err := os.WriteFile(caFile, certPEM, 0o600); err != nil {
+		t.Fatalf("write CA: %v", err)
+	}
+
+	tlsCfg, err := gateway.ClientTLSConfig(gateway.DialConfig{
+		TLS:     gatewayconfig.TLSMaterial{Present: true, CAFile: "ca.crt"},
+		TLSRoot: caDir,
+	})
 	if err != nil {
-		t.Fatalf("fetch with --gateway-insecure: %v", err)
+		t.Fatalf("ClientTLSConfig: %v", err)
+	}
+
+	fetcher := newOIDCConfigFetcher(tlsCfg)
+	iss, aud, err := fetcher(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("fetch with gateway CA: %v", err)
 	}
 	if iss != "https://issuer" || aud != "openshell-cli" {
 		t.Errorf("got issuer=%q audience=%q", iss, aud)

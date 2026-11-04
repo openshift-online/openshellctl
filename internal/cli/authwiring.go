@@ -179,38 +179,6 @@ func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint
 	}
 }
 
-// oidcConfigFetcher fetches {issuer, audience} from GET <endpoint>/auth/oidc-config.
-// Uses http.DefaultTransport (no Transport override of its own), so it
-// automatically honors --gateway-insecure once applyGatewayInsecureTransport
-// (root.go) has run — the same global override the SDK's own OIDC HTTP
-// client needs regardless, since it has no per-call injection point at all.
-// Keeping a single place that decides "skip verification" avoids this call
-// and the SDK's calls disagreeing about whether --gateway-insecure applies.
-func oidcConfigFetcher(ctx context.Context, endpoint string) (string, string, error) {
-	url := strings.TrimSuffix(endpoint, "/") + "/auth/oidc-config"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", "", err
-	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("/auth/oidc-config returned %s", resp.Status)
-	}
-	var body struct {
-		Issuer   string `json:"issuer"`
-		Audience string `json:"audience"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", "", err
-	}
-	return body.Issuer, body.Audience, nil
-}
-
 // resolveTokenSource builds a TokenSource from the current flags/env. It resolves
 // the gateway (best-effort — endpoint-only is allowed) and then the auth source.
 // When --write-token is set and a gateway is resolved, a write-back Writer is
@@ -233,6 +201,21 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 		return nil, nil, err
 	}
 
+	// Build a fetcher that trusts the gateway's CA when TLS material is present.
+	var fetcherTLS *tls.Config
+	if target.Resolved != nil {
+		mat := gatewayconfig.TLSMaterialFor(target.Resolved)
+		dc := gateway.DialConfig{
+			TLS:      mat,
+			TLSRoot:  target.Resolved.Dir,
+			Insecure: viper.GetBool("gateway-insecure"),
+		}
+		fetcherTLS, err = gateway.ClientTLSConfig(dc)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	in := auth.ResolveInput{
 		StaticToken:       viper.GetString("token"),
 		ClientSecret:      clientSecretProvider(viper.GetString("client-secret-file")),
@@ -242,7 +225,7 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 		Gateway:           target.Resolved,
 		GatewayEndpoint:   target.Endpoint,
 		TLSPresent:        target.Resolved != nil && gatewayconfig.TLSMaterialFor(target.Resolved).Present,
-		OIDCConfigFetcher: oidcConfigFetcher,
+		OIDCConfigFetcher: newOIDCConfigFetcher(fetcherTLS),
 	}
 	if scopes := viper.GetString("oidc-scopes"); scopes != "" {
 		in.Scopes = strings.Fields(scopes)

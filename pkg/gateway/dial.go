@@ -141,7 +141,7 @@ func dialRaw(cfg DialConfig, plaintext bool, perRPC *perRPCCredentials) (*grpc.C
 	if plaintext {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
-		tlsCfg, err := buildTLSConfig(cfg)
+		tlsCfg, err := ClientTLSConfig(cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -154,9 +154,9 @@ func dialRaw(cfg DialConfig, plaintext bool, perRPC *perRPCCredentials) (*grpc.C
 	return grpc.NewClient(target, opts...)
 }
 
-// buildTLSConfig assembles the client TLS config: CAFile → RootCAs, cert+key →
+// ClientTLSConfig assembles the client TLS config: CAFile → RootCAs, cert+key →
 // client cert, Insecure → InsecureSkipVerify. MinVersion 1.2.
-func buildTLSConfig(cfg DialConfig) (*tls.Config, error) {
+func ClientTLSConfig(cfg DialConfig) (*tls.Config, error) {
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if cfg.Insecure {
 		tlsCfg.InsecureSkipVerify = true
