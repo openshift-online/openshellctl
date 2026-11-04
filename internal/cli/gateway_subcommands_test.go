@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -241,5 +243,48 @@ func TestGatewayLogin_RequiresGateway(t *testing.T) {
 	_, err := runCmd(t, "gateway", "login")
 	if err == nil {
 		t.Fatal("expected an error without a gateway")
+	}
+}
+
+// TestGatewayLogout_UsesSlug confirms that when a gateway's directory slug
+// (Resolved.Name) differs from its display name (Metadata.Name / Target.Name),
+// logout uses the slug for filesystem operations and keeps the display name in
+// the user-facing message.
+func TestGatewayLogout_UsesSlug(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	// Build a gateway whose directory slug ("rosa-agentic-devx") differs from
+	// its metadata display name ("ROSA Agentic Devx"), simulating a gateway
+	// registered by the upstream Rust CLI that allows spaces in names.
+	const slug = "rosa-agentic-devx"
+	const displayName = "ROSA Agentic Devx"
+	gwDir := filepath.Join(xdg, "openshell", "gateways", slug)
+	if err := os.MkdirAll(gwDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mdJSON := `{"name":"` + displayName + `","gateway_endpoint":"https://gw.example.com","is_remote":false,"gateway_port":443}`
+	if err := os.WriteFile(filepath.Join(gwDir, "metadata.json"), []byte(mdJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Write a fake token so logout has something to remove.
+	if err := os.WriteFile(filepath.Join(gwDir, "oidc_token.json"), []byte(`{"access_token":"tok"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "openshell", "active_gateway"), []byte(slug), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runCmd(t, "gateway", "logout")
+	if err != nil {
+		t.Fatalf("gateway logout: %v\noutput: %s", err, out)
+	}
+	// Token removed.
+	if _, statErr := os.Stat(filepath.Join(gwDir, "oidc_token.json")); statErr == nil {
+		t.Error("expected oidc_token.json to be removed after logout")
+	}
+	// User-facing message uses display name (upstream parity).
+	if !strings.Contains(out, displayName) {
+		t.Errorf("logout output should include display name %q, got: %s", displayName, out)
 	}
 }
