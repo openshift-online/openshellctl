@@ -116,18 +116,22 @@ from the upstream Rust CLI" below.
   normalized form, only `EnsureScheme`'s scheme-defaulted, otherwise verbatim
   result (see the schema table above).
 - **`--gateway-insecure` disables TLS verification for ALL HTTPS in the
-  process**, not just the gRPC dial. The flag overrides `http.DefaultTransport`
-  process-wide, which means the OIDC issuer's discovery and token endpoints are
-  also affected — bearer tokens and client secrets may be sent to an
-  impersonated server. A warning is printed to stderr on every use. A
-  staging/internal gateway whose certificate isn't in the public trust store
-  would otherwise make discovery fail even though the gateway is reachable —
-  and since no gateway is registered yet at the discovery step, there's no
-  per-gateway `mtls/ca.crt` this call could use instead. Pass
-  `--gateway-insecure` (or export `OPENSHELL_GATEWAY_INSECURE=1`) on
-  `gateway add` itself if discovery needs it; remember it's also needed on
-  every later command (`whoami`, `sandbox list`, ...) against that same
-  gateway, since it isn't persisted into `metadata.json`.
+  process, except the self-update and notice check client which always
+  verifies**, not just the gRPC dial. The flag overrides
+  `http.DefaultTransport` process-wide, which means the OIDC issuer's
+  discovery and token endpoints are also affected — bearer tokens and client
+  secrets may be sent to an impersonated server. The self-update (`update`)
+  and background notice HTTP clients capture a clean transport at package-init
+  time (before the flag takes effect) and therefore always verify TLS. A
+  warning is printed to stderr on every use. A staging/internal gateway whose
+  certificate isn't in the public trust store would otherwise make discovery
+  fail even though the gateway is reachable — and since no gateway is
+  registered yet at the discovery step, there's no per-gateway `mtls/ca.crt`
+  this call could use instead. Pass `--gateway-insecure` (or export
+  `OPENSHELL_GATEWAY_INSECURE=1`) on `gateway add` itself if discovery needs
+  it; remember it's also needed on every later command (`whoami`,
+  `sandbox list`, ...) against that same gateway, since it isn't persisted
+  into `metadata.json`.
   `OPENSHELL_*` environment variables are trusted input; a poisoned
   `.envrc`/CI env can enable this.
 
