@@ -179,6 +179,25 @@ func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint
 	}
 }
 
+// issuerOverrideWarning returns a non-empty warning string when --oidc-issuer
+// overrides a different issuer that is already in the gateway's metadata —
+// a silent override can mask a misconfigured gateway. Returns "" when
+// override is empty, metadataIssuer is nil, or they are equal after stripping
+// trailing slashes.
+func issuerOverrideWarning(override string, metadataIssuer *string) string {
+	if override == "" || metadataIssuer == nil {
+		return ""
+	}
+	norm := func(s string) string { return strings.TrimSuffix(s, "/") }
+	if norm(override) == norm(*metadataIssuer) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"--oidc-issuer %q overrides the gateway metadata issuer %q",
+		override, *metadataIssuer,
+	)
+}
+
 // resolveTokenSource builds a TokenSource from the current flags/env. It resolves
 // the gateway (best-effort — endpoint-only is allowed) and then the auth source.
 // When --write-token is set and a gateway is resolved, a write-back Writer is
@@ -229,6 +248,15 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 	}
 	if scopes := viper.GetString("oidc-scopes"); scopes != "" {
 		in.Scopes = strings.Fields(scopes)
+	}
+
+	// Warn when --oidc-issuer overrides a different issuer from gateway metadata.
+	var metadataIssuer *string
+	if target.Resolved != nil {
+		metadataIssuer = target.Resolved.Metadata.OIDCIssuer
+	}
+	if warning := issuerOverrideWarning(viper.GetString("oidc-issuer"), metadataIssuer); warning != "" {
+		cmd.PrintErrf("⚠ %s\n", warning)
 	}
 
 	// Wire write-back when requested and a named gateway is resolved. Uses

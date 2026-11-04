@@ -337,3 +337,30 @@ func TestWriteTokenFlag_EndpointOnlyTarget_UsageError(t *testing.T) {
 		t.Errorf("error should name `gateway add`, got: %v", err)
 	}
 }
+
+func TestIssuerOverrideWarning(t *testing.T) {
+	pstr := func(s string) *string { return &s }
+	tests := []struct {
+		name           string
+		override       string
+		metadataIssuer *string
+		wantEmpty      bool
+	}{
+		{"no override", "", pstr("https://issuer"), true},
+		{"same value", "https://issuer", pstr("https://issuer"), true},
+		{"same with trailing slash on override", "https://issuer/", pstr("https://issuer"), true},
+		{"differing issuers", "https://other", pstr("https://issuer"), false},
+		{"nil metadata issuer", "https://issuer", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := issuerOverrideWarning(tt.override, tt.metadataIssuer)
+			if tt.wantEmpty && got != "" {
+				t.Errorf("issuerOverrideWarning(%q, %v) = %q, want empty", tt.override, tt.metadataIssuer, got)
+			}
+			if !tt.wantEmpty && got == "" {
+				t.Errorf("issuerOverrideWarning(%q, %v) = empty, want non-empty warning", tt.override, tt.metadataIssuer)
+			}
+		})
+	}
+}
