@@ -161,7 +161,7 @@ type Resolved struct {
     Dir      string        // absolute dir on the source tree
     Source   Source
     Metadata Metadata
-    FS       fs.FS         // sub-FS rooted at Dir (for oidc_token.json, mtls/, last_sandbox reads)
+    FS       fs.FS         // sub-FS rooted at Dir (for oidc_token.json, mtls/)
 }
 
 // Load reads gateways/<name>/metadata.json from user tree then system tree (user shadows system, metadata.rs:108-120).
@@ -175,9 +175,10 @@ func List(env Env) ([]Info, error)                              // Info{Name, So
 // ResolveInput mirrors resolve_gateway (main.rs:78-126). Precedence: endpoint flag/env > name flag/env > active file.
 type ResolveInput struct{ Endpoint, Name string }  // already merged from flags+env by the caller
 type Target struct {
-    Name     string   // "" when endpoint given and no metadata matched
+    Name     string    // "" when endpoint given and no metadata matched
     Endpoint string
     Resolved *Resolved // nil when endpoint-only
+    UserFS   fs.FS     // user config tree; set by Resolve so LoadLastSandbox always reads the user tree
 }
 func Resolve(env Env, in ResolveInput) (*Target, error)         // ErrNoActiveGateway / ErrUnknownGateway{Name} with the verbatim upstream messages (Appendix A.13)
 
@@ -186,7 +187,8 @@ type TLSMaterial struct{ CAFile, CertFile, KeyFile string; Present bool }
 func TLSMaterialFor(r *Resolved) TLSMaterial   // paths under Dir/mtls/{ca.crt,tls.crt,tls.key}; Present iff at least ca.crt exists
 
 // last_sandbox (metadata.rs:282-324): "<workspace>\n<name>" (no trailing newline); only returned when workspace matches.
-func LoadLastSandbox(r *Resolved, workspace string) (string, bool)
+// Reads from userFS (USER tree) unconditionally so system-tree gateways pick up pointers written by SaveLastSandbox.
+func LoadLastSandbox(userFS fs.FS, gatewayDirName, workspace string) (string, bool)
 func SaveLastSandbox(w Writer, gatewayName, workspace, name string) error        // always the USER tree; parent 0700
 func ClearLastSandboxIfMatches(w Writer, gatewayName, workspace, name string) error
 

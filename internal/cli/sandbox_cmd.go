@@ -53,8 +53,8 @@ func resolveSandboxName(args []string, target *gatewayconfig.Target, ws string) 
 	if len(args) > 0 && args[0] != "" {
 		return args[0], nil
 	}
-	if target != nil && target.Resolved != nil {
-		if name, ok := gatewayconfig.LoadLastSandbox(target.Resolved, ws); ok {
+	if target != nil && target.UserFS != nil {
+		if name, ok := gatewayconfig.LoadLastSandbox(target.UserFS, target.Name, ws); ok {
 			return name, nil
 		}
 	}

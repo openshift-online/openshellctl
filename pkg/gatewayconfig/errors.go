@@ -17,7 +17,20 @@ var (
 	ErrEdgeGatewayUnsupported = errors.New("edge gateway registration unsupported")
 	ErrMTLSUnsupported        = errors.New("mTLS gateway registration unsupported")
 	ErrInvalidEndpoint        = errors.New("invalid gateway endpoint")
+	ErrInvalidLastSandbox     = errors.New("invalid last_sandbox field")
 )
+
+// InvalidLastSandboxError reports a workspace or sandbox name that is empty or
+// contains a newline or carriage return, which would corrupt the two-line file
+// format.
+type InvalidLastSandboxError struct{ Field, Value string }
+
+func (e *InvalidLastSandboxError) Error() string {
+	return fmt.Sprintf("invalid last_sandbox %s %q: must be non-empty and contain no newline or carriage return", e.Field, e.Value)
+}
+
+// Is matches the ErrInvalidLastSandbox sentinel.
+func (e *InvalidLastSandboxError) Is(target error) bool { return target == ErrInvalidLastSandbox }
 
 // InvalidGatewayNameError reports a name that is not a single path component.
 type InvalidGatewayNameError struct{ Name string }
