@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -261,8 +262,16 @@ func TestLogin_PersistsVaultAuthUnderSlug(t *testing.T) {
 	// before the OIDC browser step, so vault_auth.json should be written even
 	// though the browser/OIDC step fails in the test environment.
 	// Inject an empty vault reader so applyVaultAuthSource doesn't try real Vault.
-	ctx := withVaultDeps(context.Background(), vaultDeps{Reader: &capturingVaultReader{data: map[string]any{}}})
-	_, _ = runCmdCtx(t, ctx, "--vault-kv-mount", "osd-sre", "--vault-kv-path", "rosa-agent", "gateway", "login")
+	// Cap the OIDC discovery attempt: on slow resolvers the HTTP client default
+	// timeout stalls for minutes; 5 s is enough for a fast NXDOMAIN or refused
+	// connection while keeping CI reliable.
+	baseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx := withVaultDeps(baseCtx, vaultDeps{Reader: &capturingVaultReader{data: map[string]any{}}})
+	_, loginErr := runCmdCtx(t, ctx, "--vault-kv-mount", "osd-sre", "--vault-kv-path", "rosa-agent", "gateway", "login")
+	if loginErr == nil {
+		t.Error("gateway login: expected error (OIDC discovery against https://issuer must fail), got nil")
+	}
 
 	slugVaultPath := filepath.Join(xdg, "openshell", "gateways", slug, "vault_auth.json")
 	data, rerr := os.ReadFile(slugVaultPath)
