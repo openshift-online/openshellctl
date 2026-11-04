@@ -29,22 +29,12 @@ func (f fakeTokenSource) Token(context.Context) (*auth.Token, error) { return f.
 func (f fakeTokenSource) Invalidate()                                {}
 func (f fakeTokenSource) Describe() string                           { return "fake" }
 
-// trustTestServerTLS swaps http.DefaultTransport (what oidcConfigFetcher's
-// internal http.Client uses, since it sets no Transport of its own) for one
-// that trusts srv's self-signed cert, restoring the original on cleanup —
-// needed because gateway add now requires https (NewMetadata rejects
-// plaintext endpoints; see TestNewMetadata_RejectsNonHTTPSEndpoint), so these
-// discovery-probe fixtures must be real TLS servers, not plain HTTP ones.
-func trustTestServerTLS(t *testing.T, srv *httptest.Server) {
-	t.Helper()
-	pool := x509.NewCertPool()
-	pool.AddCert(srv.Certificate())
-	original := http.DefaultTransport
-	http.DefaultTransport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
-	t.Cleanup(func() { http.DefaultTransport = original })
-}
 
-func oidcDiscoveryServer(t *testing.T, issuer, audience string) *httptest.Server {
+// oidcDiscoveryServer starts a TLS test server that serves a fake
+// /auth/oidc-config response. It returns both the server and a *tls.Config
+// that trusts its self-signed certificate, so callers can pass the config via
+// cliDeps.OIDCFetcherTLS instead of mutating http.DefaultTransport.
+func oidcDiscoveryServer(t *testing.T, issuer, audience string) (*httptest.Server, *tls.Config) {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/auth/oidc-config" {
@@ -54,18 +44,23 @@ func oidcDiscoveryServer(t *testing.T, issuer, audience string) *httptest.Server
 		_, _ = w.Write([]byte(`{"issuer":"` + issuer + `","audience":"` + audience + `"}`))
 	}))
 	t.Cleanup(srv.Close)
-	trustTestServerTLS(t, srv)
-	return srv
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	return srv, &tls.Config{RootCAs: pool}
 }
 
-func notOIDCServer(t *testing.T) *httptest.Server {
+// notOIDCServer starts a TLS test server that always returns 404 (simulating a
+// gateway whose /auth/oidc-config is absent). Returns the server and a TLS
+// config that trusts its cert, for use via cliDeps.OIDCFetcherTLS.
+func notOIDCServer(t *testing.T) (*httptest.Server, *tls.Config) {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
-	trustTestServerTLS(t, srv)
-	return srv
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	return srv, &tls.Config{RootCAs: pool}
 }
 
 func TestGatewayAdd_DiscoversOIDCAndAuthenticates(t *testing.T) {
@@ -73,14 +68,14 @@ func TestGatewayAdd_DiscoversOIDCAndAuthenticates(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("OPENSHELL_OIDC_CLIENT_SECRET", "s3cr3t")
 
-	srv := oidcDiscoveryServer(t, "https://issuer.example.com", "aud-1")
+	srv, fetcherTLS := oidcDiscoveryServer(t, "https://issuer.example.com", "aud-1")
 
 	src := fakeTokenSource{tok: &auth.Token{
 		AccessToken: "tok",
 		Subject:     "svc-account",
 		Expiry:      time.Now().Add(time.Hour),
 	}}
-	out, err := runCmdWithGateway(t, cliDeps{TokenSource: src}, "gateway", "add", srv.URL, "--name", "test-gw")
+	out, err := runCmdWithGateway(t, cliDeps{TokenSource: src, OIDCFetcherTLS: fetcherTLS}, "gateway", "add", srv.URL, "--name", "test-gw")
 	if err != nil {
 		t.Fatalf("gateway add: %v", err)
 	}
@@ -136,9 +131,9 @@ func TestGatewayAdd_ExplicitIssuerSkipsDiscovery(t *testing.T) {
 
 func TestGatewayAdd_EdgeGatewayUnsupported(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	srv := notOIDCServer(t)
+	srv, fetcherTLS := notOIDCServer(t)
 
-	_, err := runCmd(t, "gateway", "add", srv.URL, "--name", "edge-gw")
+	_, err := runCmdWithGateway(t, cliDeps{OIDCFetcherTLS: fetcherTLS}, "gateway", "add", srv.URL, "--name", "edge-gw")
 	if err == nil {
 		t.Fatal("expected an error for a non-OIDC gateway")
 	}

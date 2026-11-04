@@ -367,7 +367,7 @@ These flags apply to every command:
 |------|---------|-------------|
 | `--gateway`, `-g` | `OPENSHELL_GATEWAY` | Gateway name (selects config directory) |
 | `--gateway-endpoint` | `OPENSHELL_GATEWAY_ENDPOINT` | Gateway gRPC endpoint URL |
-| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for gRPC dial and `-f` manifest URL fetches. **Does not apply to the OIDC-config discovery probe** in `gateway add` or `token`/`whoami`: the discovery HTTP client uses only the gateway's registered CA cert. For a staging gateway with an internal CA, pass `--oidc-issuer` to skip discovery, or register the gateway first (which persists the CA) and then re-run the command. |
+| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for gRPC dial and `-f` manifest URL fetches. **Does not apply to the OIDC-config discovery probe** in `gateway add` or `token`/`whoami`: the discovery HTTP client uses only the gateway's registered CA cert. For a staging gateway with an internal CA, pass `--oidc-issuer` plus `--oidc-audience` to skip discovery entirely, or place `ca.crt` under `gateways/<name>/mtls/` by hand and then re-run the command. |
 | `--workspace` | `OPENSHELL_WORKSPACE` | Workspace name (default: `default`) |
 | `--token` | `OPENSHELL_TOKEN` | Bearer token (overrides OIDC) |
 | `--config` | — | Config file path |

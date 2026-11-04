@@ -303,12 +303,15 @@ func insecureWarning(insecure bool) string {
 // no LoginOption to inject a custom client or skip verification (an upstream
 // WithHTTPClient option would remove the need for this entirely). Without
 // this, --gateway-insecure would cover the real gRPC dial (pkg/gateway/
-// dial.go) and openshellctl's own /auth/oidc-config discovery probe
-// (oidcConfigFetcher, authwiring.go) but not the SDK's own issuer discovery,
-// which is exactly the gap a staging/internal-CA OIDC issuer hits. Matches
-// upstream's own gateway_insecure handling, which applies to its OIDC HTTP
-// client too (oidc_auth.rs: danger_accept_invalid_certs) — parity, not an
-// extension.
+// dial.go) but not the SDK's own issuer discovery, which is exactly the gap
+// a staging/internal-CA OIDC issuer hits. Matches upstream's own
+// gateway_insecure handling (oidc_auth.rs: danger_accept_invalid_certs) —
+// parity, not an extension.
+//
+// openshellctl's own OIDC-config fetcher (oidcConfigFetcher, authwiring.go)
+// is NOT affected: it uses a clean base transport captured before this
+// function runs (see cleanTransport in update.go) so the trust-anchor fetch
+// always verifies TLS.
 //
 // Exception: the self-update and background notice HTTP clients (update.go,
 // startNoticeGoroutine) capture cleanTransport at package-init time, before

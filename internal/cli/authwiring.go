@@ -128,28 +128,16 @@ func oidcConfigURL(endpoint string) (string, error) {
 	return base + "/auth/oidc-config", nil
 }
 
-// buildFetcherTransport clones http.DefaultTransport (preserving proxy settings)
-// and applies tlsCfg as the TLS configuration. When tlsCfg is nil, only
-// InsecureSkipVerify is cleared on a fresh struct copy of the cloned config to
-// prevent applyGatewayInsecureTransport's global override from leaking in, while
-// still preserving any custom CA pools set for test isolation via trustTestServerTLS.
+// buildFetcherTransport returns a transport suitable for OIDC-config discovery.
+// It clones cleanTransport (update.go), which is captured at package-init time
+// before applyGatewayInsecureTransport can mutate http.DefaultTransport, so
+// --gateway-insecure never affects the discovery probe regardless of when this
+// function is called. tlsCfg, when non-nil, pins the trust roots and optional
+// client certificate for the probe (typically the gateway's registered CA cert).
 func buildFetcherTransport(tlsCfg *tls.Config) *http.Transport {
-	var tr *http.Transport
-	if base, ok := http.DefaultTransport.(*http.Transport); ok {
-		tr = base.Clone()
-	} else {
-		tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
-	}
+	tr := cleanTransport.Clone()
 	if tlsCfg != nil {
 		tr.TLSClientConfig = tlsCfg
-	} else if tr.TLSClientConfig != nil {
-		// Struct copy so tr.TLSClientConfig is an independent allocation;
-		// pointer fields (RootCAs, etc.) still share backing data with the
-		// clone, but scalar fields — including InsecureSkipVerify — are
-		// fully independent.
-		copied := *tr.TLSClientConfig
-		copied.InsecureSkipVerify = false //nolint:gosec
-		tr.TLSClientConfig = &copied
 	}
 	return tr
 }
@@ -157,8 +145,8 @@ func buildFetcherTransport(tlsCfg *tls.Config) *http.Transport {
 // newOIDCConfigFetcher builds a fetcher that validates the endpoint via
 // oidcConfigURL (https or loopback http only), does not follow redirects,
 // and trusts tlsCfg for TLS. The transport is built by buildFetcherTransport,
-// which clones http.DefaultTransport at construction time to preserve proxy
-// settings and isolates the fetcher from the global insecure-transport override.
+// which clones cleanTransport (captured before --gateway-insecure can mutate
+// http.DefaultTransport) so the discovery probe always verifies TLS.
 func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint string) (string, string, error) {
 	client := &http.Client{
 		Timeout:   10 * time.Second,
@@ -239,13 +227,11 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 
 	// Build a fetcher that trusts the gateway's CA when TLS material is present.
 	var fetcherTLS *tls.Config
+	var tlsMat gatewayconfig.TLSMaterial
 	if target.Resolved != nil {
-		mat := gatewayconfig.TLSMaterialFor(target.Resolved)
-		// The OIDC-config fetcher never honours --gateway-insecure: TLS
-		// must be verified for the trust-anchor fetch. Use only the
-		// gateway's CA cert (Insecure is left at the default false).
+		tlsMat = gatewayconfig.TLSMaterialFor(target.Resolved)
 		dc := gateway.DialConfig{
-			TLS:     mat,
+			TLS:     tlsMat,
 			TLSRoot: target.Resolved.Dir,
 		}
 		fetcherTLS, err = gateway.ClientTLSConfig(dc)
@@ -262,20 +248,24 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 		Audience:          viper.GetString("oidc-audience"),
 		Gateway:           target.Resolved,
 		GatewayEndpoint:   target.Endpoint,
-		TLSPresent:        target.Resolved != nil && gatewayconfig.TLSMaterialFor(target.Resolved).Present,
+		TLSPresent:        tlsMat.Present,
 		OIDCConfigFetcher: newOIDCConfigFetcher(fetcherTLS),
 	}
 	if scopes := viper.GetString("oidc-scopes"); scopes != "" {
 		in.Scopes = strings.Fields(scopes)
 	}
 
-	// Warn when --oidc-issuer overrides a different issuer from gateway metadata.
-	var metadataIssuer *string
-	if target.Resolved != nil {
-		metadataIssuer = target.Resolved.Metadata.OIDCIssuer
-	}
-	if warning := issuerOverrideWarning(viper.GetString("oidc-issuer"), metadataIssuer); warning != "" {
-		cmd.PrintErrf("⚠ %s\n", warning)
+	// Warn when --oidc-issuer overrides a different issuer from gateway
+	// metadata. Skipped when --token is set: OIDC is not used in that case so
+	// the override has no effect.
+	if viper.GetString("token") == "" {
+		var metadataIssuer *string
+		if target.Resolved != nil {
+			metadataIssuer = target.Resolved.Metadata.OIDCIssuer
+		}
+		if warning := issuerOverrideWarning(viper.GetString("oidc-issuer"), metadataIssuer); warning != "" {
+			cmd.PrintErrf("warning: %s\n", warning)
+		}
 	}
 
 	// Wire write-back when requested and a named gateway is resolved. Uses

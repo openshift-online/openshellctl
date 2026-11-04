@@ -115,13 +115,16 @@ from the upstream Rust CLI" below.
   endpoint actually stored in `metadata.json` is never rewritten into this
   normalized form, only `EnsureScheme`'s scheme-defaulted, otherwise verbatim
   result (see the schema table above).
-- **`--gateway-insecure` does NOT cover the OIDC-discovery probe.** The OIDC
-  config HTTP client (`/auth/oidc-config`) uses a separate transport that never
-  honours `--gateway-insecure`: TLS must be verified for the trust-anchor fetch.
-  For already-registered gateways the per-gateway CA cert (`mtls/ca.crt`) is
-  used automatically. For `gateway add` against a staging/internal gateway whose
-  certificate is not in the public trust store, pass `--oidc-issuer` to skip
-  discovery entirely rather than using `--gateway-insecure`.
+- **`--gateway-insecure` has residual scope.** It skips TLS verification for the
+  gRPC dial, `-f` manifest URL fetches, and the OpenShell SDK's own OIDC
+  discovery and token-POST calls (the SDK provides no way to inject a custom
+  transport, so the process-global override is the only lever available). It
+  does **not** apply to `gateway add`'s `/auth/oidc-config` discovery probe,
+  which uses a clean transport (system roots, or the registered CA cert) so a
+  fake issuer cannot be trusted during registration. For a staging gateway with
+  an internal CA, pass `--oidc-issuer` plus `--oidc-audience` to skip discovery
+  entirely, or place `ca.crt` under `gateways/<name>/mtls/` by hand and then
+  re-run `gateway add`.
 
 ## Vault-sourced config and `gateway add`
 

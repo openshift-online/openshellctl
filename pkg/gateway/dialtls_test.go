@@ -87,7 +87,7 @@ func writeCAOnly(t *testing.T, dir string) {
 	}
 }
 
-func TestBuildTLSConfig_FullTriple(t *testing.T) {
+func TestClientTLSConfig_FullTriple(t *testing.T) {
 	dir := t.TempDir()
 	writeSelfSigned(t, dir)
 	// Resolve the material (with existence flags) via TLSMaterialFor over a DirFS.
@@ -109,14 +109,14 @@ func TestBuildTLSConfig_FullTriple(t *testing.T) {
 	}
 }
 
-func TestBuildTLSConfig_BadCAErrors(t *testing.T) {
+func TestClientTLSConfig_BadCAErrors(t *testing.T) {
 	mat := gatewayconfig.TLSMaterial{Present: true, CAFile: "/nonexistent/ca.crt"}
 	if _, err := ClientTLSConfig(DialConfig{TLS: mat}); err == nil {
 		t.Error("expected an error reading a missing CA file")
 	}
 }
 
-func TestBuildTLSConfig_Insecure(t *testing.T) {
+func TestClientTLSConfig_Insecure(t *testing.T) {
 	cfg, err := ClientTLSConfig(DialConfig{Insecure: true})
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestDial_TLSWithMaterial(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close() })
 }
 
-func TestBuildTLSConfig_ReadsFromConfigTree_NotCWD(t *testing.T) {
+func TestClientTLSConfig_ReadsFromConfigTree_NotCWD(t *testing.T) {
 	configDir := t.TempDir()
 	writeSelfSigned(t, configDir)
 	resolved := &gatewayconfig.Resolved{Dir: configDir, FS: os.DirFS(configDir)}
@@ -160,7 +160,7 @@ func TestBuildTLSConfig_ReadsFromConfigTree_NotCWD(t *testing.T) {
 	}
 }
 
-func TestBuildTLSConfig_CWD_MTLS_NotConsulted(t *testing.T) {
+func TestClientTLSConfig_CWD_MTLS_NotConsulted(t *testing.T) {
 	configDir := t.TempDir()
 	writeSelfSigned(t, configDir)
 	resolved := &gatewayconfig.Resolved{Dir: configDir, FS: os.DirFS(configDir)}
@@ -211,7 +211,7 @@ func TestDial_RejectsRelativePaths(t *testing.T) {
 	}
 }
 
-func TestBuildTLSConfig_CAOnly(t *testing.T) {
+func TestClientTLSConfig_CAOnly(t *testing.T) {
 	dir := t.TempDir()
 	writeCAOnly(t, dir)
 

@@ -86,8 +86,9 @@ func TestOIDCConfigFetcher_Non200(t *testing.T) {
 }
 
 // TestBuildFetcherTransport_NilTLS_ClearsInsecureSkipVerify verifies that
-// buildFetcherTransport clears InsecureSkipVerify from the cloned transport
-// config without aliasing the original config struct.
+// buildFetcherTransport returns a transport without InsecureSkipVerify even
+// when http.DefaultTransport has it set (e.g. by applyGatewayInsecureTransport
+// or a previous test). No t.Parallel: this test mutates http.DefaultTransport.
 func TestBuildFetcherTransport_NilTLS_ClearsInsecureSkipVerify(t *testing.T) {
 	origCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 	customT := &http.Transport{TLSClientConfig: origCfg}
@@ -96,11 +97,14 @@ func TestBuildFetcherTransport_NilTLS_ClearsInsecureSkipVerify(t *testing.T) {
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
 	tr := buildFetcherTransport(nil)
-	if tr.TLSClientConfig.InsecureSkipVerify {
-		t.Error("buildFetcherTransport(nil) must clear InsecureSkipVerify")
+	// After the design fix, buildFetcherTransport clones cleanTransport (captured
+	// at package-init, before DefaultTransport was swapped), so the result has
+	// TLSClientConfig == nil — it is unaffected by DefaultTransport mutations.
+	if tr.TLSClientConfig != nil && tr.TLSClientConfig.InsecureSkipVerify {
+		t.Error("buildFetcherTransport(nil) must not propagate InsecureSkipVerify")
 	}
 	if tr.TLSClientConfig == origCfg {
-		t.Error("buildFetcherTransport(nil) must not return a transport aliasing the original TLSClientConfig")
+		t.Error("buildFetcherTransport(nil) must not alias the original TLSClientConfig")
 	}
 }
 
