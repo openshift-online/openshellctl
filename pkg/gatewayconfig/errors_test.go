@@ -76,6 +76,21 @@ func TestErrorMessages(t *testing.T) {
 	if ie.Unwrap() == nil {
 		t.Error("InvalidEndpointError should unwrap")
 	}
+
+	ile := &InvalidLastSandboxError{Field: "name", Value: "a\nb"}
+	ileMsg := ile.Error()
+	if !strings.Contains(ileMsg, "name") {
+		t.Errorf("InvalidLastSandboxError missing field in message: %q", ileMsg)
+	}
+	if !strings.Contains(ileMsg, "carriage return") {
+		t.Errorf("InvalidLastSandboxError missing 'carriage return' in message: %q", ileMsg)
+	}
+	if !strings.Contains(ileMsg, `"a\nb"`) {
+		t.Errorf("InvalidLastSandboxError missing quoted value in message: %q", ileMsg)
+	}
+	if !errors.Is(ile, ErrInvalidLastSandbox) {
+		t.Error("InvalidLastSandboxError should match ErrInvalidLastSandbox")
+	}
 }
 
 func TestFindByEndpoint_ScansAllGateways(t *testing.T) {

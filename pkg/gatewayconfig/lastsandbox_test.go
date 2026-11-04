@@ -111,13 +111,17 @@ func TestSaveLastSandbox_RejectsNewlines(t *testing.T) {
 // SysFS), which missed files written by SaveLastSandbox into UserFS.
 func TestLastSandbox_SystemGatewayRoundTrip(t *testing.T) {
 	userDir := t.TempDir()
-	userFS := os.DirFS(userDir)
-
 	env := Env{
 		SysFS: fstest.MapFS{
 			"gateways/sys/metadata.json": {Data: []byte(`{"endpoint":"http://sys"}`)},
 		},
-		UserFS: userFS,
+		UserFS: os.DirFS(userDir),
+	}
+
+	// Confirm "sys" is a system-tree gateway so the scenario is meaningful.
+	resolved, err := Load(env, "sys")
+	if err != nil || resolved.Source != SourceSystem {
+		t.Fatalf("expected sys to be a system gateway: source=%v err=%v", resolved.Source, err)
 	}
 
 	w := &OSWriter{Root: userDir}

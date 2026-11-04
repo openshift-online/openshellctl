@@ -21,11 +21,12 @@ var (
 )
 
 // InvalidLastSandboxError reports a workspace or sandbox name that is empty or
-// contains a newline, which would corrupt the two-line file format.
+// contains a newline or carriage return, which would corrupt the two-line file
+// format.
 type InvalidLastSandboxError struct{ Field, Value string }
 
 func (e *InvalidLastSandboxError) Error() string {
-	return "invalid last_sandbox " + e.Field + ": must be non-empty and contain no newline"
+	return fmt.Sprintf("invalid last_sandbox %s %q: must be non-empty and contain no newline or carriage return", e.Field, e.Value)
 }
 
 // Is matches the ErrInvalidLastSandbox sentinel.
