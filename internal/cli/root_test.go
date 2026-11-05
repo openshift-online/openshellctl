@@ -84,7 +84,8 @@ func TestInsecureWarning(t *testing.T) {
 			insecure: true,
 			wantSubstrings: []string{
 				"verification is disabled",
-				"OIDC issuer",
+				"gateway connections",
+				"verify TLS independently",
 			},
 		},
 	}
