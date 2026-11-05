@@ -279,11 +279,11 @@ const insecureWarnText = "warning: TLS certificate verification is disabled" +
 	" OIDC configuration probes (/auth/oidc-config) verify TLS independently."
 
 // insecureWarning returns insecureWarnText when insecure is true, or "" when
-// false. The scope note ("AND the OIDC issuer") is essential: the flag name
-// says "gateway" but the process-wide transport override means the SDK's OIDC
-// discovery/token HTTP client — which holds the client secret — is also
-// affected. The self-update and notice clients capture cleanTransport at init
-// time (before PersistentPreRunE runs) and are therefore unaffected.
+// false. The scope note is essential: the flag name says "gateway" but the
+// process-wide transport override also covers the SDK's OIDC token-endpoint
+// HTTP client. openshellctl's own /auth/oidc-config fetcher is excluded — it
+// uses a clean transport captured before this runs and always verifies TLS.
+// The self-update and notice clients are also excluded for the same reason.
 func insecureWarning(insecure bool) string {
 	if !insecure {
 		return ""
@@ -310,10 +310,10 @@ func insecureWarning(insecure bool) string {
 //
 // openshellctl's own OIDC-config fetcher (oidcConfigFetcher, authwiring.go)
 // is NOT affected: it uses a clean base transport captured before this
-// function runs (see cleanTransport in update.go) so the trust-anchor fetch
+// function runs (see cleanTransport in transport.go) so the trust-anchor fetch
 // always verifies TLS.
 //
-// Exception: the self-update and background notice HTTP clients (update.go,
+// Exception: the self-update and background notice HTTP clients (transport.go,
 // startNoticeGoroutine) capture cleanTransport at package-init time, before
 // this function runs, so they always verify TLS regardless of the flag.
 //
