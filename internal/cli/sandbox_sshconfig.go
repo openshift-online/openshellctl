@@ -55,11 +55,11 @@ func newSandboxSSHConfigCommand() *cobra.Command {
 
 // SSHConfigBlock builds the ssh_config(5) block from A.12 (ssh.rs:1503-1517).
 // shellEscape is applied to the ProxyCommand arguments. The gateway name comes
-// from the resolved target; if unavailable, falls back to "default". Pure.
+// from the resolved target's directory slug; if unavailable, falls back to "default". Pure.
 func SSHConfigBlock(name, workspace string, target *gatewayconfig.Target) string {
 	gwName := "default"
-	if target != nil && target.Name != "" {
-		gwName = target.Name
+	if slug, ok := target.DirName(); ok {
+		gwName = slug
 	}
 
 	exe, err := os.Executable()

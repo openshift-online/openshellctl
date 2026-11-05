@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/spf13/viper"
+
+	"github.com/openshift-online/openshellctl/pkg/gatewayconfig"
 )
 
 // runCmd builds the root command tree, runs it with args, and returns
@@ -430,6 +432,47 @@ func TestDownload_TooFewArgs(t *testing.T) {
 	_, err := runCmd(t, "sandbox", "download")
 	if err == nil {
 		t.Fatal("expected error for no args")
+	}
+}
+
+// TestSaveLastSandbox_EndpointOnlyTargetIsNoop confirms that saveLastSandbox
+// is a no-op when Target.Resolved is nil (endpoint-only invocation), so an
+// endpoint URL like "https://gw.example.com" is never written as a directory
+// name under gateways/.
+func TestSaveLastSandbox_EndpointOnlyTargetIsNoop(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	target := &gatewayconfig.Target{
+		Name:     "https://gw.example.com",
+		Endpoint: "https://gw.example.com",
+		Resolved: nil,
+	}
+	saveLastSandbox(target, "default", "sb-1")
+	gwDir := filepath.Join(root, "openshell", "gateways")
+	if _, err := os.Stat(gwDir); err == nil {
+		t.Errorf("saveLastSandbox should not create gateways/ dir for endpoint-only target, but found %s", gwDir)
+	}
+}
+
+// TestSaveLastSandbox_UsesSlug confirms that saveLastSandbox writes
+// last_sandbox under the directory slug (Resolved.Name), not Target.Name
+// (the display name).
+func TestSaveLastSandbox_UsesSlug(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	target := &gatewayconfig.Target{
+		Name:     "ROSA Agentic Devx",
+		Endpoint: "https://gw.example.com",
+		Resolved: &gatewayconfig.Resolved{Name: "rosa-agentic-devx"},
+	}
+	saveLastSandbox(target, "default", "my-sb")
+	slugPath := filepath.Join(root, "openshell", "gateways", "rosa-agentic-devx", "last_sandbox")
+	if _, err := os.Stat(slugPath); err != nil {
+		t.Errorf("expected last_sandbox at %s, got: %v", slugPath, err)
+	}
+	displayPath := filepath.Join(root, "openshell", "gateways", "ROSA Agentic Devx", "last_sandbox")
+	if _, err := os.Stat(displayPath); err == nil {
+		t.Errorf("last_sandbox should NOT be at display-name path %s", displayPath)
 	}
 }
 

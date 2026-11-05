@@ -135,6 +135,8 @@ func TestLastSandboxOps_RejectsInvalidGatewayName(t *testing.T) {
 		})
 		t.Run(row.name+"/clear", func(t *testing.T) {
 			w := newMemWriter()
+			// Pre-seed a valid entry to confirm it is not removed on failure.
+			w.files["gateways/valid/last_sandbox"] = []byte("ws\nsb")
 			err := ClearLastSandboxIfMatches(w, row.gatewayName, "ws", "sb")
 			if err == nil {
 				t.Fatalf("ClearLastSandboxIfMatches(%q): want error, got nil", row.gatewayName)
@@ -142,8 +144,8 @@ func TestLastSandboxOps_RejectsInvalidGatewayName(t *testing.T) {
 			if !errors.Is(err, ErrInvalidGatewayName) {
 				t.Errorf("ClearLastSandboxIfMatches(%q): want ErrInvalidGatewayName, got %T: %v", row.gatewayName, err, err)
 			}
-			if len(w.files) != 0 {
-				t.Errorf("memWriter should be empty on rejection, got %v", w.files)
+			if _, ok := w.files["gateways/valid/last_sandbox"]; !ok {
+				t.Errorf("ClearLastSandboxIfMatches(%q): pre-existing entry was removed despite error", row.gatewayName)
 			}
 		})
 	}
@@ -205,3 +207,4 @@ func TestClearLastSandboxIfMatches(t *testing.T) {
 		t.Errorf("clearing missing file should be a no-op, got %v", err)
 	}
 }
+

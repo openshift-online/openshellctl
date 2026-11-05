@@ -48,6 +48,9 @@ type authWriterAdapter struct {
 }
 
 func (a authWriterAdapter) WriteFile(relPath string, data []byte, perm fs.FileMode) error {
+	if err := gatewayconfig.ValidateGatewayName(a.gatewayName); err != nil {
+		return err
+	}
 	return a.w.WriteFile(gatewayconfig.GatewayDir(a.gatewayName)+"/"+relPath, data, perm)
 }
 
@@ -55,14 +58,15 @@ func (a authWriterAdapter) WriteFile(relPath string, data []byte, perm fs.FileMo
 // directory on the user tree, or (nil, nil) when there is no named gateway to
 // write to (e.g. endpoint-only invocation).
 func tokenWriterFor(target *gatewayconfig.Target) (auth.Writer, error) {
-	if target == nil || target.Name == "" || target.Resolved == nil {
+	slug, ok := target.DirName()
+	if !ok {
 		return nil, nil
 	}
 	w, err := gatewayconfig.NewOSWriter()
 	if err != nil {
 		return nil, err
 	}
-	return authWriterAdapter{w: w, gatewayName: target.Name}, nil
+	return authWriterAdapter{w: w, gatewayName: slug}, nil
 }
 
 // requireTokenWriter is tokenWriterFor, but returns a typed usage error

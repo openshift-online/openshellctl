@@ -172,21 +172,20 @@ func newGatewayLogoutCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Resolve's endpoint-only fallback can set target.Name to the raw
-			// endpoint when no registered gateway matches it — reject that
-			// here with a clear not-found error, rather than either failing
-			// with a confusing "invalid gateway name" (when the endpoint
-			// contains characters ValidateGatewayName rejects) or silently
-			// "succeeding" at logging out of a gateway that was never
-			// registered (when it doesn't).
-			if _, err := gatewayconfig.Load(env, target.Name); err != nil {
-				return err
+			// DirName() returns the validated directory slug from Resolved.Name.
+			// When Resolved is nil (endpoint-only, no registered gateway matched),
+			// reject with a clear not-found error rather than silently no-oping or
+			// failing with "invalid gateway name" if the raw endpoint contains
+			// characters ValidateGatewayName rejects (e.g. slashes in the URL).
+			slug, ok := target.DirName()
+			if !ok {
+				return &gatewayconfig.GatewayNotFoundError{Name: target.Name}
 			}
 			w, err := gatewayconfig.NewOSWriter()
 			if err != nil {
 				return err
 			}
-			if err := gatewayconfig.Logout(w, target.Name); err != nil {
+			if err := gatewayconfig.Logout(w, slug); err != nil {
 				return err
 			}
 			cmd.Printf("✓ Logged out of gateway '%s'\n", target.Name)

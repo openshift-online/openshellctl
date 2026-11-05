@@ -247,6 +247,37 @@ func TestFindByEndpoint_SkipsMalformedRegisteredEndpoint(t *testing.T) {
 	}
 }
 
+// TestResolve_EndpointMatchesMetadata_NameIsDisplayName confirms that when
+// endpoint resolution finds a gateway whose directory slug differs from its
+// metadata display name, Target.Name is the display name (consistent with the
+// name-based resolution path), not the directory slug.
+func TestResolve_EndpointMatchesMetadata_NameIsDisplayName(t *testing.T) {
+	const displayName = "ROSA Agentic Devx"
+	const slug = "rosa-agentic-devx"
+	env := Env{
+		UserFS: fstest.MapFS{
+			"gateways/rosa-agentic-devx/metadata.json": {Data: []byte(md(displayName, "https://gw.example.com"))},
+			"active_gateway": {Data: []byte(slug)},
+		},
+	}
+	tgt, err := Resolve(env, ResolveInput{Endpoint: "https://gw.example.com"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if tgt.Name != displayName {
+		t.Errorf("Target.Name = %q, want display name %q", tgt.Name, displayName)
+	}
+	if tgt.Resolved == nil {
+		t.Fatal("Resolved should be set when endpoint matches a registered gateway")
+	}
+	if tgt.Resolved.Name != slug {
+		t.Errorf("Resolved.Name = %q, want slug %q", tgt.Resolved.Name, slug)
+	}
+	if slug2, ok := tgt.DirName(); !ok || slug2 != slug {
+		t.Errorf("DirName() = (%q, %v), want (%q, true)", slug2, ok, slug)
+	}
+}
+
 func TestResolve_EndpointOnly(t *testing.T) {
 	env := Env{UserFS: fstest.MapFS{}, SysFS: fstest.MapFS{}}
 	tgt, err := Resolve(env, ResolveInput{Endpoint: "https://direct:8080"})
@@ -388,5 +419,55 @@ func TestList(t *testing.T) {
 	}
 	if byName["prod"].Source != SourceSystem || byName["prod"].Active {
 		t.Errorf("prod = %+v, want system+inactive", byName["prod"])
+	}
+}
+
+func TestTargetDirName_NilResolved(t *testing.T) {
+	tgt := &Target{Name: "Display Name", Endpoint: "https://gw", Resolved: nil}
+	got, ok := tgt.DirName()
+	if ok || got != "" {
+		t.Errorf("DirName() = (%q, %v), want (\"\", false) when Resolved is nil", got, ok)
+	}
+}
+
+func TestTargetDirName_NilTarget(t *testing.T) {
+	var tgt *Target
+	got, ok := tgt.DirName()
+	if ok || got != "" {
+		t.Errorf("DirName() = (%q, %v), want (\"\", false) for nil target", got, ok)
+	}
+}
+
+func TestTargetDirName_ReturnsSlug(t *testing.T) {
+	tgt := &Target{
+		Name:     "Display Name",
+		Endpoint: "https://gw",
+		Resolved: &Resolved{Name: "slug"},
+	}
+	got, ok := tgt.DirName()
+	if !ok || got != "slug" {
+		t.Errorf("DirName() = (%q, %v), want (\"slug\", true)", got, ok)
+	}
+}
+
+// TestFindByEndpoint_ReturnsSlug confirms FindByEndpoint returns r.Name (the
+// directory slug) rather than r.Metadata.Name (the display name), so callers
+// writing files get a valid path component even when the display name contains
+// spaces or other characters ValidateGatewayName rejects.
+func TestFindByEndpoint_ReturnsSlug(t *testing.T) {
+	const displayName = "ROSA Agentic Devx"
+	const slug = "rosa-agentic-devx"
+	env := Env{
+		UserFS: fstest.MapFS{
+			"gateways/rosa-agentic-devx/metadata.json": {Data: []byte(md(displayName, "https://gw.example.com"))},
+			"active_gateway": {Data: []byte(slug)},
+		},
+	}
+	name, ok, err := FindByEndpoint(env, "https://gw.example.com")
+	if err != nil || !ok {
+		t.Fatalf("FindByEndpoint ok=%v err=%v", ok, err)
+	}
+	if name != slug {
+		t.Errorf("FindByEndpoint = %q, want slug %q (not display name %q)", name, slug, displayName)
 	}
 }

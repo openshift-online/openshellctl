@@ -89,7 +89,10 @@ func TestResolveUploadFS_Absolute(t *testing.T) {
 }
 
 func TestSSHConfigBlock(t *testing.T) {
-	target := &gatewayconfig.Target{Name: "mygw"}
+	target := &gatewayconfig.Target{
+		Name:     "mygw",
+		Resolved: &gatewayconfig.Resolved{Name: "mygw"},
+	}
 	block := SSHConfigBlock("mysb", "default", target)
 
 	for _, want := range []string{
@@ -108,6 +111,21 @@ func TestSSHConfigBlock(t *testing.T) {
 		if !strings.Contains(block, want) {
 			t.Errorf("SSHConfigBlock missing %q in:\n%s", want, block)
 		}
+	}
+}
+
+func TestSSHConfigBlock_SlugDiffersFromDisplayName(t *testing.T) {
+	target := &gatewayconfig.Target{
+		Name:     "ROSA Agentic Devx",
+		Resolved: &gatewayconfig.Resolved{Name: "rosa-agentic-devx"},
+	}
+	block := SSHConfigBlock("mysb", "default", target)
+
+	if !strings.Contains(block, "--gateway-name rosa-agentic-devx") {
+		t.Errorf("SSHConfigBlock should use resolved slug, not display name; got:\n%s", block)
+	}
+	if strings.Contains(block, "--gateway-name ROSA Agentic Devx") {
+		t.Errorf("SSHConfigBlock must not use display name as gateway flag; got:\n%s", block)
 	}
 }
 

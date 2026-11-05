@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -231,5 +232,57 @@ func TestGatewayAddThenLaterCommand_ReusesPersistedVaultConfig(t *testing.T) {
 	}
 	if laterReader.gotMount != "osd-sre" || laterReader.gotPath != "rosa-agent" {
 		t.Errorf("later command read (%q,%q), want the persisted (osd-sre,rosa-agent)", laterReader.gotMount, laterReader.gotPath)
+	}
+}
+
+// TestLogin_PersistsVaultAuthUnderSlug confirms that `gateway login` with
+// --vault-kv-mount/--vault-kv-path writes vault_auth.json under the directory
+// slug (Resolved.Name), not the display name in Metadata.Name / Target.Name,
+// so gateways registered by the upstream Rust CLI with spaces in their names
+// still get vault coordinates persisted correctly.
+func TestLogin_PersistsVaultAuthUnderSlug(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	const slug = "rosa-agentic-devx"
+	const displayName = "ROSA Agentic Devx"
+	gwDir := filepath.Join(xdg, "openshell", "gateways", slug)
+	if err := os.MkdirAll(gwDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mdJSON := `{"name":"` + displayName + `","gateway_endpoint":"https://gw.example.com","is_remote":false,"gateway_port":443,"auth_mode":"oidc","oidc_issuer":"https://issuer"}`
+	if err := os.WriteFile(filepath.Join(gwDir, "metadata.json"), []byte(mdJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "openshell", "active_gateway"), []byte(slug), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// gateway login with explicit vault flags: persistVaultAuthConfig is called
+	// before the OIDC browser step, so vault_auth.json should be written even
+	// though the browser/OIDC step fails in the test environment.
+	// Inject an empty vault reader so applyVaultAuthSource doesn't try real Vault.
+	// Cap the OIDC discovery attempt: on slow resolvers the HTTP client default
+	// timeout stalls for minutes; 5 s is enough for a fast NXDOMAIN or refused
+	// connection while keeping CI reliable.
+	baseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx := withVaultDeps(baseCtx, vaultDeps{Reader: &capturingVaultReader{data: map[string]any{}}})
+	_, loginErr := runCmdCtx(t, ctx, "--vault-kv-mount", "osd-sre", "--vault-kv-path", "rosa-agent", "gateway", "login")
+	if loginErr == nil {
+		t.Error("gateway login: expected error (OIDC discovery against https://issuer must fail), got nil")
+	}
+
+	slugVaultPath := filepath.Join(xdg, "openshell", "gateways", slug, "vault_auth.json")
+	data, rerr := os.ReadFile(slugVaultPath)
+	if rerr != nil {
+		t.Fatalf("vault_auth.json not written at slug path %s: %v", slugVaultPath, rerr)
+	}
+	if !strings.Contains(string(data), `"mount":"osd-sre"`) {
+		t.Errorf("vault_auth.json at slug = %s, want osd-sre", data)
+	}
+	displayVaultPath := filepath.Join(xdg, "openshell", "gateways", displayName, "vault_auth.json")
+	if _, statErr := os.Stat(displayVaultPath); statErr == nil {
+		t.Errorf("vault_auth.json should NOT exist at display-name path %s", displayVaultPath)
 	}
 }

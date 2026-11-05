@@ -166,6 +166,60 @@ func TestRequireTokenWriter_NamedResolvedGateway_Succeeds(t *testing.T) {
 	}
 }
 
+// TestAuthWriterAdapter_RejectsTraversal confirms authWriterAdapter.WriteFile
+// returns an error when gatewayName contains path traversal characters rather
+// than writing a file outside the config root.
+func TestAuthWriterAdapter_RejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	a := authWriterAdapter{w: &gatewayconfig.OSWriter{Root: root}, gatewayName: "../../x"}
+	err := a.WriteFile("oidc_token.json", []byte("data"), 0o600)
+	if err == nil {
+		t.Fatal("expected error for traversal gatewayName, got nil")
+	}
+	var inv *gatewayconfig.InvalidGatewayNameError
+	if !errors.As(err, &inv) {
+		t.Errorf("err = %T(%v), want *InvalidGatewayNameError", err, err)
+	}
+	// Confirm nothing was written outside root.
+	parent := filepath.Dir(root)
+	xPath := filepath.Join(parent, "x", "oidc_token.json")
+	if _, statErr := os.Stat(xPath); statErr == nil {
+		t.Errorf("file should not exist at %s", xPath)
+	}
+}
+
+// TestTokenWriterFor_UsesSlug confirms tokenWriterFor writes the token under
+// the directory slug (Resolved.Name), not the display name in Target.Name.
+func TestTokenWriterFor_UsesSlug(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	target := &gatewayconfig.Target{
+		Name:     "ROSA Agentic Devx",
+		Endpoint: "https://gw",
+		Resolved: &gatewayconfig.Resolved{Name: "rosa-agentic-devx"},
+	}
+	w, err := tokenWriterFor(target)
+	if err != nil {
+		t.Fatalf("tokenWriterFor: %v", err)
+	}
+	if w == nil {
+		t.Fatal("expected non-nil writer for resolved gateway")
+	}
+	if err := w.WriteFile("oidc_token.json", []byte("tok"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	// Token must land under the slug, not the display name.
+	slugPath := filepath.Join(root, "openshell", "gateways", "rosa-agentic-devx", "oidc_token.json")
+	if _, statErr := os.Stat(slugPath); statErr != nil {
+		t.Errorf("expected token at %s, got: %v", slugPath, statErr)
+	}
+	displayPath := filepath.Join(root, "openshell", "gateways", "ROSA Agentic Devx", "oidc_token.json")
+	if _, statErr := os.Stat(displayPath); statErr == nil {
+		t.Errorf("token should NOT be at display-name path %s", displayPath)
+	}
+}
+
 func TestUserAgent(t *testing.T) {
 	ua := userAgent()
 	if !strings.HasPrefix(ua, "openshellctl/") || !strings.Contains(ua, "openshell-pin") {

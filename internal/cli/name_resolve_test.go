@@ -53,7 +53,7 @@ func TestSaveLastSandboxRoundTrip(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
-	target := &gatewayconfig.Target{Name: "ci"}
+	target := &gatewayconfig.Target{Name: "ci", Resolved: &gatewayconfig.Resolved{Name: "ci"}}
 	saveLastSandbox(target, "default", "my-sb")
 
 	// Read it back via LoadLastSandbox against the written user tree.
