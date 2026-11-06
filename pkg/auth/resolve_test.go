@@ -295,3 +295,51 @@ func TestResolve_ErrNoCredentialsListsChecked(t *testing.T) {
 		}
 	})
 }
+
+// TestResolve_ClientCredentials_FetchErrorSurfaced confirms that when the
+// /auth/oidc-config fetch is the only source of the issuer and it fails, the
+// error is surfaced as ErrOIDCConfigMissing.Cause rather than silently
+// discarded, so errors.Is traversal reaches the underlying cause.
+func TestResolve_ClientCredentials_FetchErrorSurfaced(t *testing.T) {
+	boom := errors.New("boom")
+	in := ResolveInput{
+		ClientSecret:    func(context.Context) (string, error) { return "s", nil },
+		GatewayEndpoint: "https://gw",
+		OIDCConfigFetcher: func(context.Context, string) (string, string, error) {
+			return "", "", boom
+		},
+	}
+	_, err := Resolve(context.Background(), in, &fakeExchanger{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var missing *ErrOIDCConfigMissing
+	if !errors.As(err, &missing) {
+		t.Fatalf("err = %v, want *ErrOIDCConfigMissing", err)
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("errors.Is(err, boom) = false, want true; err = %v", err)
+	}
+}
+
+// TestResolve_ClientCredentials_AudienceOnlyFetchErrorTolerated confirms that
+// a fetch error is tolerated when the issuer is already known from flags or
+// metadata — only the audience was being filled from the fetch, so a failed
+// fetch does not block token acquisition.
+func TestResolve_ClientCredentials_AudienceOnlyFetchErrorTolerated(t *testing.T) {
+	in := ResolveInput{
+		ClientSecret:    func(context.Context) (string, error) { return "s", nil },
+		Issuer:          "https://given-issuer",
+		GatewayEndpoint: "https://gw",
+		OIDCConfigFetcher: func(context.Context, string) (string, string, error) {
+			return "", "", errors.New("fetch failed")
+		},
+	}
+	src, err := Resolve(context.Background(), in, &fakeExchanger{})
+	if err != nil {
+		t.Fatalf("unexpected error — fetch error when only audience is needed should be tolerated: %v", err)
+	}
+	if _, ok := src.(*ClientCredentialsSource); !ok {
+		t.Errorf("got %T, want *ClientCredentialsSource", src)
+	}
+}

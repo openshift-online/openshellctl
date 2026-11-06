@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/tls"
 	"fmt"
 	"os"
 
@@ -250,7 +251,12 @@ func runGatewayAdd(cmd *cobra.Command, rawEndpoint, name string, force bool) err
 	var discovered *gatewayconfig.DiscoveredOIDC
 	var discoveryErr error
 	if issuerOverride == "" {
-		iss, aud, derr := oidcConfigFetcher(cmd.Context(), endpoint)
+		var fetcherTLS *tls.Config
+		if deps, ok := depsFrom(cmd.Context()); ok {
+			fetcherTLS = deps.OIDCFetcherTLS
+		}
+		fetcher := newOIDCConfigFetcher(fetcherTLS)
+		iss, aud, derr := fetcher(cmd.Context(), endpoint)
 		if derr == nil {
 			discovered = &gatewayconfig.DiscoveredOIDC{Issuer: iss, Audience: aud}
 		} else {

@@ -68,12 +68,14 @@ set, openshellctl prints a fixed warning to stderr before any network I/O. The
 upstream Rust CLI applies the flag silently.
 
 **Rationale**: The flag overrides `http.DefaultTransport` process-wide, which
-means TLS certificate verification is disabled for **every HTTPS call in the
-process** — including the OIDC issuer's discovery and token endpoints where
-bearer tokens and client secrets are sent — not only the gRPC dial as the flag
-name implies. A silent opt-in leaves users unaware that credential traffic may
-reach an impersonated server. The warning makes the scope explicit. The warning
-goes to stderr so that `-o json` stdout output remains parseable.
+means TLS certificate verification is disabled for **gateway connections and
+OIDC token-endpoint exchanges** — not only the gRPC dial as the flag name
+implies — and bearer tokens or client secrets may reach an impersonated server.
+openshellctl's own `/auth/oidc-config` probe uses a clean transport captured
+before `applyGatewayInsecureTransport()` runs and always verifies TLS. A
+silent opt-in leaves users unaware that credential traffic may reach an
+impersonated server. The warning makes the scope explicit. The warning goes to
+stderr so that `-o json` stdout output remains parseable.
 
 `OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc` or
 CI environment variable can enable this flag without any explicit flag

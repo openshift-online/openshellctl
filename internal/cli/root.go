@@ -274,16 +274,16 @@ func bindViper(root *cobra.Command) {
 // --gateway-insecure/OPENSHELL_GATEWAY_INSECURE is in effect.
 const insecureWarnText = "warning: TLS certificate verification is disabled" +
 	" (--gateway-insecure/OPENSHELL_GATEWAY_INSECURE)" +
-	" for ALL HTTPS in the process — the gateway, the OIDC issuer," +
-	" and every other HTTPS call; bearer tokens and client secrets" +
-	" may be sent to an impersonated server"
+	" for gateway connections, OIDC token exchange, and -f manifest fetches;" +
+	" bearer tokens and client secrets may be sent to an impersonated server." +
+	" OIDC configuration probes (/auth/oidc-config) verify TLS independently."
 
 // insecureWarning returns insecureWarnText when insecure is true, or "" when
-// false. The scope note ("AND the OIDC issuer") is essential: the flag name
-// says "gateway" but the process-wide transport override means the SDK's OIDC
-// discovery/token HTTP client — which holds the client secret — is also
-// affected. The self-update and notice clients capture cleanTransport at init
-// time (before PersistentPreRunE runs) and are therefore unaffected.
+// false. The scope note is essential: the flag name says "gateway" but the
+// process-wide transport override also covers the SDK's OIDC token-endpoint
+// HTTP client. openshellctl's own /auth/oidc-config fetcher is excluded — it
+// uses a clean transport captured before this runs and always verifies TLS.
+// The self-update and notice clients are also excluded for the same reason.
 func insecureWarning(insecure bool) string {
 	if !insecure {
 		return ""
@@ -303,14 +303,17 @@ func insecureWarning(insecure bool) string {
 // no LoginOption to inject a custom client or skip verification (an upstream
 // WithHTTPClient option would remove the need for this entirely). Without
 // this, --gateway-insecure would cover the real gRPC dial (pkg/gateway/
-// dial.go) and openshellctl's own /auth/oidc-config discovery probe
-// (oidcConfigFetcher, authwiring.go) but not the SDK's own issuer discovery,
-// which is exactly the gap a staging/internal-CA OIDC issuer hits. Matches
-// upstream's own gateway_insecure handling, which applies to its OIDC HTTP
-// client too (oidc_auth.rs: danger_accept_invalid_certs) — parity, not an
-// extension.
+// dial.go) but not the SDK's own issuer discovery, which is exactly the gap
+// a staging/internal-CA OIDC issuer hits. Matches upstream's own
+// gateway_insecure handling (oidc_auth.rs: danger_accept_invalid_certs) —
+// parity, not an extension.
 //
-// Exception: the self-update and background notice HTTP clients (update.go,
+// openshellctl's own OIDC-config fetcher (oidcConfigFetcher, authwiring.go)
+// is NOT affected: it uses a clean base transport captured before this
+// function runs (see cleanTransport in transport.go) so the trust-anchor fetch
+// always verifies TLS.
+//
+// Exception: the self-update and background notice HTTP clients (transport.go,
 // startNoticeGoroutine) capture cleanTransport at package-init time, before
 // this function runs, so they always verify TLS regardless of the flag.
 //

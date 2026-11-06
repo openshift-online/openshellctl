@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
 
 	"github.com/openshift-online/openshellctl/pkg/auth"
 	"github.com/openshift-online/openshellctl/pkg/gateway"
@@ -25,6 +26,11 @@ type cliDeps struct {
 	Target      *gatewayconfig.Target
 	TokenSource auth.TokenSource
 	Transfer    transfer.Client
+	// OIDCFetcherTLS, when non-nil, is used as the TLS config for the OIDC-
+	// config discovery probe in runGatewayAdd. Only for in-package tests that
+	// need to trust a self-signed httptest.Server without mutating the global
+	// http.DefaultTransport; never set in production.
+	OIDCFetcherTLS *tls.Config
 
 	// NoticeEnvOverride, when non-nil, overrides the environment-derived fields
 	// of the CheckInputs built by startNoticeGoroutine: StdoutIsTTY,

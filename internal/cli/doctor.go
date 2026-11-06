@@ -133,10 +133,11 @@ func realLookupIP(ctx context.Context, host string) ([]net.IP, error) {
 	return ips, nil
 }
 
-// realHTTPGet performs a real GET, sharing http.DefaultTransport so
-// --gateway-insecure (applyGatewayInsecureTransport, root.go) is honored the
-// same way oidcConfigFetcher already is — one global toggle, not a second
-// one for doctor specifically.
+// realHTTPGet performs a real GET using http.DefaultTransport (via a nil
+// Transport on the client), so --gateway-insecure affects this probe.
+// Note: gateway add's OIDC-config fetcher uses a clean, insecure-independent
+// transport, so a self-signed staging gateway can produce "doctor: PASS,
+// gateway add: TLS error" — the probe result may not predict discovery success.
 func realHTTPGet(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
