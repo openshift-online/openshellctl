@@ -170,7 +170,7 @@ $ openshellctl doctor --gateway-endpoint https://gw.example.com
 ✓ Endpoint URL       https://gw.example.com (normalized: https://gw.example.com)
 ✓ DNS                gw.example.com -> [10.0.0.1]
 ✗ HTTP reachability  GET https://gw.example.com/auth/oidc-config: dial tcp: connect: connection refused
-  Hint: check the gateway is reachable (try: curl -v https://gw.example.com/auth/oidc-config), or pass --oidc-issuer and --oidc-audience to skip discovery for a gateway with an internal CA
+  Hint: check the gateway is reachable (try: curl -v https://gw.example.com/auth/oidc-config), or pass --oidc-issuer --oidc-audience to skip discovery for a gateway with an internal CA
 ✗ Credentials        no credentials configured for gateway "https://gw.example.com" (checked: --token / OPENSHELL_TOKEN, OPENSHELL_OIDC_CLIENT_SECRET (or --client-secret-file), gateways/<name>/metadata.json, gateways/<name>/mtls/)
   Hint: for a service account, export OPENSHELL_OIDC_CLIENT_SECRET (or pass --client-secret-file); for a human, run `openshellctl login`
 - Audience           skipped: Credentials check failed
