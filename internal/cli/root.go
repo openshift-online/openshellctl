@@ -274,7 +274,7 @@ func bindViper(root *cobra.Command) {
 // --gateway-insecure/OPENSHELL_GATEWAY_INSECURE is in effect.
 const insecureWarnText = "warning: TLS certificate verification is disabled" +
 	" (--gateway-insecure/OPENSHELL_GATEWAY_INSECURE)" +
-	" for gateway connections and OIDC token exchange;" +
+	" for gateway connections, OIDC token exchange, and -f manifest fetches;" +
 	" bearer tokens and client secrets may be sent to an impersonated server." +
 	" OIDC configuration probes (/auth/oidc-config) verify TLS independently."
 

@@ -1004,7 +1004,7 @@ See [`docs/troubleshooting.md`](docs/troubleshooting.md) for the common onboardi
 |----------|-------------|
 | `OPENSHELL_GATEWAY` | Default gateway name |
 | `OPENSHELL_GATEWAY_ENDPOINT` | Gateway endpoint URL |
-| `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for gateway connections and OIDC token exchange (`true`/`1`). OIDC configuration probes (`/auth/oidc-config`) and the self-update/notice client always verify TLS independently. Prints a warning to stderr on every use. `OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc`/CI env can enable this. |
+| `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for gateway connections, OIDC token exchange, and `-f` manifest fetches (`true`/`1`). OIDC configuration probes (`/auth/oidc-config`) and the self-update/notice client always verify TLS independently. Prints a warning to stderr on every use. `OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc`/CI env can enable this. |
 | `OPENSHELL_WORKSPACE` | Default workspace |
 | `OPENSHELL_TOKEN` | Bearer token (overrides all other auth) |
 | `OPENSHELL_OIDC_CLIENT_SECRET` | OIDC client secret (enables service account auth) |
