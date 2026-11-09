@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -88,36 +90,117 @@ func requireTokenWriter(target *gatewayconfig.Target) (auth.Writer, error) {
 	return w, nil
 }
 
-// oidcConfigFetcher fetches {issuer, audience} from GET <endpoint>/auth/oidc-config.
-// Uses http.DefaultTransport (no Transport override of its own), so it
-// automatically honors --gateway-insecure once applyGatewayInsecureTransport
-// (root.go) has run — the same global override the SDK's own OIDC HTTP
-// client needs regardless, since it has no per-call injection point at all.
-// Keeping a single place that decides "skip verification" avoids this call
-// and the SDK's calls disagreeing about whether --gateway-insecure applies.
-func oidcConfigFetcher(ctx context.Context, endpoint string) (string, string, error) {
-	url := strings.TrimSuffix(endpoint, "/") + "/auth/oidc-config"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// InsecureOIDCConfigURLError is returned by oidcConfigURL when the endpoint
+// is http:// and its host is not a loopback address — a non-loopback http://
+// endpoint is not permitted for OIDC config discovery (use --oidc-issuer).
+type InsecureOIDCConfigURLError struct {
+	Endpoint string
+}
+
+func (e *InsecureOIDCConfigURLError) Error() string {
+	return fmt.Sprintf(
+		"OIDC config endpoint %q must use https:// or a loopback http:// address; "+
+			"pass --oidc-issuer to skip discovery",
+		e.Endpoint,
+	)
+}
+
+// oidcConfigURL validates endpoint and returns the full URL for GET
+// /auth/oidc-config. It returns *InsecureOIDCConfigURLError when the
+// endpoint is http:// but the host is not loopback, and a plain error for
+// unsupported schemes (ftp://, etc.).
+func oidcConfigURL(endpoint string) (string, error) {
+	base := strings.TrimSuffix(endpoint, "/")
+	u, err := url.Parse(base)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", err
+	switch u.Scheme {
+	case "https":
+		// secure — allowed
+	case "http":
+		if !gatewayconfig.IsLoopbackEndpoint(endpoint) {
+			return "", &InsecureOIDCConfigURLError{Endpoint: endpoint}
+		}
+	default:
+		return "", fmt.Errorf("unsupported scheme %q for oidc-config endpoint", u.Scheme)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("/auth/oidc-config returned %s", resp.Status)
+	return base + "/auth/oidc-config", nil
+}
+
+// buildFetcherTransport returns a transport suitable for OIDC-config discovery.
+// It clones cleanTransport (transport.go), which is captured at package-init
+// time before applyGatewayInsecureTransport can mutate http.DefaultTransport,
+// so --gateway-insecure never affects the discovery probe regardless of when
+// this function is called. tlsCfg, when non-nil, pins the trust roots and
+// optional client certificate for the probe (typically the gateway's CA cert).
+func buildFetcherTransport(tlsCfg *tls.Config) *http.Transport {
+	tr := cleanTransport.Clone()
+	if tlsCfg != nil {
+		tr.TLSClientConfig = tlsCfg
 	}
-	var body struct {
-		Issuer   string `json:"issuer"`
-		Audience string `json:"audience"`
+	return tr
+}
+
+// newOIDCConfigFetcher builds a fetcher that validates the endpoint via
+// oidcConfigURL (https or loopback http only), does not follow redirects,
+// and trusts tlsCfg for TLS. The transport is built by buildFetcherTransport,
+// which clones cleanTransport (transport.go, captured before --gateway-insecure
+// can mutate http.DefaultTransport) so the discovery probe always verifies TLS.
+func newOIDCConfigFetcher(tlsCfg *tls.Config) func(ctx context.Context, endpoint string) (string, string, error) {
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: buildFetcherTransport(tlsCfg),
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", "", err
+
+	return func(ctx context.Context, endpoint string) (string, string, error) {
+		rawURL, err := oidcConfigURL(endpoint)
+		if err != nil {
+			return "", "", err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return "", "", err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", "", err
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return "", "", fmt.Errorf("/auth/oidc-config returned %s", resp.Status)
+		}
+		var body struct {
+			Issuer   string `json:"issuer"`
+			Audience string `json:"audience"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			return "", "", err
+		}
+		return body.Issuer, body.Audience, nil
 	}
-	return body.Issuer, body.Audience, nil
+}
+
+// issuerOverrideWarning returns a non-empty warning string when --oidc-issuer
+// overrides a different issuer that is already in the gateway's metadata —
+// a silent override can mask a misconfigured gateway. Returns "" when
+// override is empty, metadataIssuer is nil, or they are equal after stripping
+// trailing slashes.
+func issuerOverrideWarning(override string, metadataIssuer *string) string {
+	if override == "" || metadataIssuer == nil {
+		return ""
+	}
+	norm := func(s string) string { return strings.TrimSuffix(s, "/") }
+	if norm(override) == norm(*metadataIssuer) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"--oidc-issuer %q overrides the gateway metadata issuer %q",
+		override, *metadataIssuer,
+	)
 }
 
 // resolveTokenSource builds a TokenSource from the current flags/env. It resolves
@@ -142,6 +225,21 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 		return nil, nil, err
 	}
 
+	// Build a fetcher that trusts the gateway's CA when TLS material is present.
+	var fetcherTLS *tls.Config
+	var tlsMat gatewayconfig.TLSMaterial
+	if target.Resolved != nil {
+		tlsMat = gatewayconfig.TLSMaterialFor(target.Resolved)
+		dc := gateway.DialConfig{
+			TLS:     tlsMat,
+			TLSRoot: target.Resolved.Dir,
+		}
+		fetcherTLS, err = gateway.ClientTLSConfig(dc)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	in := auth.ResolveInput{
 		StaticToken:       viper.GetString("token"),
 		ClientSecret:      clientSecretProvider(viper.GetString("client-secret-file")),
@@ -150,11 +248,24 @@ func resolveTokenSource(cmd *cobra.Command) (auth.TokenSource, *gatewayconfig.Ta
 		Audience:          viper.GetString("oidc-audience"),
 		Gateway:           target.Resolved,
 		GatewayEndpoint:   target.Endpoint,
-		TLSPresent:        target.Resolved != nil && gatewayconfig.TLSMaterialFor(target.Resolved).Present,
-		OIDCConfigFetcher: oidcConfigFetcher,
+		TLSPresent:        tlsMat.Present,
+		OIDCConfigFetcher: newOIDCConfigFetcher(fetcherTLS),
 	}
 	if scopes := viper.GetString("oidc-scopes"); scopes != "" {
 		in.Scopes = strings.Fields(scopes)
+	}
+
+	// Warn when --oidc-issuer overrides a different issuer from gateway
+	// metadata. Skipped when --token is set: OIDC is not used in that case so
+	// the override has no effect.
+	if viper.GetString("token") == "" {
+		var metadataIssuer *string
+		if target.Resolved != nil {
+			metadataIssuer = target.Resolved.Metadata.OIDCIssuer
+		}
+		if warning := issuerOverrideWarning(viper.GetString("oidc-issuer"), metadataIssuer); warning != "" {
+			cmd.PrintErrf("warning: %s\n", warning)
+		}
 	}
 
 	// Wire write-back when requested and a named gateway is resolved. Uses

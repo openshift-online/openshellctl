@@ -39,6 +39,10 @@ func TestErrorMessages(t *testing.T) {
 	if contains((&ErrOIDCConfigMissing{}).Error(), "checked") {
 		t.Errorf("empty checked list should omit the parenthetical")
 	}
+	missingWithCause := &ErrOIDCConfigMissing{Checked: []string{"x"}, Cause: errors.New("tls: bad cert")}
+	if !contains(missingWithCause.Error(), "tls: bad cert") {
+		t.Errorf("ErrOIDCConfigMissing with Cause should include cause in Error(): %q", missingWithCause.Error())
+	}
 
 	mtls := &ErrMTLSMaterialMissing{Gateway: "rosa"}
 	if !contains(mtls.Error(), "rosa") {

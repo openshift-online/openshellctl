@@ -170,7 +170,7 @@ $ openshellctl doctor --gateway-endpoint https://gw.example.com
 ✓ Endpoint URL       https://gw.example.com (normalized: https://gw.example.com)
 ✓ DNS                gw.example.com -> [10.0.0.1]
 ✗ HTTP reachability  GET https://gw.example.com/auth/oidc-config: dial tcp: connect: connection refused
-  Hint: check the gateway is reachable (try: curl -v https://gw.example.com/auth/oidc-config), or pass --gateway-insecure for an internal CA
+  Hint: check the gateway is reachable (try: curl -v https://gw.example.com/auth/oidc-config), or pass --oidc-issuer --oidc-audience to skip discovery for a gateway with an internal CA
 ✗ Credentials        no credentials configured for gateway "https://gw.example.com" (checked: --token / OPENSHELL_TOKEN, OPENSHELL_OIDC_CLIENT_SECRET (or --client-secret-file), gateways/<name>/metadata.json, gateways/<name>/mtls/)
   Hint: for a service account, export OPENSHELL_OIDC_CLIENT_SECRET (or pass --client-secret-file); for a human, run `openshellctl login`
 - Audience           skipped: Credentials check failed
@@ -367,13 +367,13 @@ These flags apply to every command:
 |------|---------|-------------|
 | `--gateway`, `-g` | `OPENSHELL_GATEWAY` | Gateway name (selects config directory) |
 | `--gateway-endpoint` | `OPENSHELL_GATEWAY_ENDPOINT` | Gateway gRPC endpoint URL |
-| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for ALL HTTPS in the process (gRPC dial, OIDC issuer discovery and token endpoint, `-f` manifest URL fetches), except the self-update and notice check client which always verifies. Prints a warning to stderr on every use. |
+| `--gateway-insecure` | `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for gRPC dial and `-f` manifest URL fetches. **Does not apply to the OIDC-config discovery probe** in `gateway add` or `token`/`whoami`: the discovery HTTP client uses only the gateway's registered CA cert. For a staging gateway with an internal CA, pass `--oidc-issuer` plus `--oidc-audience` to skip discovery entirely, or place `ca.crt` under `gateways/<name>/mtls/` by hand and then re-run the command. |
 | `--workspace` | `OPENSHELL_WORKSPACE` | Workspace name (default: `default`) |
 | `--token` | `OPENSHELL_TOKEN` | Bearer token (overrides OIDC) |
 | `--config` | — | Config file path |
 | `--verbose`, `-v` | — | Increase verbosity (repeat for more) |
 | `--no-color` | `NO_COLOR` | Disable coloured output |
-| `--oidc-issuer` | — | OIDC issuer URL override |
+| `--oidc-issuer` | — | OIDC issuer URL override — when this differs from the issuer already recorded in the gateway's metadata, a warning is printed to stderr |
 | `--oidc-client-id` | — | OIDC client ID override |
 | `--oidc-audience` | — | OIDC audience override |
 | `--oidc-scopes` | — | OIDC scopes (space-separated) |
@@ -1004,7 +1004,7 @@ See [`docs/troubleshooting.md`](docs/troubleshooting.md) for the common onboardi
 |----------|-------------|
 | `OPENSHELL_GATEWAY` | Default gateway name |
 | `OPENSHELL_GATEWAY_ENDPOINT` | Gateway endpoint URL |
-| `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for ALL HTTPS in the process (`true`/`1`), except the self-update and notice check client which always verifies. Prints a warning to stderr on every use. `OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc`/CI env can enable this. |
+| `OPENSHELL_GATEWAY_INSECURE` | Skip TLS verification for gateway connections, OIDC token exchange, and `-f` manifest fetches (`true`/`1`). OIDC configuration probes (`/auth/oidc-config`) and the self-update/notice client always verify TLS independently. Prints a warning to stderr on every use. `OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc`/CI env can enable this. |
 | `OPENSHELL_WORKSPACE` | Default workspace |
 | `OPENSHELL_TOKEN` | Bearer token (overrides all other auth) |
 | `OPENSHELL_OIDC_CLIENT_SECRET` | OIDC client secret (enables service account auth) |
@@ -1029,7 +1029,7 @@ openshellctl is a compatible reimplementation with these intentional differences
 - **`gateway add` registers OIDC gateways only**: no mTLS or non-OIDC ("edge") gateway registration. When a client secret is absent and `OPENSHELL_NO_BROWSER` is set, `gateway add` registers the gateway and prints a hint instead of opening a browser (upstream always opens one). See [`docs/gateway.md`](docs/gateway.md).
 - **Endpoint matching tolerates formatting differences**: upstream only trims a trailing slash. openshellctl also ignores scheme/host case and an explicit default port (`:443`/`:80`), so `https://host:443` (as `gateway add` writes it) still matches `https://host/` (as an exported env var commonly reads). A different port, or a different path/query/fragment, is still a different gateway. See [`docs/gateway.md`](docs/gateway.md).
 - **`openshellctl update` (self-update)**: downloads, verifies (SHA-256), and atomically replaces the running binary. The upstream Rust CLI has no equivalent (checked at v0.1.5). See [Updating](#updating).
-- **`--gateway-insecure` prints a stderr warning on every use**: upstream's Rust CLI applies the flag silently. openshellctl emits a fixed warning that names both the gateway and the OIDC issuer, because the process-wide `http.DefaultTransport` override means bearer tokens and client secrets may be sent to an impersonated server, not just the gateway gRPC dial. The self-update and notice check client capture a clean transport at init time and always verify TLS regardless. `OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc`/CI env can enable this.
+- **`--gateway-insecure` prints a stderr warning on every use**: upstream's Rust CLI applies the flag silently. openshellctl emits a fixed warning covering gateway connections and OIDC token exchange; bearer tokens and client secrets may be sent to an impersonated server, not just the gateway gRPC dial. OIDC configuration probes (`/auth/oidc-config`) use a clean transport and always verify TLS independently. The self-update and notice check client also capture a clean transport at init time and always verify TLS. `OPENSHELL_*` environment variables are trusted input; a poisoned `.envrc`/CI env can enable this.
 
 ## License
 

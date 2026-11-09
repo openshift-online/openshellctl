@@ -16,11 +16,8 @@ import (
 type LookupIPFunc func(ctx context.Context, host string) ([]net.IP, error)
 
 // HTTPGetFunc performs an HTTP GET — http.Client.Get-shaped (minus the bare
-// string-vs-context split) so production code can wire a real *http.Client
-// (sharing http.DefaultTransport, the same as internal/cli's
-// oidcConfigFetcher, so --gateway-insecure is honored via that one existing
-// global toggle rather than a second one), while tests pass a fake that
-// never touches the network.
+// string-vs-context split) so production code can wire a real *http.Client,
+// while tests pass a fake that never touches the network.
 type HTTPGetFunc func(ctx context.Context, url string) (*http.Response, error)
 
 // CheckDNS resolves host via lookupIP. host should be a bare hostname (no
@@ -72,7 +69,7 @@ func CheckHTTP(ctx context.Context, endpoint string, get HTTPGetFunc) (CheckResu
 			Name:     "HTTP reachability",
 			Status:   StatusFail,
 			Detail:   fmt.Sprintf("GET %s: %v", u, err),
-			NextStep: fmt.Sprintf("check the gateway is reachable (try: curl -v %s), or pass --gateway-insecure for an internal CA", u),
+			NextStep: fmt.Sprintf("check the gateway is reachable (try: curl -v %s), or pass --oidc-issuer --oidc-audience to skip discovery for a gateway with an internal CA", u),
 		}, OIDCConfig{}
 	}
 	defer func() { _ = resp.Body.Close() }()

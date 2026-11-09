@@ -115,25 +115,18 @@ from the upstream Rust CLI" below.
   endpoint actually stored in `metadata.json` is never rewritten into this
   normalized form, only `EnsureScheme`'s scheme-defaulted, otherwise verbatim
   result (see the schema table above).
-- **`--gateway-insecure` disables TLS verification for ALL HTTPS in the
-  process, not just the gRPC dial.** The only exception is the self-update
-  and notice-check client, which always verifies. The flag overrides
-  `http.DefaultTransport` process-wide, which means the OIDC issuer's
-  discovery and token endpoints are also affected — bearer tokens and client
-  secrets may be sent to an impersonated server. The self-update (`update`)
-  and background notice HTTP clients capture a clean transport at package-init
-  time (before the flag takes effect) and therefore always verify TLS. A
-  warning is printed to stderr on every use. A staging/internal gateway whose
-  certificate isn't in the public trust store would otherwise make discovery
-  fail even though the gateway is reachable — and since no gateway is
-  registered yet at the discovery step, there's no per-gateway `mtls/ca.crt`
-  this call could use instead. Pass `--gateway-insecure` (or export
-  `OPENSHELL_GATEWAY_INSECURE=1`) on `gateway add` itself if discovery needs
-  it; remember it's also needed on every later command (`whoami`,
-  `sandbox list`, ...) against that same gateway, since it isn't persisted
-  into `metadata.json`.
-  `OPENSHELL_*` environment variables are trusted input; a poisoned
-  `.envrc`/CI env can enable this.
+- **`--gateway-insecure` has residual scope.** It skips TLS verification for the
+  gRPC dial, `-f` manifest URL fetches, and the OpenShell SDK's own OIDC
+  discovery and token-POST calls (the SDK provides no way to inject a custom
+  transport, so the process-global override is the only lever available). It
+  does **not** apply to `/auth/oidc-config` discovery probes — neither
+  `gateway add`'s registration probe nor the client-credentials fallback fetch
+  in `resolveTokenSource` (used by `token`, `whoami`, and every command that
+  resolves auth). Both use a clean transport (system roots, or the registered CA
+  cert) so a fake issuer cannot be trusted. For a staging gateway with an
+  internal CA, pass `--oidc-issuer` plus `--oidc-audience` to skip discovery
+  entirely, or place `ca.crt` under `gateways/<name>/mtls/` by hand and then
+  re-run `gateway add`.
 
 ## Vault-sourced config and `gateway add`
 

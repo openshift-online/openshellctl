@@ -14,17 +14,6 @@ import (
 	"github.com/openshift-online/openshellctl/pkg/selfupdate"
 )
 
-// cleanTransport is captured at package-init time, before PersistentPreRunE
-// can call applyGatewayInsecureTransport and mutate http.DefaultTransport.
-// Update and notice HTTP clients must always verify TLS, regardless of
-// --gateway-insecure.
-var cleanTransport = func() *http.Transport {
-	if base, ok := http.DefaultTransport.(*http.Transport); ok {
-		return base.Clone()
-	}
-	return &http.Transport{Proxy: http.ProxyFromEnvironment}
-}()
-
 func newUpdateCommand() *cobra.Command {
 	var (
 		targetVersion   string
@@ -132,10 +121,4 @@ also consider pre-releases, or --version to install a specific tag.
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "resolve and report only; do not download or replace")
 
 	return cmd
-}
-
-// freshTransport returns a clone of the transport captured before
-// applyGatewayInsecureTransport can modify http.DefaultTransport.
-func freshTransport() http.RoundTripper {
-	return cleanTransport.Clone()
 }
